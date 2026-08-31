@@ -5,6 +5,7 @@ import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
+import { endpointEditorOps, readEndpointEditorState, type EndpointEditorState } from './endpoint-editor.ts'
 import {
   modelTimeoutOps,
   readModelTimeoutViews,
@@ -192,6 +193,33 @@ export class TaskBoardHostService {
     const updated = this.modelTimeouts().find(view => view.provider === patch.provider)
     if (updated === undefined) throw new Error(`model provider not found after update: ${patch.provider}`)
     return updated
+  }
+
+  /**
+   * The current endpoint editor state over the `task-board` namespace: the
+   * configured endpoints plus the global default order. Empty when no
+   * settings seam is wired.
+   */
+  endpoints(): EndpointEditorState {
+    const settings = this.settings
+    if (settings === undefined) return { endpoints: [], defaultEndpoints: [] }
+    return readEndpointEditorState(settings.get('task-board'))
+  }
+
+  /**
+   * Store one endpoint editor state through the settings seam. The write is
+   * validated by the plugin's own namespace schema, then the state is re-read
+   * so the caller gets the effective list after the change. The namespace's
+   * change hook reloads the router live and the browser mirror refreshes the
+   * task modal's endpoint dropdown.
+   * @param state - the validated full editor state.
+   * @returns the stored effective editor state.
+   */
+  async applyEndpoints(state: EndpointEditorState): Promise<EndpointEditorState> {
+    const settings = this.settings
+    if (settings === undefined) throw new Error('settings service is unavailable')
+    await settings.mutate('task-board', endpointEditorOps(state))
+    return readEndpointEditorState(settings.get('task-board'))
   }
 
   dispose(): void {
