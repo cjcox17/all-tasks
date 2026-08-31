@@ -1,7 +1,8 @@
 /**
  * Task-board settings for availability, agent announcement, and optional Host
- * idle-sleep protection. Registers into the `web-ui.plugin.item` child slot
- * the Web UI plugin group renders, bound to the `task-board` namespace.
+ * idle-sleep protection. Registers into the official `settings.plugin.item`
+ * keyed slot (the Plugins section's configurable tab) under the `task-board`
+ * namespace key, bound to the `task-board` namespace.
  */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -103,7 +104,7 @@ export class TaskBoardSettingsCardController {
 
 /** Props the renderer binds for the task-board card. */
 export type TaskBoardSettingsCardProps =
-  PropsRuntime<'web-ui.plugin.item'>
+  PropsRuntime<'settings.plugin.item'>
   & PropsLocale<'task-board'>
   & InjectFace<TaskBoardSettingsCardFace>
 

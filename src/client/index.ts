@@ -16,6 +16,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the settings-surface Context merge (ctx.settingsScope).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: pulls the official `settings.plugin.item` slot declaration (the
+// configurable-plugins tab pairs served namespaces with cards registered
+// under this keyed slot; the card's PropsRuntime types against it). The
+// client entry re-exports the slot contract, loading its SlotMap merge.
+import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { BoardController } from '../core/controller.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
 import { claimTaskboardApply, releaseTaskboardApply } from './apply-guard.ts'
@@ -37,22 +42,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     /** Task-board surface copy. */
     'task-board': TaskBoardKey
   }
-
-  interface SlotMap {
-    /**
-     * The child slot the Web UI plugin group declares; this card registers
-     * into the group instead of the top-level `settings.plugin.item` list.
-     * Spelled here with the same shape so this package can register without
-     * depending on the sibling UI package.
-     */
-    'web-ui.plugin.item': { kind: 'list'; scope: 'root'; owner: SettingsPluginItemOwnerProps }
-  }
-}
-
-/** Owner share of a plugin card (the section supplies nothing). */
-export interface SettingsPluginItemOwnerProps {
-  /** Marker field: card owner props are intentionally empty. */
-  children?: never
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -98,16 +87,18 @@ export function apply(ctx: ClientContext): void {
   }, 'task-board: dictionaries')
 
   // Plugin configuration card: one staged form over the `task-board` settings
-  // namespace, contributed to the Web UI plugin group.
+  // namespace, contributed to the official Plugins section's configurable tab
+  // (`settings.plugin.item`, keyed by the namespace it edits). The earlier
+  // `web-ui.plugin.item` slot belonged to a dsh-web-only group that the
+  // standalone DSH distribution does not compose, so the card never rendered.
   const binder = ctx.get('webUiSettings') ?? ctx.settingsScope
   const settingsScope = binder.bind<TaskBoardSettings>({ namespace: TASK_BOARD_NS })
   const settingsCard = new TaskBoardSettingsCardController(settingsScope)
-  ctx.slots.inject('web-ui.plugin.item', () => {
+  ctx.slots.inject('settings.plugin.item', () => {
     try {
       const unregister = ctx.slots.register({
-        name: 'web-ui.plugin.item',
-        id: 'task-board',
-        order: 110,
+        name: 'settings.plugin.item',
+        key: TASK_BOARD_NS,
         locale: NS,
         inject: () => settingsCard.inject(),
       }, TaskBoardSettingsCard)
