@@ -10,7 +10,6 @@ import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runti
 import { useEffect, useState } from 'react'
 import type { TaskBoardPowerSnapshot } from '../protocol.ts'
 import { EndpointsEditor } from './EndpointsEditor.tsx'
-import { ModelTimeoutsEditor } from './ModelTimeoutsEditor.tsx'
 import { PluginSettingsCard, BooleanField } from './PluginSettingsCard.tsx'
 import { CardForm, booleanField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
@@ -22,8 +21,6 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
-  /** Global off-peak window (DeepSeek 16:30–00:30 UTC by default). */
-  offPeak?: { start?: string; end?: string; timezone?: string }
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
@@ -35,11 +32,6 @@ export interface TaskBoardSettings {
     provider?: string
     models?: string[]
     defaultModel?: string
-    maxConcurrency?: number
-    maxTokens?: number
-    allowedHours?: { start?: string; end?: string }
-    offPeakOnly?: boolean
-    offPeak?: { start?: string; end?: string; timezone?: string }
   }>
 }
 
@@ -187,7 +179,6 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('preventIdleSleep') }}
       />
       <EndpointsEditor t={t} disabled={disabled} />
-      <ModelTimeoutsEditor t={t} disabled={disabled} />
       <p>
         {t('settings.powerStatus', {
           platform: power?.platform ?? t('settings.powerUnknown'),

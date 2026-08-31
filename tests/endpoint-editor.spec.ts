@@ -1,34 +1,52 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_OFF_PEAK,
   endpointEditorOps,
+  endpointTimeoutPatches,
   parseEndpointEditorPatch,
   readEndpointEditorState,
+  readEndpointProviderCatalog,
   type EndpointEditorView,
+  type EndpointProviderInfo,
 } from '../src/endpoint-editor.ts'
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, DEEPSEEK_PROVIDER } from '../src/model-timeouts.ts'
 
 const FULL_VIEW: EndpointEditorView = {
   id: 'lm-studio-nas',
   name: 'LM Studio (NAS)',
   provider: 'lm-studio',
-  models: ['qwen/qwen3.8-27b'],
+  models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'],
   defaultModel: 'qwen/qwen3.8-27b',
-  maxConcurrency: 2,
-  maxTokens: 8192,
-  allowedHours: { start: '09:00', end: '23:00' },
-  offPeakOnly: true,
-  offPeak: { start: '18:00', end: '06:00', timezone: 'Asia/Shanghai' },
+  idleSeconds: 900,
+  totalSeconds: 3600,
 }
+
+const PROVIDERS: readonly EndpointProviderInfo[] = [
+  {
+    provider: 'lm-studio',
+    displayName: 'LM Studio',
+    namespace: 'llm-pi-ai',
+    models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'],
+    streamIdleTimeoutMs: 900_000,
+    timeoutMs: 3_600_000,
+  },
+  {
+    provider: DEEPSEEK_PROVIDER,
+    displayName: 'DeepSeek',
+    namespace: 'llm-deepseek',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    streamIdleTimeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  },
+]
 
 describe('readEndpointEditorState', () => {
   it('resolves the endpoint list with schema-defaulted fields', () => {
     const state = readEndpointEditorState({
       endpoints: [
         { id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio' },
-        { id: 'deepseek', provider: 'deepseek', maxConcurrency: 2 },
+        { id: 'deepseek', provider: DEEPSEEK_PROVIDER },
       ],
       defaultEndpoints: ['deepseek', 'lm-studio-nas'],
-    })
+    }, PROVIDERS)
     expect(state.endpoints).toHaveLength(2)
     expect(state.endpoints[0]).toEqual({
       id: 'lm-studio-nas',
@@ -36,21 +54,23 @@ describe('readEndpointEditorState', () => {
       provider: 'lm-studio',
       models: [],
       defaultModel: '',
-      maxConcurrency: 1,
-      maxTokens: 0,
-      allowedHours: { start: '', end: '' },
-      offPeakOnly: false,
-      offPeak: { ...DEFAULT_OFF_PEAK },
+      idleSeconds: 900,
+      totalSeconds: 3600,
     })
-    expect(state.endpoints[1]?.maxConcurrency).toBe(2)
+    expect(state.endpoints[1]).toMatchObject({ provider: DEEPSEEK_PROVIDER, idleSeconds: 300, totalSeconds: 0 })
     expect(state.defaultEndpoints).toEqual(['deepseek', 'lm-studio-nas'])
+  })
+
+  it('defaults timeouts to the DSH default when no provider view matches', () => {
+    const state = readEndpointEditorState({ endpoints: [{ id: 'ghost', provider: 'nope' }] }, PROVIDERS)
+    expect(state.endpoints[0]).toMatchObject({ idleSeconds: 300, totalSeconds: 0 })
   })
 
   it('drops malformed entries and unknown default-list ids', () => {
     const state = readEndpointEditorState({
       endpoints: [{ id: 'ok', provider: 'lm-studio' }, { provider: 'no-id' }, 'junk'],
       defaultEndpoints: ['ok', 'missing', 'ok'],
-    })
+    }, PROVIDERS)
     expect(state.endpoints.map(endpoint => endpoint.id)).toEqual(['ok'])
     expect(state.defaultEndpoints).toEqual(['ok'])
   })
@@ -59,6 +79,46 @@ describe('readEndpointEditorState', () => {
     expect(readEndpointEditorState(undefined)).toEqual({ endpoints: [], defaultEndpoints: [] })
     expect(readEndpointEditorState({ endpoints: 'nope' })).toEqual({ endpoints: [], defaultEndpoints: [] })
     expect(readEndpointEditorState(null)).toEqual({ endpoints: [], defaultEndpoints: [] })
+  })
+})
+
+describe('readEndpointProviderCatalog', () => {
+  it('resolves pi-ai routes and the official DeepSeek route with models and timeouts', () => {
+    const catalog = readEndpointProviderCatalog(
+      {
+        providers: {
+          'lm-studio': {
+            displayName: 'LM Studio',
+            models: [{ id: 'qwen/qwen3.8-27b' }, { id: 'qwen/qwen3-coder-30b' }],
+            streamIdleTimeoutMs: 900_000,
+            timeoutMs: 3_600_000,
+          },
+        },
+      },
+      { models: ['deepseek-chat', 'deepseek-reasoner'], streamIdleTimeoutMs: 600_000 },
+    )
+    expect(catalog).toEqual([
+      {
+        provider: 'lm-studio',
+        displayName: 'LM Studio',
+        namespace: 'llm-pi-ai',
+        models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'],
+        streamIdleTimeoutMs: 900_000,
+        timeoutMs: 3_600_000,
+      },
+      {
+        provider: DEEPSEEK_PROVIDER,
+        displayName: 'DeepSeek',
+        namespace: 'llm-deepseek',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+        streamIdleTimeoutMs: 600_000,
+      },
+    ])
+  })
+
+  it('accepts plain-string model lists and absent sections', () => {
+    expect(readEndpointProviderCatalog({ providers: { p: { models: ['a', 'b'] } } }, undefined)).toHaveLength(1)
+    expect(readEndpointProviderCatalog(undefined, undefined)).toEqual([])
   })
 })
 
@@ -72,16 +132,13 @@ describe('parseEndpointEditorPatch', () => {
           provider: ' lm-studio ',
           models: ['qwen/qwen3.8-27b', 'qwen/qwen3.8-27b', ' qwen/qwen3-coder-30b '],
           defaultModel: 'qwen/qwen3.8-27b',
-          maxConcurrency: 2,
-          maxTokens: 8192,
-          allowedHours: { start: '09:00', end: '23:00' },
-          offPeakOnly: true,
-          offPeak: { start: '18:00', end: '06:00', timezone: 'Asia/Shanghai' },
+          idleSeconds: 900,
+          totalSeconds: 3600,
         },
       ],
       defaultEndpoints: ['lm-studio-nas'],
     })
-    expect(state.endpoints).toEqual([{ ...FULL_VIEW, models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'] }])
+    expect(state.endpoints).toEqual([{ ...FULL_VIEW }])
     expect(state.defaultEndpoints).toEqual(['lm-studio-nas'])
   })
 
@@ -91,11 +148,8 @@ describe('parseEndpointEditorPatch', () => {
       name: '',
       models: [],
       defaultModel: '',
-      maxConcurrency: 1,
-      maxTokens: 0,
-      allowedHours: { start: '', end: '' },
-      offPeakOnly: false,
-      offPeak: { ...DEFAULT_OFF_PEAK },
+      idleSeconds: 300,
+      totalSeconds: 0,
     })
     expect(state.defaultEndpoints).toEqual([])
   })
@@ -106,12 +160,11 @@ describe('parseEndpointEditorPatch', () => {
     expect(() => parseEndpointEditorPatch({ endpoints: [{ provider: 'p' }] })).toThrow(/id is required/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a' }] })).toThrow(/provider is required/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p' }, { id: 'a', provider: 'q' }] })).toThrow(/duplicates endpoint/)
-    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', maxConcurrency: 0 }] })).toThrow(/maxConcurrency/)
-    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', maxTokens: -1 }] })).toThrow(/maxTokens/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', models: 'x' }] })).toThrow(/models must be an array/)
-    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', allowedHours: { start: '09:00' } }] })).toThrow(/allowedHours/)
-    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', allowedHours: { start: '25:00', end: '23:00' } }] })).toThrow(/HH:MM/)
-    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', offPeakOnly: 'yes' }] })).toThrow(/offPeakOnly/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', idleSeconds: 0 }] })).toThrow(/idleSeconds/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', idleSeconds: 86_401 }] })).toThrow(/idleSeconds/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', idleSeconds: 1.5 }] })).toThrow(/idleSeconds/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', totalSeconds: -1 }] })).toThrow(/totalSeconds/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p' }], defaultEndpoints: ['nope'] })).toThrow(/unknown endpoint/)
     expect(parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p' }], defaultEndpoints: ['a', 'a'] })).toEqual({
       endpoints: [expect.objectContaining({ id: 'a' })],
@@ -121,7 +174,7 @@ describe('parseEndpointEditorPatch', () => {
 })
 
 describe('endpointEditorOps', () => {
-  it('emits one set op for endpoints and one for the default order', () => {
+  it('emits one set op for endpoints and one for the default order (timeouts not stored here)', () => {
     const state = parseEndpointEditorPatch({ endpoints: [FULL_VIEW], defaultEndpoints: ['lm-studio-nas'] })
     const ops = endpointEditorOps(state)
     expect(ops).toHaveLength(2)
@@ -133,13 +186,8 @@ describe('endpointEditorOps', () => {
       id: 'lm-studio-nas',
       name: 'LM Studio (NAS)',
       provider: 'lm-studio',
-      models: ['qwen/qwen3.8-27b'],
+      models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'],
       defaultModel: 'qwen/qwen3.8-27b',
-      maxConcurrency: 2,
-      maxTokens: 8192,
-      allowedHours: { start: '09:00', end: '23:00' },
-      offPeakOnly: true,
-      offPeak: { start: '18:00', end: '06:00', timezone: 'Asia/Shanghai' },
     })
   })
 
@@ -148,12 +196,34 @@ describe('endpointEditorOps', () => {
     const stored = (endpointEditorOps(state)[0] as { value: unknown }).value as unknown[]
     expect(stored[0]).toEqual({ id: 'a', provider: 'p' })
   })
+})
 
-  it('round-trips a full state through read -> ops -> read stably', () => {
-    const state = parseEndpointEditorPatch({ endpoints: [FULL_VIEW, { id: 'minimal', provider: 'deepseek' }], defaultEndpoints: ['minimal', 'lm-studio-nas'] })
-    const ops = endpointEditorOps(state)
-    const value = (ops[0] as { value: unknown }).value
-    const reread = readEndpointEditorState({ endpoints: value, defaultEndpoints: (ops[1] as { value: unknown }).value })
-    expect(reread).toEqual(state)
+describe('endpointTimeoutPatches', () => {
+  it('writes the endpoint timeouts through to its provider route', () => {
+    const state = parseEndpointEditorPatch({ endpoints: [FULL_VIEW], defaultEndpoints: [] })
+    const patches = endpointTimeoutPatches(state, PROVIDERS)
+    expect(patches).toEqual([
+      {
+        namespace: 'llm-pi-ai',
+        provider: 'lm-studio',
+        streamIdleTimeoutMs: 900_000,
+        timeoutMs: 3_600_000,
+      },
+    ])
+  })
+
+  it('omits the total timeout for the official DeepSeek route (no total supported)', () => {
+    const state = parseEndpointEditorPatch({
+      endpoints: [{ id: 'ds', provider: DEEPSEEK_PROVIDER, idleSeconds: 600, totalSeconds: 0 }],
+    })
+    const patches = endpointTimeoutPatches(state, PROVIDERS)
+    expect(patches).toEqual([
+      { namespace: 'llm-deepseek', provider: DEEPSEEK_PROVIDER, streamIdleTimeoutMs: 600_000 },
+    ])
+  })
+
+  it('skips endpoints on unknown providers', () => {
+    const state = parseEndpointEditorPatch({ endpoints: [{ id: 'ghost', provider: 'nope', idleSeconds: 600 }] })
+    expect(endpointTimeoutPatches(state, PROVIDERS)).toEqual([])
   })
 })

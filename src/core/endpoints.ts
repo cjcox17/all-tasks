@@ -1,21 +1,39 @@
 /**
  * Endpoint model-router core: endpoint configuration shape, normalization,
- * time-window math (allowed hours + peak/off-peak), and the pure eligibility /
+ * the hard-coded DeepSeek off-peak schedule, and the pure eligibility /
  * picking engine. Framework-free (no cordis, no runtime imports) so the Host
  * router and unit tests share one engine.
  *
+ * An endpoint is deliberately lean: it names one DSH provider route and
+ * narrows that provider's models (plus a default model when the task's pin
+ * cannot be served). Provider-level concerns — concurrency, token caps,
+ * allowed hours, off-peak windows — do not belong on the endpoint; they live
+ * in the provider's own settings. The only per-endpoint tunables beyond the
+ * selection are the model request timeouts (idle + total), which the editor
+ * writes through to the provider route's settings.
+ *
  * Routing is a preference, never a hard pin: a task lists candidate endpoints
- * in priority order and the router uses the first one that is eligible right
- * now (within its allowed hours, off-peak satisfied, under its concurrency
- * cap, within its token cap). When none is eligible the run waits (queued) and
- * is retried until a window opens or the max-wait expires.
+ * in priority order and the router uses the first one that can serve the
+ * task's model (or its default model). When none can, the run waits (queued)
+ * and is retried until the max-wait expires.
  */
 
 /**
- * DeepSeek's official off-peak discount window (16:30–00:30 UTC, 50% off chat
- * / 75% off reasoner). UTC-based and overridable globally or per endpoint.
+ * DeepSeek's official off-peak schedule since 2026-08-23: peak hours are
+ * 01:00–04:00 and 06:00–10:00 UTC Monday–Friday (Beijing 9:00–12:00 /
+ * 14:00–18:00); every other hour is off-peak, and weekends are fully
+ * off-peak (the Aug 23 change unified Sat/Sun to off-peak pricing). The
+ * older single-window default (16:30–00:30 UTC) is obsolete and the schedule
+ * is intentionally hard-coded — DeepSeek owns these hours, not the user.
  */
-export const DEEPSEEK_OFF_PEAK = { start: '16:30', end: '00:30', timezone: 'UTC' } as const
+export const DEEPSEEK_OFF_PEAK = {
+  peak: [
+    { start: '01:00', end: '04:00' },
+    { start: '06:00', end: '10:00' },
+  ],
+  weekdays: [1, 2, 3, 4, 5], // Mon–Fri; weekends fully off-peak
+  timezone: 'UTC',
+} as const
 
 /** Bound on endpoint id/name/provider/model id length (defense-in-depth). */
 export const ENDPOINT_FIELD_BOUND = 256
@@ -32,8 +50,17 @@ export interface DailyWindow {
   end: string
 }
 
-/** A daily window evaluated in a named time zone (defaults to UTC). */
-export interface OffPeakWindow extends DailyWindow {
+/**
+ * A weekday-aware off-peak schedule: the daily peak windows that must be
+ * avoided, evaluated in a named time zone (defaults to UTC). Every hour
+ * outside the listed peak windows is off-peak, and any weekday not listed is
+ * fully off-peak (so the DeepSeek default's Sat/Sun are entirely off-peak).
+ */
+export interface OffPeakWindow {
+  /** Daily peak windows (hours billed at peak rate) to avoid. */
+  peak: readonly DailyWindow[]
+  /** Weekdays (0=Sunday … 6=Saturday) the peak windows apply; unlisted days are fully off-peak. */
+  weekdays: readonly number[]
   /** IANA time zone name. */
   timezone?: string
 }
@@ -50,25 +77,10 @@ export interface EndpointConfig {
   models: string[]
   /** Model used when the task's model pin cannot be served by this endpoint. */
   defaultModel?: string
-  /** Max concurrent launched executions through this endpoint (host-wide). */
-  maxConcurrency: number
-  /**
-   * Router token cap: a candidate model whose DSH-configured maxTokens exceeds
-   * this cap is ineligible (the endpoint lacks the token space for the task).
-   */
-  maxTokens?: number
-  /** Daily hours (host-local time) the endpoint may be used; absent = always. */
-  allowedHours?: DailyWindow
-  /** Only run inside the (global or per-endpoint) off-peak window. */
-  offPeakOnly: boolean
-  /** Per-endpoint off-peak window override. */
-  offPeak?: OffPeakWindow
 }
 
 /** The resolved router configuration (normalized; never trusts raw input). */
 export interface EndpointRouterConfig {
-  /** Global off-peak window (DeepSeek 16:30–00:30 UTC by default). */
-  offPeak: OffPeakWindow
   /** How long a queued run may wait for eligibility before it fails (hours). */
   endpointMaxWaitHours: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
@@ -94,16 +106,6 @@ export function normalizeDailyWindow(value: unknown): DailyWindow | undefined {
   if (typeof window.start !== 'string' || typeof window.end !== 'string') return undefined
   if (parseClock(window.start) === undefined || parseClock(window.end) === undefined) return undefined
   return { start: window.start, end: window.end }
-}
-
-/** Normalize an off-peak window; falls back to the DeepSeek default. */
-export function normalizeOffPeakWindow(value: unknown): OffPeakWindow {
-  const window = normalizeDailyWindow(value)
-  if (window === undefined) return { ...DEEPSEEK_OFF_PEAK }
-  const timezone = (value as Record<string, unknown>)?.timezone
-  return typeof timezone === 'string' && timezone.trim() !== ''
-    ? { ...window, timezone: timezone.trim() }
-    : { ...window, timezone: 'UTC' }
 }
 
 /** Normalize a bounded non-blank string; undefined when invalid. */
@@ -141,12 +143,6 @@ export function normalizeEndpoint(value: unknown): EndpointConfig | undefined {
   const provider = boundedString(raw.provider, ENDPOINT_FIELD_BOUND)
   if (id === undefined || provider === undefined) return undefined
   const name = boundedString(raw.name, ENDPOINT_FIELD_BOUND) ?? id
-  const maxConcurrency = typeof raw.maxConcurrency === 'number' && Number.isInteger(raw.maxConcurrency) && raw.maxConcurrency >= 1
-    ? raw.maxConcurrency
-    : 1
-  const maxTokens = typeof raw.maxTokens === 'number' && Number.isInteger(raw.maxTokens) && raw.maxTokens >= 1
-    ? raw.maxTokens
-    : undefined
   const models: string[] = []
   if (Array.isArray(raw.models)) {
     for (const item of raw.models) {
@@ -162,11 +158,6 @@ export function normalizeEndpoint(value: unknown): EndpointConfig | undefined {
     provider,
     models,
     ...(boundedString(raw.defaultModel, ENDPOINT_FIELD_BOUND) === undefined ? {} : { defaultModel: boundedString(raw.defaultModel, ENDPOINT_FIELD_BOUND) }),
-    maxConcurrency,
-    ...(maxTokens === undefined ? {} : { maxTokens }),
-    ...(normalizeDailyWindow(raw.allowedHours) === undefined ? {} : { allowedHours: normalizeDailyWindow(raw.allowedHours) }),
-    offPeakOnly: raw.offPeakOnly === true,
-    ...(normalizeDailyWindow(raw.offPeak) === undefined ? {} : { offPeak: normalizeOffPeakWindow(raw.offPeak) }),
   }
 }
 
@@ -184,7 +175,6 @@ export function normalizeEndpointsConfig(value: unknown): EndpointRouterConfig {
     if (!byId.has(endpoint.id)) byId.set(endpoint.id, endpoint)
   }
   return {
-    offPeak: normalizeOffPeakWindow(raw.offPeak),
     endpointMaxWaitHours: typeof raw.endpointMaxWaitHours === 'number' && Number.isFinite(raw.endpointMaxWaitHours) && raw.endpointMaxWaitHours >= 0
       ? raw.endpointMaxWaitHours
       : 24,
@@ -223,9 +213,31 @@ export function clockMinutesInTimeZone(date: Date, timeZone: string): number | u
   }
 }
 
-/** The effective off-peak window for one endpoint (per-endpoint override or the global default). */
-export function effectiveOffPeakWindow(endpoint: EndpointConfig, global: OffPeakWindow): OffPeakWindow {
-  return endpoint.offPeak ?? global
+/** Weekday (0=Sunday … 6=Saturday) for a Date in a named IANA time zone; undefined when unusable. */
+export function weekdayInTimeZone(date: Date, timeZone: string): number | undefined {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).formatToParts(date)
+    const value = parts.find(part => part.type === 'weekday')?.value
+    const index = value === undefined ? -1 : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(value)
+    return index >= 0 ? index : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether a Date falls in an off-peak hour of the schedule: unlisted weekdays
+ * (weekends by default) are fully off-peak; listed weekdays are off-peak
+ * outside every peak window. An unusable time zone or clock probe treats the
+ * instant as off-peak (the constraint is skipped, mirroring the old probes).
+ */
+export function isOffPeakNow(date: Date, schedule: OffPeakWindow = DEEPSEEK_OFF_PEAK): boolean {
+  const timezone = schedule.timezone ?? 'UTC'
+  const weekday = weekdayInTimeZone(date, timezone)
+  const minutes = clockMinutesInTimeZone(date, timezone)
+  if (weekday === undefined || minutes === undefined) return true
+  if (!schedule.weekdays.includes(weekday)) return true
+  return !schedule.peak.some(window => inDailyWindow(minutes, window))
 }
 
 /** The resolved model selection a task would use through an endpoint, or undefined when unsupported. */
@@ -247,48 +259,7 @@ export function resolveEndpointSelection(
 /** Why an endpoint cannot take a run right now. */
 export type EndpointBlockReason =
   | 'unknown-endpoint'
-  | 'outside-allowed-hours'
-  | 'off-peak-only'
-  | 'concurrency-full'
-  | 'model-over-cap'
   | 'model-not-served'
-
-/** Inputs the eligibility check needs (assembled by the Host router from live state). */
-export interface EndpointEligibilityInput {
-  endpoint: EndpointConfig
-  /** Minutes-of-day in the allowed-hours time zone (host-local). */
-  localMinutes: number | undefined
-  /** Minutes-of-day in the off-peak window time zone (UTC). */
-  offPeakMinutes: number | undefined
-  /** The effective off-peak window for this endpoint (per-endpoint override or global). */
-  offPeakWindow: OffPeakWindow
-  /** Launched-and-unsettled executions currently using this endpoint. */
-  activeCount: number
-  /** DSH-configured maxTokens for the candidate model (best-effort). */
-  modelMaxTokens: number | undefined
-  /** The resolved selection this run would use through the endpoint. */
-  selection: { provider: string; model: string; reasoningEffort?: string } | undefined
-}
-
-/** Eligibility verdict: ok, or a single blocking reason. */
-export type EndpointEligibility = { ok: true } | { ok: false; reason: EndpointBlockReason }
-
-/** Whether one endpoint can take a run right now (pure; all time inputs pre-computed). */
-export function isEndpointEligible(input: EndpointEligibilityInput): EndpointEligibility {
-  const { endpoint } = input
-  if (input.selection === undefined) return { ok: false, reason: 'model-not-served' }
-  if (endpoint.allowedHours !== undefined && input.localMinutes !== undefined && !inDailyWindow(input.localMinutes, endpoint.allowedHours)) {
-    return { ok: false, reason: 'outside-allowed-hours' }
-  }
-  if (endpoint.offPeakOnly && input.offPeakMinutes !== undefined && !inDailyWindow(input.offPeakMinutes, input.offPeakWindow)) {
-    return { ok: false, reason: 'off-peak-only' }
-  }
-  if (input.activeCount >= endpoint.maxConcurrency) return { ok: false, reason: 'concurrency-full' }
-  if (endpoint.maxTokens !== undefined && input.modelMaxTokens !== undefined && input.modelMaxTokens > endpoint.maxTokens) {
-    return { ok: false, reason: 'model-over-cap' }
-  }
-  return { ok: true }
-}
 
 /** The router's decision for one task. */
 export type RouteDecision =
@@ -305,25 +276,18 @@ export type RouteDecision =
     reason?: 'endpoint' | 'group' | 'window'
   }
 
-/** Live state the pure picker needs (assembled per evaluation). */
-export interface EndpointPickerState {
-  localMinutes: number | undefined
-  offPeakMinutes: number | undefined
-  activeCounts: ReadonlyMap<string, number>
-  modelMaxTokens: (provider: string, model: string) => number | undefined
-}
-
 /**
  * Pick the first eligible endpoint for a task: explicit task pins first, then
- * the global default list. Unknown ids are skipped; when every candidate is
- * blocked the decision is `wait` (with the first known candidate as the
- * preferred endpoint for the waiting note). `unrouted` when no candidate list
- * exists at all — the run proceeds with today's direct model pin.
+ * the global default list. An endpoint is eligible when it can serve the
+ * task's selection (the pinned model, or its own default model). Unknown ids
+ * are skipped; when every candidate is blocked the decision is `wait` (with
+ * the first known candidate as the preferred endpoint for the waiting note).
+ * `unrouted` when no candidate list exists at all — the run proceeds with
+ * today's direct model pin.
  */
 export function pickEndpoint(
   task: { endpoints?: readonly string[]; model?: { provider: string; model: string; reasoningEffort?: string } },
   config: EndpointRouterConfig,
-  state: EndpointPickerState,
 ): RouteDecision {
   const candidates = task.endpoints !== undefined && task.endpoints.length > 0
     ? task.endpoints
@@ -341,17 +305,8 @@ export function pickEndpoint(
     known += 1
     if (preferred === undefined) preferred = endpoint.id
     const selection = resolveEndpointSelection(task, endpoint)
-    const verdict = isEndpointEligible({
-      endpoint,
-      localMinutes: state.localMinutes,
-      offPeakMinutes: state.offPeakMinutes,
-      offPeakWindow: effectiveOffPeakWindow(endpoint, config.offPeak),
-      activeCount: state.activeCounts.get(endpoint.id) ?? 0,
-      modelMaxTokens: selection === undefined ? undefined : state.modelMaxTokens(selection.provider, selection.model),
-      selection,
-    })
-    if (verdict.ok) return { mode: 'routed', endpoint, selection: selection! }
-    reasons.push(verdict.reason)
+    if (selection !== undefined) return { mode: 'routed', endpoint, selection }
+    reasons.push('model-not-served')
   }
   // Every candidate id was unknown (e.g. an endpoint was renamed or removed):
   // never wedge the task — fall back to today's direct model pin.

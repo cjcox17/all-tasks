@@ -5,7 +5,7 @@ import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
-import { endpointEditorOps, readEndpointEditorState, type EndpointEditorState } from './endpoint-editor.ts'
+import { endpointEditorOps, endpointTimeoutPatches, readEndpointEditorState, readEndpointProviderCatalog, type EndpointEditorState } from './endpoint-editor.ts'
 import {
   modelTimeoutOps,
   readModelTimeoutViews,
@@ -28,7 +28,7 @@ function hostTimeZone(): string {
 
 /** The empty router config: no endpoints, no routing (today's direct behavior). */
 function emptyRouterConfig(): EndpointRouterConfig {
-  return { offPeak: { start: '16:30', end: '00:30', timezone: 'UTC' }, endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] }
+  return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] }
 }
 
 export class TaskBoardHostService {
@@ -47,11 +47,10 @@ export class TaskBoardHostService {
   private preventIdleSleep = false
   private lastPowerJson = ''
   private routerConfig: EndpointRouterConfig = emptyRouterConfig()
-  private readonly readModelMaxTokens: ((provider: string, model: string) => number | undefined) | undefined
   /** Execution ids with an in-flight launch; guards the queue re-check against double-launches. */
   private readonly launching = new Set<string>()
   private readonly now: () => number
-  /** Host user-settings seam for the model default-timeout editor (absent = disabled). */
+  /** Host user-settings seam for the endpoint/timeout editor (absent = disabled). */
   private readonly settings: ModelTimeoutSettingsSeam | undefined
 
   constructor(api: ApiProxy, options: {
@@ -60,7 +59,6 @@ export class TaskBoardHostService {
     now?: () => number
     commandDispatcher?: SessionCommandDispatcher
     routerConfig?: EndpointRouterConfig
-    readModelMaxTokens?: (provider: string, model: string) => number | undefined
     settings?: ModelTimeoutSettingsSeam
   } = {}) {
     this.ledger = options.ledger ?? new HostTaskLedger()
@@ -68,7 +66,6 @@ export class TaskBoardHostService {
     this.power = options.power ?? new PowerInhibitor()
     this.now = options.now ?? Date.now
     if (options.routerConfig !== undefined) this.routerConfig = options.routerConfig
-    this.readModelMaxTokens = options.readModelMaxTokens
     this.settings = options.settings
     this.ledger.subscribe(() => {
       this.syncPowerReasons()
@@ -197,21 +194,31 @@ export class TaskBoardHostService {
 
   /**
    * The current endpoint editor state over the `task-board` namespace: the
-   * configured endpoints plus the global default order. Empty when no
+   * configured endpoints (with per-endpoint timeouts resolved from the
+   * provider route settings) plus the global default order. Empty when no
    * settings seam is wired.
    */
   endpoints(): EndpointEditorState {
     const settings = this.settings
     if (settings === undefined) return { endpoints: [], defaultEndpoints: [] }
-    return readEndpointEditorState(settings.get('task-board'))
+    return readEndpointEditorState(settings.get('task-board'), this.modelTimeouts())
+  }
+
+  /** The provider catalog the endpoint editor offers (routes + their models and timeouts). */
+  endpointProviders(): ReturnType<typeof readEndpointProviderCatalog> {
+    const settings = this.settings
+    if (settings === undefined) return []
+    return readEndpointProviderCatalog(settings.get('llm-pi-ai'), settings.get('llm-deepseek'))
   }
 
   /**
-   * Store one endpoint editor state through the settings seam. The write is
-   * validated by the plugin's own namespace schema, then the state is re-read
-   * so the caller gets the effective list after the change. The namespace's
-   * change hook reloads the router live and the browser mirror refreshes the
-   * task modal's endpoint dropdown.
+   * Store one endpoint editor state through the settings seam: the endpoint
+   * list lands in the `task-board` namespace and each endpoint's idle/total
+   * timeouts write through to its provider route's settings (the only place
+   * DSH honors them). The writes are validated by the respective schemas,
+   * then the state is re-read so the caller gets the effective list after the
+   * change. The namespace's change hook reloads the router live and the
+   * browser mirror refreshes the task modal's endpoint dropdown.
    * @param state - the validated full editor state.
    * @returns the stored effective editor state.
    */
@@ -219,7 +226,18 @@ export class TaskBoardHostService {
     const settings = this.settings
     if (settings === undefined) throw new Error('settings service is unavailable')
     await settings.mutate('task-board', endpointEditorOps(state))
-    return readEndpointEditorState(settings.get('task-board'))
+    const catalog = this.endpointProviders()
+    for (const patch of endpointTimeoutPatches(state, catalog)) {
+      const target = this.modelTimeouts().find(view => view.provider === patch.provider)
+      if (target === undefined) continue
+      const { namespace, ops } = modelTimeoutOps(target, {
+        provider: patch.provider,
+        streamIdleTimeoutMs: patch.streamIdleTimeoutMs,
+        ...(patch.timeoutMs === undefined ? {} : { timeoutMs: patch.timeoutMs }),
+      })
+      await settings.mutate(namespace, ops)
+    }
+    return readEndpointEditorState(settings.get('task-board'), this.modelTimeouts())
   }
 
   dispose(): void {
@@ -304,21 +322,15 @@ export class TaskBoardHostService {
     if (group === undefined && !shouldUseRouter(effective, config)) return { mode: 'unrouted' }
     const now = new Date(this.now())
     const localMinutes = clockMinutesInTimeZone(now, hostTimeZone())
-    const offPeakMinutes = clockMinutesInTimeZone(now, config.offPeak.timezone ?? 'UTC')
     if (group !== undefined) {
       if (groupCapacityFull(group, this.groupLaunchedCount(group.id))) {
         return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'group' }
       }
-      if (!groupWindowOpen(group, localMinutes, offPeakMinutes, config.offPeak)) {
+      if (!groupWindowOpen(group, localMinutes, now)) {
         return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'window' }
       }
     }
-    return pickEndpoint(effective, config, {
-      localMinutes,
-      offPeakMinutes,
-      activeCounts: this.activeCounts(),
-      modelMaxTokens: (provider, model) => this.readModelMaxTokens?.(provider, model),
-    })
+    return pickEndpoint(effective, config)
   }
 
   /**
@@ -332,17 +344,16 @@ export class TaskBoardHostService {
    */
   private advanceGroups(): void {
     if (this.disposed || !this.active) return
-    const now = this.now()
+    const now = new Date(this.now())
     const config = this.routerConfig
-    const localMinutes = clockMinutesInTimeZone(new Date(now), hostTimeZone())
-    const offPeakMinutes = clockMinutesInTimeZone(new Date(now), config.offPeak.timezone ?? 'UTC')
+    const localMinutes = clockMinutesInTimeZone(now, hostTimeZone())
     for (const view of this.ledger.groupRuntimeViews()) {
       // Triggers: an armed group schedule, or a settled member freeing a slot.
       if (!view.scheduleEnabled && !view.newestExecutionSettled) continue
       // A queued member is waiting for a slot/window/endpoint; it holds the
       // sequence's place — never start another member over it.
       if (view.members.some(member => member.queued)) continue
-      if (!groupWindowOpen(view, localMinutes, offPeakMinutes, config.offPeak)) continue
+      if (!groupWindowOpen(view, localMinutes, now)) continue
       const group = this.ledger.groupById(view.id)
       if (group === undefined) continue
       let launched = view.members.filter(member => member.launched).length
@@ -355,7 +366,7 @@ export class TaskBoardHostService {
         // Auto-advance never queues: a member that cannot launch now is left
         // in place and the next pass (tick/settle/config) retries it.
         if (decision.mode === 'wait') continue
-        const opened = this.ledger.openExecution(member.taskId, now)
+        const opened = this.ledger.openExecution(member.taskId, now.getTime())
         if (opened === undefined) continue
         launched += 1
         if (decision.mode === 'routed') {
@@ -369,16 +380,6 @@ export class TaskBoardHostService {
           .finally(() => { this.launching.delete(opened.execution.id) })
       }
     }
-  }
-
-  /** Launched-and-unsettled executions per endpoint (queued runs do not consume concurrency). */
-  private activeCounts(): Map<string, number> {
-    const counts = new Map<string, number>()
-    for (const execution of this.ledger.runtimeView().openExecutions) {
-      if (execution.sessionId === undefined || execution.endpointId === undefined) continue
-      counts.set(execution.endpointId, (counts.get(execution.endpointId) ?? 0) + 1)
-    }
-    return counts
   }
 
   /** Launched-and-unsettled executions of one group's members (capacity accounting). */

@@ -7,7 +7,8 @@ import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { HostTaskLedger } from '../src/host-ledger.ts'
 import { makeTaskBoardRoutes } from '../src/host-routes.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
-import type { EndpointEditorState, EndpointEditorView } from '../src/endpoint-editor.ts'
+import type { EndpointEditorState, EndpointEditorView, EndpointProviderInfo } from '../src/endpoint-editor.ts'
+import { DEEPSEEK_PROVIDER } from '../src/model-timeouts.ts'
 import type { ModelTimeoutSettingsSeam } from '../src/model-timeouts.ts'
 import type { TaskBoardSnapshot } from '../src/protocol.ts'
 
@@ -29,32 +30,33 @@ const VIEW: EndpointEditorView = {
   provider: 'lm-studio',
   models: ['qwen/qwen3.8-27b'],
   defaultModel: 'qwen/qwen3.8-27b',
-  maxConcurrency: 1,
-  maxTokens: 0,
-  allowedHours: { start: '', end: '' },
-  offPeakOnly: false,
-  offPeak: { start: '16:30', end: '00:30', timezone: 'UTC' },
+  idleSeconds: 300,
+  totalSeconds: 0,
 }
 
 const STATE: EndpointEditorState = { endpoints: [VIEW], defaultEndpoints: ['lm-studio-nas'] }
+
+const PROVIDERS: EndpointProviderInfo[] = [
+  { provider: 'lm-studio', displayName: 'LM Studio', namespace: 'llm-pi-ai', models: ['qwen/qwen3.8-27b'], streamIdleTimeoutMs: 300_000 },
+]
 
 describe('endpoints HTTP routes', () => {
   let server: Server
   let base: string
   const endpoints = vi.fn(() => STATE)
   const applyEndpoints = vi.fn(async (state: EndpointEditorState) => state)
-  const modelTimeouts = vi.fn(() => [{ provider: 'lm-studio', displayName: 'LM Studio', namespace: 'llm-pi-ai' as const, streamIdleTimeoutMs: 300_000 }])
+  const endpointProviders = vi.fn(() => PROVIDERS)
 
   beforeEach(async () => {
     endpoints.mockClear()
     applyEndpoints.mockClear()
-    modelTimeouts.mockClear()
+    endpointProviders.mockClear()
     const service = {
       snapshot: () => snapshot,
       apply: () => snapshot,
       subscribe: () => () => undefined,
       eventPayload: () => ({ revision: 0, scheduler: snapshot.scheduler, power: snapshot.power }),
-      modelTimeouts,
+      endpointProviders,
       endpoints,
       applyEndpoints,
     } as unknown as TaskBoardHostService
@@ -74,13 +76,13 @@ describe('endpoints HTTP routes', () => {
     await new Promise<void>((resolve, reject) => { server.close(error => { if (error) reject(error); else resolve() }) })
   })
 
-  it('serves the endpoint state plus known provider routes to a same-origin GET', async () => {
+  it('serves the endpoint state plus the provider catalog to a same-origin GET', async () => {
     const response = await fetch(`${base}/api/task-board/endpoints`, { headers: { 'sec-fetch-site': 'same-origin' } })
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
-    expect(await response.json()).toEqual({ ...STATE, providers: ['lm-studio'] })
+    expect(await response.json()).toEqual({ ...STATE, providers: PROVIDERS })
     expect(endpoints).toHaveBeenCalledOnce()
-    expect(modelTimeouts).toHaveBeenCalledOnce()
+    expect(endpointProviders).toHaveBeenCalledOnce()
   })
 
   it('applies a full replacement on POST and returns the stored state', async () => {
@@ -180,31 +182,51 @@ function serviceWith(settings: ModelTimeoutSettingsSeam | undefined): TaskBoardH
 }
 
 describe('TaskBoardHostService endpoint write path', () => {
-  it('reads the namespace and applies a full replacement through the seam', async () => {
+  it('reads the namespace, applies a full replacement, and writes timeouts through to the provider route', async () => {
     const settings = fakeSettings({
       'task-board': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
-      'llm-pi-ai': { providers: { 'lm-studio': { displayName: 'LM Studio' } } },
+      'llm-pi-ai': { providers: { 'lm-studio': { displayName: 'LM Studio', models: [{ id: 'qwen/qwen3.8-27b' }] } } },
       'llm-deepseek': {},
     })
     const service = serviceWith(settings)
 
     const before = service.endpoints()
     expect(before.endpoints.map(endpoint => endpoint.id)).toEqual(['lm-studio-nas'])
-    expect(service.modelTimeouts().map(view => view.provider).sort()).toEqual(['deepseek-official', 'lm-studio'])
+    expect(before.endpoints[0]).toMatchObject({ idleSeconds: 300, totalSeconds: 0 })
+    expect(service.endpointProviders().map(info => info.provider).sort()).toEqual([DEEPSEEK_PROVIDER, 'lm-studio'])
+    expect(service.endpointProviders().find(info => info.provider === 'lm-studio')).toMatchObject({
+      models: ['qwen/qwen3.8-27b'],
+      streamIdleTimeoutMs: 300_000,
+    })
 
-    const next = { endpoints: [VIEW, { id: 'deepseek', name: '', provider: 'deepseek', models: [], defaultModel: '', maxConcurrency: 2, maxTokens: 8192, allowedHours: { start: '', end: '' }, offPeakOnly: false, offPeak: { start: '16:30', end: '00:30', timezone: 'UTC' } }], defaultEndpoints: ['lm-studio-nas', 'deepseek'] }
+    const next: EndpointEditorState = {
+      endpoints: [
+        { ...VIEW, idleSeconds: 900, totalSeconds: 3600 },
+        { id: 'deepseek', name: '', provider: DEEPSEEK_PROVIDER, models: [], defaultModel: '', idleSeconds: 600, totalSeconds: 0 },
+      ],
+      defaultEndpoints: ['lm-studio-nas', 'deepseek'],
+    }
     const stored = await service.applyEndpoints(next)
     expect(stored.endpoints).toHaveLength(2)
-    expect(settings.applied).toHaveLength(1)
+    // One task-board write + one per-provider timeout write.
+    expect(settings.applied).toHaveLength(3)
     expect(settings.applied[0]?.ns).toBe('task-board')
     expect(settings.applied[0]?.ops[0]).toMatchObject({ op: 'set', path: ['endpoints'] })
     expect(settings.applied[0]?.ops[1]).toEqual({ op: 'set', path: ['defaultEndpoints'], value: ['lm-studio-nas', 'deepseek'] })
+    // lm-studio idle + total land in llm-pi-ai.
+    expect(settings.applied[1]?.ns).toBe('llm-pi-ai')
+    expect(settings.applied[1]?.ops).toContainEqual({ op: 'set', path: ['providers', 'lm-studio', 'streamIdleTimeoutMs'], value: 900_000 })
+    expect(settings.applied[1]?.ops).toContainEqual({ op: 'set', path: ['providers', 'lm-studio', 'timeoutMs'], value: 3_600_000 })
+    // deepseek idle lands in llm-deepseek (no total).
+    expect(settings.applied[2]?.ns).toBe('llm-deepseek')
+    expect(settings.applied[2]?.ops).toEqual([{ op: 'set', path: ['streamIdleTimeoutMs'], value: 600_000 }])
     service.dispose()
   })
 
   it('reports empty state and refuses writes without a settings seam', async () => {
     const service = serviceWith(undefined)
     expect(service.endpoints()).toEqual({ endpoints: [], defaultEndpoints: [] })
+    expect(service.endpointProviders()).toEqual([])
     await expect(service.applyEndpoints({ endpoints: [VIEW], defaultEndpoints: [] }))
       .rejects.toThrow(/settings service is unavailable/)
     service.dispose()

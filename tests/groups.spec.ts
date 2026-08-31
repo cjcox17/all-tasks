@@ -3,7 +3,6 @@
  * semantics, and the pure execution-policy helpers (capacity, window, order).
  */
 import { describe, expect, it } from 'vitest'
-import { DEEPSEEK_OFF_PEAK } from '../src/core/endpoints.ts'
 import {
   applyCreateGroup,
   applyDeleteGroup,
@@ -224,14 +223,19 @@ describe('execution policy helpers', () => {
     expect(groupCapacityFull({ mode: 'parallel' as const }, 100)).toBe(false)
   })
 
-  it('gates the window by allowed hours and off-peak', () => {
+  it('gates the window by allowed hours and off-peak (weekday-aware DeepSeek schedule)', () => {
     const windowed = { allowedHours: { start: '12:00', end: '14:00' }, offPeakOnly: false }
-    expect(groupWindowOpen(windowed, 13 * 60, undefined, DEEPSEEK_OFF_PEAK)).toBe(true)
-    expect(groupWindowOpen(windowed, 10 * 60, undefined, DEEPSEEK_OFF_PEAK)).toBe(false)
-    expect(groupWindowOpen({ allowedHours: undefined, offPeakOnly: true }, undefined, 18 * 60, DEEPSEEK_OFF_PEAK)).toBe(true)
-    expect(groupWindowOpen({ allowedHours: undefined, offPeakOnly: true }, undefined, 12 * 60, DEEPSEEK_OFF_PEAK)).toBe(false)
-    // A missing minute probe skips the constraint (zone unusable).
-    expect(groupWindowOpen(windowed, undefined, undefined, DEEPSEEK_OFF_PEAK)).toBe(true)
+    // Wed 2026-07-15 13:00 UTC = allowed-hours open.
+    expect(groupWindowOpen(windowed, 13 * 60, new Date(Date.UTC(2026, 6, 15, 13)))).toBe(true)
+    expect(groupWindowOpen(windowed, 10 * 60, new Date(Date.UTC(2026, 6, 15, 13)))).toBe(false)
+    // Off-peak only: Wed 12:00 UTC is inside a peak block (06:00–10:00? no — 12:00 is off-peak).
+    expect(groupWindowOpen({ allowedHours: undefined, offPeakOnly: true }, undefined, new Date(Date.UTC(2026, 6, 15, 12)))).toBe(true)
+    // Wed 02:00 UTC is inside the first peak block (01:00–04:00) → blocked.
+    expect(groupWindowOpen({ allowedHours: undefined, offPeakOnly: true }, undefined, new Date(Date.UTC(2026, 6, 15, 2)))).toBe(false)
+    // Sat 02:00 UTC is fully off-peak (weekends unified since 2026-08-23).
+    expect(groupWindowOpen({ allowedHours: undefined, offPeakOnly: true }, undefined, new Date(Date.UTC(2026, 6, 18, 2)))).toBe(true)
+    // A missing local-minute probe skips the allowed-hours constraint.
+    expect(groupWindowOpen(windowed, undefined, new Date(Date.UTC(2026, 6, 15, 13)))).toBe(true)
   })
 
   it('picks the next runnable member in order, skipping running/done/failed/archived', () => {

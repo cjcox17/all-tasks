@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEEPSEEK_OFF_PEAK, type EndpointConfig, type EndpointRouterConfig } from '../src/core/endpoints.ts'
+import type { EndpointConfig, EndpointRouterConfig } from '../src/core/endpoints.ts'
 import { nextRunAtMs } from '../src/core/schedule.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
@@ -35,14 +35,12 @@ function endpoint(overrides: Partial<EndpointConfig> = {}): EndpointConfig {
     name: 'Cloud',
     provider: 'deepseek',
     models: [],
-    maxConcurrency: 10,
-    offPeakOnly: false,
     ...overrides,
   }
 }
 
 function routerConfig(endpoints: readonly EndpointConfig[], overrides: Partial<EndpointRouterConfig> = {}): EndpointRouterConfig {
-  return { offPeak: { ...DEEPSEEK_OFF_PEAK }, endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints], ...overrides }
+  return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints], ...overrides }
 }
 
 function launchApi(create: ReturnType<typeof vi.fn>) {
@@ -180,7 +178,7 @@ describe('TaskBoardHostService group routing', () => {
   })
 
   it('holds an off-peak-only group during peak and launches inside the DeepSeek window', async () => {
-    let now = Date.UTC(2026, 6, 16, 12, 0, 0) // peak
+    let now = Date.UTC(2026, 6, 16, 2, 0, 0) // Thu 02:00 UTC — inside peak block 1
     const dir = root()
     const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
     seedGroup(h, 'g1', 'OffPeak', ['a'], { offPeakOnly: true })
@@ -190,7 +188,7 @@ describe('TaskBoardHostService group routing', () => {
     expect(h.ledger.state().tasks.find(task => task.id === 'a')!.executions[0]!.queuedReason).toBe('window')
     expect(h.create).not.toHaveBeenCalled()
 
-    now = Date.UTC(2026, 6, 16, 18, 0, 0) // off-peak
+    now = Date.UTC(2026, 6, 16, 12, 0, 0) // 12:00 UTC — off-peak
     await h.routeQueued()
     await flush()
     expect(h.create).toHaveBeenCalledOnce()
@@ -296,12 +294,14 @@ describe('TaskBoardHostService group routing', () => {
   })
 
   it('refreshes the waiting reason when the block moves from a group slot to the endpoint', async () => {
-    let now = new Date(2026, 7, 16, 13, 0, 0).getTime() // inside the endpoint window
+    const now = new Date(2026, 7, 16, 13, 0, 0).getTime()
     const dir = root()
     const h = harness(dir, routerConfig(
-      [endpoint({ id: 'cloud', defaultModel: 'deepseek-chat', allowedHours: { start: '12:00', end: '14:00' } })],
+      [endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] })],
     ), () => now)
     seedGroup(h, 'g1', 'Seq', ['a', 'b'], { endpoints: ['cloud'] })
+    h.ledger.applyRequest('pin-a', { kind: 'update', taskId: 'a', patch: { model: { provider: 'deepseek', model: 'deepseek-reasoner' } } })
+    h.ledger.applyRequest('pin-b', { kind: 'update', taskId: 'b', patch: { model: { provider: 'deepseek', model: 'deepseek-chat' } } })
 
     h.service.apply('run-a', { kind: 'run', taskId: 'a' })
     await flush()
@@ -310,9 +310,8 @@ describe('TaskBoardHostService group routing', () => {
     expect(h.create).toHaveBeenCalledOnce()
     expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions[0]!.queuedReason).toBe('group')
 
-    // A settles but the endpoint is now outside its hours: B's wait becomes an
-    // endpoint wait (same queuedAt, refreshed reason).
-    now = new Date(2026, 7, 16, 15, 0, 0).getTime()
+    // A settles but the endpoint still cannot serve B's pinned model: B's wait
+    // becomes an endpoint wait (same queuedAt, refreshed reason).
     const a = h.ledger.state().tasks.find(task => task.id === 'a')!
     h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
     const queuedAt = h.ledger.state().tasks.find(task => task.id === 'b')!.executions[0]!.queuedAt!

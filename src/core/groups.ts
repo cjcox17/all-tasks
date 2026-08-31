@@ -20,10 +20,10 @@
  */
 import {
   inDailyWindow,
+  isOffPeakNow,
   normalizeDailyWindow,
   normalizeEndpointList,
   type DailyWindow,
-  type OffPeakWindow,
 } from './endpoints.ts'
 import { isValidCron, nextRunAtMs } from './schedule.ts'
 import type { TaskRecord } from './tasks.ts'
@@ -479,20 +479,21 @@ export function groupCapacityFull(group: { mode: GroupExecutionMode; maxParallel
 
 /**
  * Whether member launches may proceed right now: inside the allowed-hours
- * window (host-local) and, for off-peak-only groups, inside the global
- * off-peak window. A missing minute probe (unusable time zone) skips the
- * constraint, mirroring the endpoint eligibility check.
+ * window (host-local) and, for off-peak-only groups, inside the hard-coded
+ * DeepSeek off-peak schedule (weekday-aware, weekends fully off-peak). A
+ * missing local-minute probe (unusable time zone) skips the allowed-hours
+ * constraint; an unusable off-peak clock skips the off-peak constraint,
+ * mirroring the endpoint eligibility check.
  */
 export function groupWindowOpen(
   group: { allowedHours?: DailyWindow; offPeakOnly: boolean },
   localMinutes: number | undefined,
-  offPeakMinutes: number | undefined,
-  globalOffPeak: OffPeakWindow,
+  now: Date,
 ): boolean {
   if (group.allowedHours !== undefined && localMinutes !== undefined && !inDailyWindow(localMinutes, group.allowedHours)) {
     return false
   }
-  if (group.offPeakOnly && offPeakMinutes !== undefined && !inDailyWindow(offPeakMinutes, globalOffPeak)) {
+  if (group.offPeakOnly && !isOffPeakNow(now)) {
     return false
   }
   return true

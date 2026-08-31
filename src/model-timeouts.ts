@@ -1,6 +1,6 @@
 /**
- * Model default timeout views and settings write-ops for the task-board
- * settings card.
+ * Model timeout views and settings write-ops for the task-board settings
+ * card.
  *
  * DSH's model-request timeouts live in the user-settings seam, not on the
  * session or request wire: `llm-pi-ai` (custom/local providers such as LM
@@ -13,12 +13,12 @@
  * new chunk arrives inside the window even though the backend is still
  * working.
  *
- * The board exposes these as per-provider "default timeouts for models" so a
- * slow local model can outlive the watchdog without hand-editing
- * ~/.dsh/settings.yaml. Reading resolves the effective (schema-defaulted)
- * value; writing emits path ops for `ctx.settings.mutate`, which validates
- * against the provider's own schema, so a bad value is refused by DSH, not
- * silently stored.
+ * The board surfaces these through the endpoint editor: each endpoint names
+ * one provider route, so its idle/total timeout fields write through to that
+ * route's settings (the only place DSH honors them). Reading resolves the
+ * effective (schema-defaulted) value; writing emits path ops for
+ * `ctx.settings.mutate`, which validates against the provider's own schema,
+ * so a bad value is refused by DSH, not silently stored.
  */
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 
@@ -158,32 +158,4 @@ export function modelTimeoutOps(target: ModelTimeoutView, patch: ModelTimeoutPat
         : { op: 'set', path: ['streamIdleTimeoutMs'], value: idle },
     ],
   }
-}
-
-/**
- * Parse and validate the POST body of the model-timeouts route.
- * @param value - the parsed JSON body.
- * @returns the validated patch.
- */
-export function parseModelTimeoutPatch(value: unknown): ModelTimeoutPatch {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('model timeout patch must be an object')
-  }
-  const raw = value as Record<string, unknown>
-  if (typeof raw.provider !== 'string' || raw.provider === '') {
-    throw new Error('model timeout patch requires a non-empty provider')
-  }
-  const idle = raw.streamIdleTimeoutMs
-  if (idle !== null && typeof idle !== 'number') {
-    throw new Error('streamIdleTimeoutMs must be a number or null')
-  }
-  if (idle !== null) assertTimeoutMs(idle, 'streamIdleTimeoutMs')
-  const patch: ModelTimeoutPatch = { provider: raw.provider, streamIdleTimeoutMs: idle as number | null }
-  const total = raw.timeoutMs
-  if (total !== undefined && total !== null && typeof total !== 'number') {
-    throw new Error('timeoutMs must be a number or null')
-  }
-  if (total !== undefined && total !== null) assertTimeoutMs(total, 'timeoutMs')
-  if (total !== undefined) patch.timeoutMs = total as number | null
-  return patch
 }

@@ -189,6 +189,22 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.modelList {
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+}
+
+.modelName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .invalid {
   color: var(--dsw-alias-label-error);
 }

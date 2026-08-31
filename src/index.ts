@@ -55,25 +55,12 @@ export interface Config {
   trustedProxyHosts?: string[]
   /** Environment variable whose value the authenticated proxy injects upstream. */
   proxyTokenEnv?: string
-  /** Global off-peak window (DeepSeek 16:30–00:30 UTC by default). */
-  offPeak?: OffPeakWindowConfig
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
   endpoints?: EndpointSettingsConfig[]
-}
-
-/** A daily clock window (24h 'HH:MM'; start > end crosses midnight). */
-export interface DailyWindowConfig {
-  start: string
-  end: string
-}
-
-/** An off-peak window with an optional IANA time zone (UTC by default). */
-export interface OffPeakWindowConfig extends DailyWindowConfig {
-  timezone?: string
 }
 
 /** One named compute endpoint (a backend serving one DSH provider route). */
@@ -88,28 +75,7 @@ export interface EndpointSettingsConfig {
   models?: string[]
   /** Model used when the task's model pin cannot be served by this endpoint. */
   defaultModel?: string
-  /** Max concurrent launched executions through this endpoint. */
-  maxConcurrency?: number
-  /** Router token cap; a model whose DSH maxTokens exceeds it is ineligible. */
-  maxTokens?: number
-  /** Daily hours (host-local) the endpoint may be used; absent = always. */
-  allowedHours?: DailyWindowConfig
-  /** Only run inside the (global or per-endpoint) off-peak window. */
-  offPeakOnly?: boolean
-  /** Per-endpoint off-peak window override. */
-  offPeak?: OffPeakWindowConfig
 }
-
-const dailyWindow = z.object({
-  start: z.string().default(''),
-  end: z.string().default(''),
-})
-
-const offPeakWindow = z.object({
-  start: z.string().default('16:30'),
-  end: z.string().default('00:30'),
-  timezone: z.string().default('UTC'),
-})
 
 const endpointSettings = z.object({
   id: z.string().min(1),
@@ -117,11 +83,6 @@ const endpointSettings = z.object({
   provider: z.string().min(1),
   models: z.array(z.string()).default([]),
   defaultModel: z.string().default(''),
-  maxConcurrency: z.number().min(1).default(1),
-  maxTokens: z.number().min(0).default(0),
-  allowedHours: dailyWindow.default({ start: '', end: '' }),
-  offPeakOnly: z.boolean().default(false),
-  offPeak: offPeakWindow.default({ start: '16:30', end: '00:30', timezone: 'UTC' }),
 })
 
 export const Config: z<Config> = z.object({
@@ -130,7 +91,6 @@ export const Config: z<Config> = z.object({
   preventIdleSleep: z.boolean().default(false),
   trustedProxyHosts: z.array(z.string()).default([]),
   proxyTokenEnv: z.string().min(1).default(DEFAULT_PROXY_TOKEN_ENV),
-  offPeak: offPeakWindow.default({ start: '16:30', end: '00:30', timezone: 'UTC' }),
   endpointMaxWaitHours: z.number().min(0).default(24),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
@@ -139,26 +99,6 @@ export const Config: z<Config> = z.object({
 /** Build the normalized Host router config from the resolved plugin settings. */
 export function routerConfigFromSettings(config: Config | undefined): EndpointRouterConfig {
   return normalizeEndpointsConfig(config ?? {})
-}
-
-/**
- * Best-effort read of DSH's per-model `maxTokens` from the `llm-pi-ai` settings
- * namespace (the Models section). The router compares it against each
- * endpoint's token cap; when the namespace is absent the check is skipped.
- */
-export function readPiAiModelMaxTokens(ctx: Context, provider: string, model: string): number | undefined {
-  try {
-    const settings = ctx.get('settings') as { get?: (ns: string) => unknown } | undefined
-    const pi = settings?.get?.('llm-pi-ai') as
-      | { providers?: Record<string, { maxTokens?: unknown; models?: Array<{ id?: unknown; maxTokens?: unknown }> }> }
-      | undefined
-    const providerConfig = pi?.providers?.[provider]
-    const modelConfig = providerConfig?.models?.find(entry => entry.id === model)
-    const value = modelConfig?.maxTokens ?? providerConfig?.maxTokens
-    return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined
-  } catch {
-    return undefined
-  }
 }
 
 /** Resolve proxy access without ever placing the token value in plugin config. */
@@ -213,7 +153,6 @@ function applyImpl(ctx: Context, config?: Config): void {
         return (await ctx.commands.execute(agent, line, [], signal))?.result
       },
     },
-    readModelMaxTokens: (provider, model) => readPiAiModelMaxTokens(ctx, provider, model),
     settings: modelTimeoutSettingsSeam(ctx),
   })
   host.setConfiguration(config?.enabled ?? true, config?.preventIdleSleep ?? false)

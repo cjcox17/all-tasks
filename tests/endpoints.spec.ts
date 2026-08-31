@@ -2,19 +2,17 @@ import { describe, expect, it } from 'vitest'
 import {
   clockMinutesInTimeZone,
   DEEPSEEK_OFF_PEAK,
-  effectiveOffPeakWindow,
   inDailyWindow,
-  isEndpointEligible,
+  isOffPeakNow,
   normalizeEndpoint,
   normalizeEndpointsConfig,
   normalizeEndpointList,
-  normalizeOffPeakWindow,
   parseClock,
   pickEndpoint,
   resolveEndpointSelection,
   shouldUseRouter,
+  weekdayInTimeZone,
   type EndpointConfig,
-  type EndpointEligibilityInput,
   type EndpointRouterConfig,
   type RouteDecision,
 } from '../src/core/endpoints.ts'
@@ -25,21 +23,6 @@ function endpoint(overrides: Partial<EndpointConfig> = {}): EndpointConfig {
     name: 'DeepSeek Official',
     provider: 'deepseek',
     models: [],
-    maxConcurrency: 1,
-    offPeakOnly: false,
-    ...overrides,
-  }
-}
-
-function eligibility(overrides: Partial<EndpointEligibilityInput> = {}): EndpointEligibilityInput {
-  return {
-    endpoint: endpoint(),
-    localMinutes: 600,
-    offPeakMinutes: 1080,
-    offPeakWindow: { start: '16:30', end: '00:30', timezone: 'UTC' },
-    activeCount: 0,
-    modelMaxTokens: undefined,
-    selection: { provider: 'deepseek', model: 'deepseek-chat' },
     ...overrides,
   }
 }
@@ -54,13 +37,13 @@ describe('clock parsing and daily windows', () => {
     expect(parseClock('ab:cd')).toBeUndefined()
   })
 
-  it('handles windows that cross midnight (off-peak 16:30–00:30)', () => {
-    const window = { start: '16:30', end: '00:30' }
-    expect(inDailyWindow(1080, window)).toBe(true) // 18:00
+  it('handles windows that cross midnight', () => {
+    const window = { start: '22:00', end: '06:00' }
+    expect(inDailyWindow(23 * 60, window)).toBe(true) // 23:00
     expect(inDailyWindow(20, window)).toBe(true) // 00:20
-    expect(inDailyWindow(720, window)).toBe(false) // 12:00
-    expect(inDailyWindow(990, window)).toBe(true) // boundary start inclusive
-    expect(inDailyWindow(30, window)).toBe(false) // boundary end exclusive
+    expect(inDailyWindow(12 * 60, window)).toBe(false) // 12:00
+    expect(inDailyWindow(22 * 60, window)).toBe(true) // boundary start inclusive
+    expect(inDailyWindow(6 * 60, window)).toBe(false) // boundary end exclusive
   })
 
   it('handles non-crossing windows', () => {
@@ -70,19 +53,50 @@ describe('clock parsing and daily windows', () => {
     expect(inDailyWindow(300, window)).toBe(false)
   })
 
-  it('computes minutes-of-day in a named time zone', () => {
-    const date = new Date(Date.UTC(2026, 6, 16, 2, 30))
+  it('computes minutes-of-day and weekday in a named time zone', () => {
+    const date = new Date(Date.UTC(2026, 6, 16, 2, 30)) // Thu 2026-07-16
     expect(clockMinutesInTimeZone(date, 'UTC')).toBe(150)
     expect(clockMinutesInTimeZone(date, 'Asia/Shanghai')).toBe(150 + 8 * 60) // UTC+8, same day
     expect(clockMinutesInTimeZone(new Date(Date.UTC(2026, 6, 16, 18, 30)), 'UTC')).toBe(1110)
     expect(clockMinutesInTimeZone(date, 'Not/AZone')).toBeUndefined()
+    expect(weekdayInTimeZone(date, 'UTC')).toBe(4) // Thursday
+    expect(weekdayInTimeZone(new Date(Date.UTC(2026, 6, 19)), 'UTC')).toBe(0) // Sunday
+    expect(weekdayInTimeZone(date, 'Not/AZone')).toBeUndefined()
+  })
+})
+
+describe('DeepSeek off-peak schedule (hard-coded since 2026-08-23)', () => {
+  it('keeps the official peak windows (01:00–04:00 and 06:00–10:00 UTC Mon–Fri)', () => {
+    expect(DEEPSEEK_OFF_PEAK).toEqual({
+      peak: [
+        { start: '01:00', end: '04:00' },
+        { start: '06:00', end: '10:00' },
+      ],
+      weekdays: [1, 2, 3, 4, 5],
+      timezone: 'UTC',
+    })
   })
 
-  it('falls back to the DeepSeek default for a malformed off-peak window', () => {
-    expect(normalizeOffPeakWindow({})).toEqual(DEEPSEEK_OFF_PEAK)
-    expect(normalizeOffPeakWindow('nope')).toEqual(DEEPSEEK_OFF_PEAK)
-    expect(normalizeOffPeakWindow({ start: '10:00', end: '14:00', timezone: 'Asia/Shanghai' }))
-      .toEqual({ start: '10:00', end: '14:00', timezone: 'Asia/Shanghai' })
+  it('is off-peak inside the gaps and at weekends, peak inside the blocks', () => {
+    // Mon 2026-07-13
+    const monday = (hour: number) => new Date(Date.UTC(2026, 6, 13, hour))
+    expect(isOffPeakNow(monday(0))).toBe(true) // 00:00
+    expect(isOffPeakNow(monday(2))).toBe(false) // 02:00 peak block 1
+    expect(isOffPeakNow(monday(5))).toBe(true) // 05:00 gap between blocks
+    expect(isOffPeakNow(monday(8))).toBe(false) // 08:00 peak block 2
+    expect(isOffPeakNow(monday(12))).toBe(true) // noon off-peak
+    expect(isOffPeakNow(monday(23))).toBe(true)
+    // Weekend: fully off-peak even inside the weekday peak blocks.
+    const sunday = new Date(Date.UTC(2026, 6, 19, 2))
+    expect(weekdayInTimeZone(sunday, 'UTC')).toBe(0)
+    expect(isOffPeakNow(sunday)).toBe(true)
+    const saturday = new Date(Date.UTC(2026, 6, 18, 8))
+    expect(isOffPeakNow(saturday)).toBe(true)
+  })
+
+  it('treats an unusable time zone as off-peak (constraint skipped)', () => {
+    const monday = new Date(Date.UTC(2026, 6, 13, 2))
+    expect(isOffPeakNow(monday, { peak: [{ start: '01:00', end: '04:00' }], weekdays: [1], timezone: 'Not/AZone' })).toBe(true)
   })
 })
 
@@ -90,34 +104,27 @@ describe('endpoint normalization', () => {
   it('normalizes a full endpoint entry with defaults', () => {
     expect(normalizeEndpoint({
       id: ' local ', name: 'LM Studio', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'],
-      maxConcurrency: 3, maxTokens: 8192, allowedHours: { start: '09:00', end: '17:00' },
-      offPeakOnly: true, offPeak: { start: '00:00', end: '06:00', timezone: 'UTC' },
+      defaultModel: 'qwen/qwen3.8-27b',
     })).toEqual({
       id: 'local',
       name: 'LM Studio',
       provider: 'lm-studio',
       models: ['qwen/qwen3.8-27b'],
-      maxConcurrency: 3,
-      maxTokens: 8192,
-      allowedHours: { start: '09:00', end: '17:00' },
-      offPeakOnly: true,
-      offPeak: { start: '00:00', end: '06:00', timezone: 'UTC' },
+      defaultModel: 'qwen/qwen3.8-27b',
     })
   })
 
-  it('drops unusable entries and clamps values', () => {
+  it('drops unusable entries and ignores provider-ish extras', () => {
     expect(normalizeEndpoint({ name: 'no id', provider: 'x' })).toBeUndefined()
     expect(normalizeEndpoint({ id: 'e', provider: '' })).toBeUndefined()
     const minimal = normalizeEndpoint({ id: 'e', provider: 'p' })!
     expect(minimal.name).toBe('e')
-    expect(minimal.maxConcurrency).toBe(1)
-    expect(minimal.maxTokens).toBeUndefined()
     expect(minimal.models).toEqual([])
-    expect(minimal.offPeakOnly).toBe(false)
-    expect(normalizeEndpoint({ id: 'e', provider: 'p', maxConcurrency: 0 })?.maxConcurrency).toBe(1) // clamps to the default
-    expect(normalizeEndpoint({ id: 'e', provider: 'p', maxConcurrency: 1.5 })?.maxConcurrency).toBe(1)
+    expect(minimal.defaultModel).toBeUndefined()
+    // Provider-level fields are not endpoint concerns; they are ignored.
+    expect(normalizeEndpoint({ id: 'e', provider: 'p', maxConcurrency: 0, allowedHours: { start: 'nope', end: 'x' } }))
+      .toEqual({ id: 'e', name: 'e', provider: 'p', models: [] })
     expect(normalizeEndpoint({ id: 'e', provider: 'p', models: ['m1', 'm1', 'm2'] })?.models).toEqual(['m1', 'm2'])
-    expect(normalizeEndpoint({ id: 'e', provider: 'p', allowedHours: { start: 'nope', end: 'x' } })?.allowedHours).toBeUndefined()
   })
 
   it('normalizes endpoint id lists (dedupe, bounds, blank collapse)', () => {
@@ -130,9 +137,8 @@ describe('endpoint normalization', () => {
     expect(normalizeEndpointList(Array.from({ length: 40 }, (_, i) => `e${i}`))).toHaveLength(16)
   })
 
-  it('builds a safe router config with the DeepSeek default window', () => {
+  it('builds a safe router config', () => {
     const config = normalizeEndpointsConfig({ endpoints: [{ id: 'a', provider: 'p' }, { id: 'a', provider: 'dup' }] })
-    expect(config.offPeak).toEqual(DEEPSEEK_OFF_PEAK)
     expect(config.endpointMaxWaitHours).toBe(24)
     expect(config.defaultEndpoints).toEqual([])
     expect(config.endpoints).toHaveLength(1) // dedup by id, first wins
@@ -156,125 +162,61 @@ describe('selection resolution', () => {
   })
 })
 
-describe('endpoint eligibility', () => {
-  it('is eligible when nothing blocks', () => {
-    expect(isEndpointEligible(eligibility())).toEqual({ ok: true })
-  })
-
-  it('blocks outside allowed hours', () => {
-    const input = eligibility({ endpoint: endpoint({ allowedHours: { start: '12:00', end: '14:00' } }), localMinutes: 600 })
-    expect(isEndpointEligible(input)).toEqual({ ok: false, reason: 'outside-allowed-hours' })
-    expect(isEndpointEligible(eligibility({ endpoint: endpoint({ allowedHours: { start: '09:00', end: '11:00' } }), localMinutes: 600 }))).toEqual({ ok: true })
-  })
-
-  it('blocks when off-peak-only outside the window (midnight crossing respected)', () => {
-    const offPeak = { start: '16:30', end: '00:30', timezone: 'UTC' }
-    const input = eligibility({ endpoint: endpoint({ offPeakOnly: true }), offPeakWindow: offPeak })
-    expect(isEndpointEligible({ ...input, offPeakMinutes: 1080 })).toEqual({ ok: true }) // 18:00 UTC
-    expect(isEndpointEligible({ ...input, offPeakMinutes: 720 })).toEqual({ ok: false, reason: 'off-peak-only' }) // 12:00 UTC
-  })
-
-  it('blocks when concurrency is full', () => {
-    expect(isEndpointEligible(eligibility({ endpoint: endpoint({ maxConcurrency: 2 }), activeCount: 2 })))
-      .toEqual({ ok: false, reason: 'concurrency-full' })
-    expect(isEndpointEligible(eligibility({ endpoint: endpoint({ maxConcurrency: 2 }), activeCount: 1 }))).toEqual({ ok: true })
-  })
-
-  it('blocks when the model exceeds the endpoint token cap', () => {
-    const input = eligibility({ endpoint: endpoint({ maxTokens: 4096 }), modelMaxTokens: 8192 })
-    expect(isEndpointEligible(input)).toEqual({ ok: false, reason: 'model-over-cap' })
-    expect(isEndpointEligible(eligibility({ endpoint: endpoint({ maxTokens: 4096 }), modelMaxTokens: 4096 }))).toEqual({ ok: true })
-    expect(isEndpointEligible(eligibility({ endpoint: endpoint({ maxTokens: 4096 }) }))).toEqual({ ok: true }) // unknown model cap
-  })
-
-  it('blocks when the endpoint cannot serve the task', () => {
-    expect(isEndpointEligible(eligibility({ selection: undefined }))).toEqual({ ok: false, reason: 'model-not-served' })
-  })
-})
-
-function config(endpoints: readonly EndpointConfig[]): EndpointRouterConfig {
-  return { offPeak: { ...DEEPSEEK_OFF_PEAK }, endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints] }
+function config(endpoints: readonly EndpointConfig[], overrides: Partial<EndpointRouterConfig> = {}): EndpointRouterConfig {
+  return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints], ...overrides }
 }
 
 describe('pickEndpoint routing', () => {
-  const state = {
-    localMinutes: 600,
-    offPeakMinutes: 720,
-    activeCounts: new Map<string, number>(),
-    modelMaxTokens: () => undefined,
-  }
-
   it('returns unrouted when no endpoints are configured anywhere', () => {
-    expect(pickEndpoint({}, config([]), state)).toEqual({ mode: 'unrouted' })
-    expect(pickEndpoint({ endpoints: [] }, config([]), state)).toEqual({ mode: 'unrouted' })
+    expect(pickEndpoint({}, config([]))).toEqual({ mode: 'unrouted' })
+    expect(pickEndpoint({ endpoints: [] }, config([]))).toEqual({ mode: 'unrouted' })
     expect(shouldUseRouter({ endpoints: ['a'] }, config([]))).toBe(true)
     expect(shouldUseRouter({}, config([]))).toBe(false)
   })
 
-  it('routes through the first eligible endpoint in priority order', () => {
+  it('routes through the first endpoint that can serve the task in priority order', () => {
     const endpoints = [
-      endpoint({ id: 'local', provider: 'lm-studio', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'qwen/qwen3.8-27b' }),
-      endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
+      // No default model: the local endpoint cannot serve a deepseek pin.
+      endpoint({ id: 'local', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'] }),
+      endpoint({ id: 'cloud', provider: 'deepseek', models: [], defaultModel: 'deepseek-chat' }),
     ]
-    const decision = pickEndpoint({ endpoints: ['local', 'cloud'] }, config(endpoints), state)
+    // The pinned model is deepseek-chat: the local endpoint cannot serve it, so the cloud one wins.
+    const decision = pickEndpoint({ endpoints: ['local', 'cloud'], model: { provider: 'deepseek', model: 'deepseek-chat' } }, config(endpoints))
     expect(decision).toMatchObject({ mode: 'routed', endpoint: { id: 'cloud' }, selection: { provider: 'deepseek', model: 'deepseek-chat' } })
+    // The local endpoint serves the pinned qwen model directly.
+    const local = pickEndpoint({ endpoints: ['local', 'cloud'], model: { provider: 'lm-studio', model: 'qwen/qwen3.8-27b' } }, config(endpoints))
+    expect(local).toMatchObject({ mode: 'routed', endpoint: { id: 'local' } })
   })
 
-  it('waits (preferred = first known candidate) when every candidate is blocked', () => {
+  it('waits (preferred = first known candidate) when every candidate cannot serve the task', () => {
     const endpoints = [
-      endpoint({ id: 'local', provider: 'lm-studio', offPeakOnly: true, defaultModel: 'qwen/qwen3.8-27b' }),
-      endpoint({ id: 'cloud', provider: 'deepseek', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'deepseek-chat' }),
+      endpoint({ id: 'local', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'] }),
+      endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] }),
     ]
-    const decision: RouteDecision = pickEndpoint({ endpoints: ['local', 'missing', 'cloud'] }, config(endpoints), state)
+    const decision: RouteDecision = pickEndpoint({ endpoints: ['local', 'missing', 'cloud'], model: { provider: 'deepseek', model: 'deepseek-chat' } }, config(endpoints))
     expect(decision.mode).toBe('wait')
     if (decision.mode === 'wait') {
       expect(decision.endpointId).toBe('local')
       expect(decision.reasons).toContain('unknown-endpoint')
-      expect(decision.reasons).toContain('off-peak-only')
+      expect(decision.reasons).toContain('model-not-served')
     }
   })
 
   it('uses the global default list for tasks without explicit pins', () => {
     const endpoints = [endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' })]
-    const routerConfig = { ...config(endpoints), defaultEndpoints: ['cloud'] }
-    const decision = pickEndpoint({}, routerConfig, state)
+    const routerConfig = config(endpoints, { defaultEndpoints: ['cloud'] })
+    const decision = pickEndpoint({}, routerConfig)
     expect(decision).toMatchObject({ mode: 'routed', endpoint: { id: 'cloud' } })
   })
 
   it('skips unknown endpoint ids entirely and runs unrouted when none resolve', () => {
-    const decision = pickEndpoint({ endpoints: ['ghost'] }, config([endpoint()]), state)
+    const decision = pickEndpoint({ endpoints: ['ghost'] }, config([endpoint()]))
     expect(decision).toMatchObject({ mode: 'unrouted' })
   })
 
-  it('respects the endpoint token cap through the model-maxTokens reader', () => {
-    const endpoints = [
-      endpoint({ id: 'small', provider: 'deepseek', maxTokens: 1024, defaultModel: 'deepseek-chat' }),
-      endpoint({ id: 'big', provider: 'deepseek', maxTokens: 65536, defaultModel: 'deepseek-chat' }),
-    ]
-    const capped = { ...state, modelMaxTokens: () => 8192 }
-    const decision = pickEndpoint({ endpoints: ['small', 'big'] }, config(endpoints), capped)
-    expect(decision).toMatchObject({ mode: 'routed', endpoint: { id: 'big' } })
-  })
-
-  it('counts active launches per endpoint for concurrency', () => {
-    const endpoints = [endpoint({ id: 'a', provider: 'p', maxConcurrency: 1, defaultModel: 'm' })]
-    const full = { ...state, activeCounts: new Map([['a', 1]]) }
-    const decision = pickEndpoint({ endpoints: ['a'] }, config(endpoints), full)
-    expect(decision.mode).toBe('wait')
-    const free = { ...state, activeCounts: new Map([['a', 0]]) }
-    expect(pickEndpoint({ endpoints: ['a'] }, config(endpoints), free)).toMatchObject({ mode: 'routed' })
-  })
-
-  it('resolves the per-endpoint off-peak override for eligibility', () => {
-    const endpoints = [endpoint({
-      id: 'night', provider: 'p', offPeakOnly: true, defaultModel: 'm',
-      offPeak: { start: '00:00', end: '06:00', timezone: 'UTC' },
-    })]
-    // 12:00 UTC is inside the global window but outside this endpoint's override.
-    const decision = pickEndpoint({ endpoints: ['night'] }, config(endpoints), state)
-    expect(decision.mode).toBe('wait')
-    const night = { ...state, offPeakMinutes: 120 } // 02:00 UTC
-    expect(pickEndpoint({ endpoints: ['night'] }, config(endpoints), night)).toMatchObject({ mode: 'routed' })
-    expect(effectiveOffPeakWindow(endpoints[0]!, { ...DEEPSEEK_OFF_PEAK })).toEqual({ start: '00:00', end: '06:00', timezone: 'UTC' })
+  it('prefers a pinned model over the endpoint default when both are served', () => {
+    const endpoints = [endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-reasoner' })]
+    const decision = pickEndpoint({ endpoints: ['cloud'], model: { provider: 'deepseek', model: 'deepseek-chat' } }, config(endpoints))
+    expect(decision).toMatchObject({ mode: 'routed', selection: { provider: 'deepseek', model: 'deepseek-chat' } })
   })
 })

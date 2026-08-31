@@ -2,9 +2,14 @@
  * Endpoint editor state and write-ops for the task-board settings card.
  *
  * Endpoints live in the plugin's own `task-board` settings namespace
- * (`endpoints` array + the `defaultEndpoints` fallback order). The router
- * reads them through `normalizeEndpointsConfig`; the new-task / task-detail
- * modal lists them through the browser's settings scope. This module is the
+ * (`endpoints` array + the `defaultEndpoints` fallback order). An endpoint is
+ * deliberately lean — it names one DSH provider route and narrows that
+ * provider's models plus a default model; provider-level concerns (concurrency,
+ * token caps, windows) belong to the provider's own settings, not here. The
+ * only per-endpoint tunables beyond the selection are the model request
+ * timeouts (idle + total), which the editor resolves from the provider
+ * route's settings (`llm-pi-ai` / `llm-deepseek`) and writes back through
+ * them on save — the only place DSH honors timeouts. This module is the
  * shared pure core for the settings-card editor: it resolves the effective
  * (schema-defaulted) endpoint list, validates a full replacement patch with
  * messages that name the offending field, and emits the settings ops that
@@ -12,14 +17,14 @@
  * namespace schema judges the values too.
  */
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import { DEEPSEEK_PROVIDER, DEFAULT_STREAM_IDLE_TIMEOUT_MS, type ModelTimeoutView } from './model-timeouts.ts'
 
 /** Bound on endpoint id / name / provider / model ids (mirrors core/endpoints). */
 export const ENDPOINT_FIELD_BOUND = 256
 /** Bound on the number of models one endpoint may list. */
 export const ENDPOINT_MODELS_BOUND = 64
-
-/** The schema defaults the editor round-trips against (index.ts offPeakWindow). */
-export const DEFAULT_OFF_PEAK = { start: '16:30', end: '00:30', timezone: 'UTC' } as const
+/** Upper bound on the timeout fields (seconds; 24h). */
+export const ENDPOINT_TIMEOUT_BOUND = 86_400
 
 /** One endpoint the settings editor renders and round-trips. */
 export interface EndpointEditorView {
@@ -33,16 +38,26 @@ export interface EndpointEditorView {
   models: string[]
   /** Model used when the task's model pin cannot be served by this endpoint. */
   defaultModel: string
-  /** Max concurrent launched executions through this endpoint. */
-  maxConcurrency: number
-  /** Router token cap (0 = no cap). */
-  maxTokens: number
-  /** Daily allowed-hours window; both blank = always allowed. */
-  allowedHours: { start: string; end: string }
-  /** Only run inside the (global or per-endpoint) off-peak window. */
-  offPeakOnly: boolean
-  /** Per-endpoint off-peak window override. */
-  offPeak: { start: string; end: string; timezone: string }
+  /** Effective stream-idle timeout in seconds (from the provider route's settings). */
+  idleSeconds: number
+  /** Effective total request timeout in seconds; 0 = unset (pi-ai only). */
+  totalSeconds: number
+}
+
+/** One known provider route the editor can attach an endpoint to. */
+export interface EndpointProviderInfo {
+  /** Provider route id (e.g. `lm-studio`, `deepseek-official`). */
+  provider: string
+  /** Human display name. */
+  displayName: string
+  /** Settings namespace the route's timeout lives in. */
+  namespace: 'llm-pi-ai' | 'llm-deepseek'
+  /** Model ids the route serves (empty when the settings expose none). */
+  models: string[]
+  /** Effective stream-idle timeout in milliseconds. */
+  streamIdleTimeoutMs: number
+  /** Effective total request timeout in milliseconds (pi-ai only, when set). */
+  timeoutMs?: number
 }
 
 /** The editor's full state over the `task-board` namespace. */
@@ -52,55 +67,96 @@ export interface EndpointEditorState {
   defaultEndpoints: string[]
 }
 
-const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/
-
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function windowOf(value: unknown): { start: string; end: string } {
-  if (typeof value !== 'object' || value === null) return { start: '', end: '' }
-  const window = value as Record<string, unknown>
-  return {
-    start: typeof window.start === 'string' ? window.start : '',
-    end: typeof window.end === 'string' ? window.end : '',
+/** Resolve the model ids a provider route exposes; accepts `{id}` objects or plain strings. */
+function modelsOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const models: string[] = []
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      if (item.trim() !== '' && !models.includes(item.trim())) models.push(item.trim())
+    } else if (typeof item === 'object' && item !== null) {
+      const id = (item as Record<string, unknown>).id
+      if (typeof id === 'string' && id.trim() !== '' && !models.includes(id.trim())) models.push(id.trim())
+    }
+    if (models.length >= ENDPOINT_MODELS_BOUND) break
   }
+  return models
 }
 
-function viewOf(raw: unknown): EndpointEditorView | undefined {
+/**
+ * Resolve the provider catalog from the two settings namespaces' effective
+ * values. Absent or malformed sections yield no entries; pi-ai routes without
+ * a model list expose an empty `models` (the editor then falls back to free
+ * text).
+ */
+export function readEndpointProviderCatalog(piAi: unknown, deepSeek: unknown): EndpointProviderInfo[] {
+  const catalog: EndpointProviderInfo[] = []
+  const providers = (piAi as { providers?: Record<string, unknown> } | undefined)?.providers
+  if (providers !== undefined && typeof providers === 'object') {
+    for (const [provider, raw] of Object.entries(providers)) {
+      if (typeof raw !== 'object' || raw === null) continue
+      const profile = raw as { displayName?: unknown; models?: unknown; streamIdleTimeoutMs?: unknown; timeoutMs?: unknown }
+      catalog.push({
+        provider,
+        displayName: typeof profile.displayName === 'string' && profile.displayName !== ''
+          ? profile.displayName
+          : provider,
+        namespace: 'llm-pi-ai',
+        models: modelsOf(profile.models),
+        streamIdleTimeoutMs: numberOr(profile.streamIdleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+        ...(numberOr(profile.timeoutMs, 0) > 0 ? { timeoutMs: numberOr(profile.timeoutMs, 0) } : {}),
+      })
+    }
+  }
+  if (typeof deepSeek === 'object' && deepSeek !== null) {
+    const section = deepSeek as { models?: unknown; streamIdleTimeoutMs?: unknown }
+    catalog.push({
+      provider: DEEPSEEK_PROVIDER,
+      displayName: 'DeepSeek',
+      namespace: 'llm-deepseek',
+      models: modelsOf(section.models),
+      streamIdleTimeoutMs: numberOr(section.streamIdleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+    })
+  }
+  return catalog
+}
+
+function viewOf(raw: unknown, byProvider: ReadonlyMap<string, ModelTimeoutView>): EndpointEditorView | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const entry = raw as Record<string, unknown>
   if (typeof entry.id !== 'string' || entry.id === '') return undefined
-  const offPeak = windowOf(entry.offPeak)
-  const timezone = (entry.offPeak as Record<string, unknown> | undefined)?.timezone
+  const provider = typeof entry.provider === 'string' ? entry.provider : ''
+  const timeout = provider === '' ? undefined : byProvider.get(provider)
   return {
     id: entry.id,
     name: typeof entry.name === 'string' ? entry.name : '',
-    provider: typeof entry.provider === 'string' ? entry.provider : '',
+    provider,
     models: Array.isArray(entry.models) ? entry.models.filter((model): model is string => typeof model === 'string') : [],
     defaultModel: typeof entry.defaultModel === 'string' ? entry.defaultModel : '',
-    maxConcurrency: numberOr(entry.maxConcurrency, 1),
-    maxTokens: numberOr(entry.maxTokens, 0),
-    allowedHours: windowOf(entry.allowedHours),
-    offPeakOnly: entry.offPeakOnly === true,
-    offPeak: {
-      start: offPeak.start === '' ? DEFAULT_OFF_PEAK.start : offPeak.start,
-      end: offPeak.end === '' ? DEFAULT_OFF_PEAK.end : offPeak.end,
-      timezone: typeof timezone === 'string' && timezone !== '' ? timezone : DEFAULT_OFF_PEAK.timezone,
-    },
+    idleSeconds: timeout === undefined
+      ? Math.round(DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000)
+      : Math.round(timeout.streamIdleTimeoutMs / 1000),
+    totalSeconds: timeout?.timeoutMs === undefined ? 0 : Math.round(timeout.timeoutMs / 1000),
   }
 }
 
 /**
  * Resolve the editor's state from the `task-board` namespace's effective
- * value. Malformed entries and unknown default-list ids are dropped
- * defensively; an absent namespace yields an empty editor.
+ * value plus the resolved provider timeout views. Malformed entries and
+ * unknown default-list ids are dropped defensively; an absent namespace
+ * yields an empty editor.
  * @param settings - resolved `task-board` namespace value.
+ * @param providerViews - resolved provider timeout rows (`readModelTimeoutViews`).
  */
-export function readEndpointEditorState(settings: unknown): EndpointEditorState {
+export function readEndpointEditorState(settings: unknown, providerViews: readonly ModelTimeoutView[] = []): EndpointEditorState {
+  const byProvider = new Map(providerViews.map(view => [view.provider, view]))
   const section = (settings as { endpoints?: unknown; defaultEndpoints?: unknown } | undefined)
   const endpoints = Array.isArray(section?.endpoints)
-    ? section.endpoints.map(viewOf).filter((view): view is EndpointEditorView => view !== undefined)
+    ? section.endpoints.map(raw => viewOf(raw, byProvider)).filter((view): view is EndpointEditorView => view !== undefined)
     : []
   const ids = new Set(endpoints.map(endpoint => endpoint.id))
   const defaultEndpoints = Array.isArray(section?.defaultEndpoints)
@@ -109,22 +165,12 @@ export function readEndpointEditorState(settings: unknown): EndpointEditorState 
   return { endpoints, defaultEndpoints }
 }
 
-function clockOrEmpty(value: unknown, label: string): string {
-  if (typeof value !== 'string') throw new Error(`${label} must be a string`)
-  const trimmed = value.trim()
-  if (trimmed === '') return ''
-  if (!CLOCK.test(trimmed)) throw new Error(`${label} must be 'HH:MM' or blank`)
-  return trimmed
-}
-
-function windowOrEmpty(value: unknown, label: string): { start: string; end: string } | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${label} must be an object`)
-  const window = value as Record<string, unknown>
-  const start = clockOrEmpty(window.start, `${label}.start`)
-  const end = clockOrEmpty(window.end, `${label}.end`)
-  if ((start === '') !== (end === '')) throw new Error(`${label} requires both start and end (or neither)`)
-  return { start, end }
+function wholeSeconds(value: unknown, label: string, allowZero: boolean): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${label} must be a whole number of seconds`)
+  if (value < (allowZero ? 0 : 1) || value > ENDPOINT_TIMEOUT_BOUND) {
+    throw new Error(`${label} must be between ${allowZero ? 0 : 1} and ${ENDPOINT_TIMEOUT_BOUND} seconds`)
+  }
+  return value
 }
 
 /**
@@ -165,43 +211,14 @@ export function parseEndpointEditorPatch(value: unknown): EndpointEditorState {
     for (const model of models) {
       if (model.length > ENDPOINT_FIELD_BOUND) throw new Error(`endpoints[${index}].models entry is too long`)
     }
-    const maxConcurrency = entry.maxConcurrency === undefined ? 1 : entry.maxConcurrency
-    if (typeof maxConcurrency !== 'number' || !Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
-      throw new Error(`endpoints[${index}].maxConcurrency must be a whole number >= 1`)
-    }
-    const maxTokens = entry.maxTokens === undefined ? 0 : entry.maxTokens
-    if (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens) || maxTokens < 0) {
-      throw new Error(`endpoints[${index}].maxTokens must be a whole number >= 0`)
-    }
-    const allowed = windowOrEmpty(entry.allowedHours, `endpoints[${index}].allowedHours`) ?? { start: '', end: '' }
-    if (typeof entry.offPeakOnly !== 'undefined' && typeof entry.offPeakOnly !== 'boolean') {
-      throw new Error(`endpoints[${index}].offPeakOnly must be a boolean`)
-    }
-    let offPeak: { start: string; end: string; timezone: string } = DEFAULT_OFF_PEAK
-    if (entry.offPeak !== undefined) {
-      const window = windowOrEmpty(entry.offPeak, `endpoints[${index}].offPeak`) ?? { start: '', end: '' }
-      const rawTz = (entry.offPeak as Record<string, unknown>).timezone
-      if (rawTz !== undefined && typeof rawTz !== 'string') throw new Error(`endpoints[${index}].offPeak.timezone must be a string`)
-      let timezone: string = DEFAULT_OFF_PEAK.timezone
-      if (typeof rawTz === 'string' && rawTz.trim() !== '') timezone = rawTz.trim()
-      if (timezone.length > ENDPOINT_FIELD_BOUND) throw new Error(`endpoints[${index}].offPeak.timezone is too long`)
-      offPeak = {
-        start: window.start === '' ? DEFAULT_OFF_PEAK.start : window.start,
-        end: window.end === '' ? DEFAULT_OFF_PEAK.end : window.end,
-        timezone,
-      }
-    }
     endpoints.push({
       id,
       name,
       provider,
       models,
       defaultModel,
-      maxConcurrency,
-      maxTokens,
-      allowedHours: allowed,
-      offPeakOnly: entry.offPeakOnly === true,
-      offPeak,
+      idleSeconds: wholeSeconds(entry.idleSeconds ?? Math.round(DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000), `endpoints[${index}].idleSeconds`, false),
+      totalSeconds: wholeSeconds(entry.totalSeconds ?? 0, `endpoints[${index}].totalSeconds`, true),
     })
   }
   const defaultEndpoints: string[] = []
@@ -217,31 +234,21 @@ export function parseEndpointEditorPatch(value: unknown): EndpointEditorState {
   return { endpoints, defaultEndpoints }
 }
 
-/** The stored (minimal) shape of one endpoint: defaults are omitted so the section stays hand-editable. */
+/** The stored (minimal) shape of one endpoint: provider-ish defaults are omitted so the section stays hand-editable. */
 function rawOf(view: EndpointEditorView): Record<string, unknown> {
   const raw: Record<string, unknown> = { id: view.id, provider: view.provider }
   if (view.name !== '') raw.name = view.name
   if (view.models.length > 0) raw.models = view.models
   if (view.defaultModel !== '') raw.defaultModel = view.defaultModel
-  if (view.maxConcurrency !== 1) raw.maxConcurrency = view.maxConcurrency
-  if (view.maxTokens !== 0) raw.maxTokens = view.maxTokens
-  if (view.allowedHours.start !== '' && view.allowedHours.end !== '') {
-    raw.allowedHours = { start: view.allowedHours.start, end: view.allowedHours.end }
-  }
-  if (view.offPeakOnly) raw.offPeakOnly = true
-  const offPeak = view.offPeak
-  if (!(offPeak.start === DEFAULT_OFF_PEAK.start && offPeak.end === DEFAULT_OFF_PEAK.end && offPeak.timezone === DEFAULT_OFF_PEAK.timezone)) {
-    const value: Record<string, string> = { start: offPeak.start, end: offPeak.end }
-    if (offPeak.timezone !== DEFAULT_OFF_PEAK.timezone) value.timezone = offPeak.timezone
-    raw.offPeak = value
-  }
   return raw
 }
 
 /**
  * The settings ops that store one editor state in the `task-board` namespace:
  * the full `endpoints` array plus the `defaultEndpoints` order, written as one
- * atomic-per-namespace mutation.
+ * atomic-per-namespace mutation. The timeout fields are intentionally NOT
+ * stored here — they belong to the provider route's settings (see
+ * `endpointTimeoutPatches`), which is where DSH honors them.
  * @param state - the validated editor state.
  * @returns the ordered path ops.
  */
@@ -250,4 +257,31 @@ export function endpointEditorOps(state: EndpointEditorState): SettingsPathOp[] 
     { op: 'set', path: ['endpoints'], value: state.endpoints.map(rawOf) },
     { op: 'set', path: ['defaultEndpoints'], value: state.defaultEndpoints },
   ]
+}
+
+/**
+ * Build the provider-timeout writes one endpoint state implies: each endpoint
+ * whose provider resolves to a known route carries its idle (and, for pi-ai,
+ * total) timeout through to that route's settings. Endpoints on unknown
+ * providers are skipped (their timeouts cannot be applied anywhere).
+ * @param state - the validated editor state.
+ * @param catalog - the resolved provider catalog.
+ * @returns per-endpoint timeout patches keyed by endpoint index, in input order.
+ */
+export function endpointTimeoutPatches(
+  state: EndpointEditorState,
+  catalog: readonly EndpointProviderInfo[],
+): Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number }> {
+  const patches: Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number }> = []
+  for (const endpoint of state.endpoints) {
+    const info = catalog.find(candidate => candidate.provider === endpoint.provider)
+    if (info === undefined) continue
+    patches.push({
+      namespace: info.namespace,
+      provider: info.provider,
+      streamIdleTimeoutMs: endpoint.idleSeconds * 1000,
+      ...(info.namespace === 'llm-pi-ai' ? { timeoutMs: endpoint.totalSeconds * 1000 } : {}),
+    })
+  }
+  return patches
 }

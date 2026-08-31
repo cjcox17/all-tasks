@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Endpoints editor: renders the configured endpoints, edits rows, reorders,
- * and writes a full replacement through the board's endpoints routes so the
- * task modal's dropdown picks the change up live.
+ * Endpoints editor: renders the configured endpoints, edits rows (provider
+ * select limits models/default model; per-endpoint timeouts), reorders, and
+ * writes a full replacement through the board's endpoints routes so the task
+ * modal's dropdown picks the change up live.
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -39,14 +40,16 @@ async function flush(): Promise<void> {
 const GET_BODY = {
   endpoints: [
     {
-      id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'],
-      defaultModel: '', maxConcurrency: 2, maxTokens: 8192,
-      allowedHours: { start: '', end: '' }, offPeakOnly: false,
-      offPeak: { start: '16:30', end: '00:30', timezone: 'UTC' },
+      id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio',
+      models: ['qwen/qwen3.8-27b'], defaultModel: 'qwen/qwen3.8-27b',
+      idleSeconds: 900, totalSeconds: 3600,
     },
   ],
   defaultEndpoints: ['lm-studio-nas'],
-  providers: ['lm-studio', 'deepseek-official'],
+  providers: [
+    { provider: 'lm-studio', displayName: 'LM Studio', namespace: 'llm-pi-ai', models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'], streamIdleTimeoutMs: 900_000, timeoutMs: 3_600_000 },
+    { provider: 'deepseek-official', displayName: 'DeepSeek', namespace: 'llm-deepseek', models: ['deepseek-chat', 'deepseek-reasoner'], streamIdleTimeoutMs: 300_000 },
+  ],
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -80,7 +83,7 @@ function inputOf(row: HTMLElement, idSuffix: string): HTMLInputElement {
 }
 
 describe('EndpointsEditor', () => {
-  it('renders each endpoint prefilled and the default order list', async () => {
+  it('renders each endpoint prefilled (provider, model list, timeouts) and the default order', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, GET_BODY)))
     const container = mount()
     await flush()
@@ -89,20 +92,21 @@ describe('EndpointsEditor', () => {
     const row = rowOf(container, 'lm-studio-nas')
     expect(inputOf(row, 'endpoint-id-0').value).toBe('lm-studio-nas')
     expect(inputOf(row, 'endpoint-name-0').value).toBe('LM Studio (NAS)')
-    expect(inputOf(row, 'endpoint-provider-0').value).toBe('lm-studio')
-    expect(inputOf(row, 'endpoint-models-0').value).toBe('qwen/qwen3.8-27b')
-    expect(inputOf(row, 'endpoint-concurrency-0').value).toBe('2')
+    expect(inputOf(row, 'endpoint-idle-0').value).toBe('900')
+    expect(inputOf(row, 'endpoint-total-0').value).toBe('3600')
+    // The provider's model list renders as checkboxes (models: 2 known).
+    const modelBoxes = row.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+    expect(modelBoxes.length).toBe(2)
+    expect(Array.from(modelBoxes).filter(box => box.checked).length).toBe(1)
     const order = container.querySelector('[data-dsh-part="default-endpoints"]')
     expect(order?.textContent).toContain('LM Studio (NAS)')
-    // The provider field completes from the known provider routes.
-    expect(container.querySelector('#endpoint-providers')).not.toBeNull()
   })
 
-  it('adds a blank row and saves a full replacement', async () => {
+  it('adds a blank row, picks a provider, and saves a full replacement', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       if (init?.method === 'POST') {
         return jsonResponse(200, {
-          endpoints: [{ ...GET_BODY.endpoints[0], maxConcurrency: 3 }],
+          endpoints: [{ ...GET_BODY.endpoints[0], idleSeconds: 600 }],
           defaultEndpoints: ['lm-studio-nas'],
         })
       }
@@ -117,17 +121,23 @@ describe('EndpointsEditor', () => {
     expect(container.querySelectorAll('[data-endpoint]').length).toBe(2)
 
     const setValue = nativeValueSetter()
-    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-concurrency-0'), '3') })
-    // The appended row must be complete before the whole list can save.
-    act(() => { setValue(inputOf(rowOf(container, 'endpoint-2'), 'endpoint-provider-1'), 'deepseek') })
+    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-idle-0'), '600') })
+    // The appended row needs a provider before the whole list can save.
+    const blank = rowOf(container, 'endpoint-2')
+    const providerSelect = blank.querySelector<HTMLSelectElement>('select[id$="endpoint-provider-1"]')
+    if (providerSelect === null) throw new Error('missing provider select')
+    act(() => {
+      providerSelect.value = 'deepseek-official'
+      providerSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
     act(() => { buttonByText(container, 'settings.endpointSave').click() })
     await flush()
 
     const posts = fetchMock.mock.calls.filter(call => (call[1] as RequestInit | undefined)?.method === 'POST')
     expect(posts).toHaveLength(1)
     const body = JSON.parse(String((posts[0][1] as RequestInit).body)) as { endpoints: Array<Record<string, unknown>>; defaultEndpoints?: string[] }
-    expect(body.endpoints[0]).toMatchObject({ id: 'lm-studio-nas', provider: 'lm-studio', maxConcurrency: 3 })
-    expect(body.endpoints[1]).toMatchObject({ id: 'endpoint-2', provider: 'deepseek' })
+    expect(body.endpoints[0]).toMatchObject({ id: 'lm-studio-nas', provider: 'lm-studio', idleSeconds: 600 })
+    expect(body.endpoints[1]).toMatchObject({ id: 'endpoint-2', provider: 'deepseek-official' })
     expect(body.defaultEndpoints).toEqual(['lm-studio-nas'])
     expect(container.textContent).toContain('settings.endpointSaved')
   })
@@ -147,12 +157,12 @@ describe('EndpointsEditor', () => {
     expect(blankIdRow.querySelector('[role="alert"]')?.textContent).toBe('settings.endpointInvalidId')
     expect(fetchMock.mock.calls.some(call => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(false)
 
-    // A malformed allowed-hours window is rejected too.
+    // A malformed idle timeout is rejected too.
     act(() => { setValue(inputOf(blankIdRow, 'endpoint-id-0'), 'lm-studio-nas') })
-    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-allowed-start-0'), '25:00') })
+    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-idle-0'), '0') })
     act(() => { buttonByText(container, 'settings.endpointSave').click() })
     await flush()
-    expect(rowOf(container, 'lm-studio-nas').querySelector('[role="alert"]')?.textContent).toBe('settings.endpointInvalidTime')
+    expect(rowOf(container, 'lm-studio-nas').querySelector('[role="alert"]')?.textContent).toBe('settings.endpointInvalidNumber')
     expect(fetchMock.mock.calls.some(call => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(false)
   })
 
@@ -167,10 +177,7 @@ describe('EndpointsEditor', () => {
   })
 
   it('discards local edits and reloads on reset', async () => {
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'POST') return jsonResponse(200, GET_BODY)
-      return jsonResponse(200, GET_BODY)
-    })
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => jsonResponse(200, GET_BODY))
     vi.stubGlobal('fetch', fetchMock)
     const container = mount()
     await flush()

@@ -4,7 +4,6 @@ import {
   MAX_TIMER_DELAY_MS,
   assertTimeoutMs,
   modelTimeoutOps,
-  parseModelTimeoutPatch,
   readModelTimeoutViews,
   type ModelTimeoutView,
 } from '../src/model-timeouts.ts'
@@ -122,38 +121,5 @@ describe('modelTimeoutOps', () => {
     expect(() => modelTimeoutOps(LM_STUDIO_VIEW, { provider: 'lm-studio', streamIdleTimeoutMs: MAX_TIMER_DELAY_MS + 1 })).toThrow(/between 1 and/)
     expect(() => modelTimeoutOps(LM_STUDIO_VIEW, { provider: 'lm-studio', streamIdleTimeoutMs: 600_000, timeoutMs: -5 })).toThrow(/between 1 and/)
     expect(() => assertTimeoutMs(Number.NaN, 'x')).toThrow(/between 1 and/)
-  })
-})
-
-describe('parseModelTimeoutPatch', () => {
-  it('parses a full patch with optional total timeout', () => {
-    expect(parseModelTimeoutPatch({ provider: 'lm-studio', streamIdleTimeoutMs: 900_000, timeoutMs: 1_200_000 })).toEqual({
-      provider: 'lm-studio',
-      streamIdleTimeoutMs: 900_000,
-      timeoutMs: 1_200_000,
-    })
-  })
-
-  it('parses nulls and an absent total timeout', () => {
-    expect(parseModelTimeoutPatch({ provider: 'lm-studio', streamIdleTimeoutMs: null, timeoutMs: null })).toEqual({
-      provider: 'lm-studio',
-      streamIdleTimeoutMs: null,
-      timeoutMs: null,
-    })
-    expect(parseModelTimeoutPatch({ provider: 'lm-studio', streamIdleTimeoutMs: 600_000 })).toEqual({
-      provider: 'lm-studio',
-      streamIdleTimeoutMs: 600_000,
-    })
-  })
-
-  it('rejects malformed and out-of-range patches', () => {
-    expect(() => parseModelTimeoutPatch(null)).toThrow(/must be an object/)
-    expect(() => parseModelTimeoutPatch([])).toThrow(/must be an object/)
-    expect(() => parseModelTimeoutPatch({})).toThrow(/non-empty provider/)
-    expect(() => parseModelTimeoutPatch({ provider: '' })).toThrow(/non-empty provider/)
-    expect(() => parseModelTimeoutPatch({ provider: 'x', streamIdleTimeoutMs: '600000' })).toThrow(/number or null/)
-    expect(() => parseModelTimeoutPatch({ provider: 'x', streamIdleTimeoutMs: 600_000, timeoutMs: '900000' })).toThrow(/number or null/)
-    expect(() => parseModelTimeoutPatch({ provider: 'x', streamIdleTimeoutMs: 0 })).toThrow(/between 1 and/)
-    expect(() => parseModelTimeoutPatch({ provider: 'x', streamIdleTimeoutMs: 600_000, timeoutMs: 0 })).toThrow(/between 1 and/)
   })
 })

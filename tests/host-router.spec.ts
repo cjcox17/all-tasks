@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEEPSEEK_OFF_PEAK, type EndpointConfig, type EndpointRouterConfig } from '../src/core/endpoints.ts'
+import type { EndpointConfig, EndpointRouterConfig } from '../src/core/endpoints.ts'
 import { createTask } from '../src/core/tasks.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
@@ -35,14 +35,12 @@ function endpoint(overrides: Partial<EndpointConfig> = {}): EndpointConfig {
     name: 'DeepSeek Official',
     provider: 'deepseek',
     models: [],
-    maxConcurrency: 1,
-    offPeakOnly: false,
     ...overrides,
   }
 }
 
 function routerConfig(endpoints: readonly EndpointConfig[], overrides: Partial<EndpointRouterConfig> = {}): EndpointRouterConfig {
-  return { offPeak: { ...DEEPSEEK_OFF_PEAK }, endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints], ...overrides }
+  return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [...endpoints], ...overrides }
 }
 
 function launchApi(create: ReturnType<typeof vi.fn>, selectModel?: ReturnType<typeof vi.fn>) {
@@ -88,14 +86,40 @@ function harness(dir: string, config: EndpointRouterConfig, now: () => number): 
 }
 
 describe('TaskBoardHostService endpoint routing', () => {
-  it('queues a run when its endpoint is outside allowed hours (no session, nothing billed)', async () => {
-    let now = new Date(2026, 7, 16, 10, 0, 0).getTime() // host-local 10:00
+  it('routes through the pinned endpoint and applies its default model', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
     const { service, ledger, create, selectModel } = harness(dir, routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'deepseek-chat' }),
+      endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
     ]), () => now)
     ledger.applyRequest('create', {
       kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
+    })
+
+    service.apply('run-1', { kind: 'run', taskId: 't1' })
+    await flush()
+
+    const execution = ledger.state().tasks[0]!.executions[0]!
+    expect(execution.queuedAt).toBeUndefined()
+    expect(execution.endpointId).toBe('cloud')
+    expect(execution.sessionId).toBe('session-x')
+    expect(create).toHaveBeenCalledOnce()
+    expect(selectModel).toHaveBeenCalledOnce()
+    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat' })
+    service.dispose()
+  })
+
+  it('queues a run when no candidate endpoint can serve the task model', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const { service, ledger, create, selectModel } = harness(dir, routerConfig([
+      endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] }),
+    ]), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 't1', input: {
+        title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+      },
     })
 
     service.apply('run-1', { kind: 'run', taskId: 't1' })
@@ -111,63 +135,36 @@ describe('TaskBoardHostService endpoint routing', () => {
     service.dispose()
   })
 
-  it('auto-starts a queued run the moment the window opens', async () => {
-    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
-    const dir = root()
-    const { service, ledger, create, selectModel, routeQueued } = harness(dir, routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'deepseek-chat' }),
-    ]), () => now)
-    ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
-    })
-    service.apply('run-1', { kind: 'run', taskId: 't1' })
-    await flush()
-    expect(ledger.state().tasks[0]!.executions[0]!.queuedAt).toBeDefined()
-
-    now = new Date(2026, 7, 16, 13, 0, 0).getTime()
-    await routeQueued()
-    await flush()
-
-    const execution = ledger.state().tasks[0]!.executions[0]!
-    expect(execution.sessionId).toBe('session-x')
-    expect(create).toHaveBeenCalledOnce()
-    // The endpoint's default model is applied through session.selectModel.
-    expect(selectModel).toHaveBeenCalledOnce()
-    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat' })
-    service.dispose()
-  })
-
-  it('waits when off-peak-only and starts inside the DeepSeek off-peak window', async () => {
-    let now = Date.UTC(2026, 6, 16, 12, 0, 0) // 12:00 UTC — peak
-    const dir = root()
-    const { service, ledger, create, routeQueued } = harness(dir, routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', offPeakOnly: true, defaultModel: 'deepseek-chat' }),
-    ]), () => now)
-    ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
-    })
-    service.apply('run-1', { kind: 'run', taskId: 't1' })
-    await flush()
-    expect(ledger.state().tasks[0]!.executions[0]!.queuedAt).toBeDefined()
-    expect(create).not.toHaveBeenCalled()
-
-    now = Date.UTC(2026, 6, 16, 18, 0, 0) // 18:00 UTC — off-peak
-    await routeQueued()
-    await flush()
-    expect(create).toHaveBeenCalledOnce()
-    service.dispose()
-  })
-
-  it('falls back to the next endpoint when the preferred one is blocked', async () => {
-    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+  it('falls back to the endpoint default model when the pinned model is not served', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
     const { service, ledger, selectModel } = harness(dir, routerConfig([
-      endpoint({ id: 'local', provider: 'lm-studio', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'qwen/qwen3.8-27b' }),
+      endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'], defaultModel: 'deepseek-reasoner' }),
+    ]), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 't1', input: {
+        title: 'Task', description: '', prompt: 'work',
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+        endpoints: ['cloud'],
+      },
+    })
+    service.apply('run-1', { kind: 'run', taskId: 't1' })
+    await flush()
+    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    service.dispose()
+  })
+
+  it('falls back to the next endpoint when the preferred one cannot serve the task', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const { service, ledger, selectModel } = harness(dir, routerConfig([
+      endpoint({ id: 'local', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'] }),
       endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
     ]), () => now)
     ledger.applyRequest('create', {
       kind: 'create', id: 't1', input: {
         title: 'Task', description: '', prompt: 'work', endpoints: ['local', 'cloud'],
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
       },
     })
     service.apply('run-1', { kind: 'run', taskId: 't1' })
@@ -180,47 +177,18 @@ describe('TaskBoardHostService endpoint routing', () => {
     service.dispose()
   })
 
-  it('queues a second run when the endpoint concurrency is full, then launches after a settle', async () => {
-    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
-    const dir = root()
-    const { service, ledger, create, routeQueued } = harness(dir, routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', maxConcurrency: 1, defaultModel: 'deepseek-chat' }),
-    ]), () => now)
-    ledger.applyRequest('create-a', {
-      kind: 'create', id: 't1', input: { title: 'A', description: '', prompt: 'work', endpoints: ['cloud'] },
-    })
-    ledger.applyRequest('create-b', {
-      kind: 'create', id: 't2', input: { title: 'B', description: '', prompt: 'work', endpoints: ['cloud'] },
-    })
-    service.apply('run-a', { kind: 'run', taskId: 't1' })
-    await flush()
-    expect(create).toHaveBeenCalledOnce()
-
-    service.apply('run-b', { kind: 'run', taskId: 't2' })
-    await flush()
-    const b = ledger.state().tasks.find(task => task.id === 't2')!
-    expect(b.executions[0]!.queuedAt).toBeDefined()
-    expect(create).toHaveBeenCalledOnce()
-
-    // Settle A: the slot frees and the queued B launches.
-    ledger.settle('t1', ledger.state().tasks.find(task => task.id === 't1')!.executions[0]!.id, 'succeeded')
-    await routeQueued()
-    await flush()
-    expect(create).toHaveBeenCalledTimes(2)
-    const bAfter = ledger.state().tasks.find(task => task.id === 't2')!
-    expect(bAfter.executions[0]!.sessionId).toBe('session-x')
-    service.dispose()
-  })
-
   it('fails a queued run that never becomes eligible within the max-wait', async () => {
     let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
     const { service, ledger, create, routeQueued } = harness(dir, routerConfig(
-      [endpoint({ id: 'cloud', provider: 'deepseek', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'deepseek-chat' })],
+      [endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] })],
       { endpointMaxWaitHours: 2 },
     ), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
+      kind: 'create', id: 't1', input: {
+        title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+      },
     })
     service.apply('run-1', { kind: 'run', taskId: 't1' })
     await flush()
@@ -255,16 +223,20 @@ describe('TaskBoardHostService endpoint routing', () => {
     service.dispose()
   })
 
-  it('keeps a queued run waiting across a Host restart and resumes it', async () => {
+  it('keeps a queued run waiting across a Host restart and resumes it when the config can serve it', async () => {
     let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
-    const config = routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', allowedHours: { start: '12:00', end: '14:00' }, defaultModel: 'deepseek-chat' }),
+    // First host: the endpoint cannot serve the pinned model yet.
+    const blockedConfig = routerConfig([
+      endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] }),
     ])
     {
-      const first = harness(dir, config, () => now)
+      const first = harness(dir, blockedConfig, () => now)
       first.ledger.applyRequest('create', {
-        kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
+        kind: 'create', id: 't1', input: {
+          title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
+          model: { provider: 'deepseek', model: 'deepseek-chat' },
+        },
       })
       first.service.apply('run-1', { kind: 'run', taskId: 't1' })
       await flush()
@@ -273,7 +245,9 @@ describe('TaskBoardHostService endpoint routing', () => {
     }
     // A fresh ledger on the same directory must not cancel the queued run.
     now = new Date(2026, 7, 16, 13, 0, 0).getTime()
-    const second = harness(dir, config, () => now)
+    const second = harness(dir, routerConfig([
+      endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
+    ]), () => now)
     const before = second.ledger.state().tasks[0]!.executions[0]!
     expect(before.result).toBeUndefined()
     expect(before.queuedAt).toBeDefined()
@@ -305,27 +279,6 @@ describe('TaskBoardHostService endpoint routing', () => {
     expect(execution.queuedAt).toBeUndefined()
     expect(selectModel).toHaveBeenCalledOnce()
     expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat' })
-    service.dispose()
-  })
-})
-
-describe('endpoint router with a pinned model the endpoint cannot serve', () => {
-  it('falls back to the endpoint default model', async () => {
-    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
-    const dir = root()
-    const { service, ledger, selectModel } = harness(dir, routerConfig([
-      endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'], defaultModel: 'deepseek-reasoner' }),
-    ]), () => now)
-    ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
-        title: 'Task', description: '', prompt: 'work',
-        model: { provider: 'deepseek', model: 'deepseek-chat' },
-        endpoints: ['cloud'],
-      },
-    })
-    service.apply('run-1', { kind: 'run', taskId: 't1' })
-    await flush()
-    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-reasoner' })
     service.dispose()
   })
 })
