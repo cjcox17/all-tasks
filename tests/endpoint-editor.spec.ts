@@ -222,6 +222,16 @@ describe('endpointTimeoutPatches', () => {
     ])
   })
 
+  it('maps a blank (0) total timeout to an unset patch instead of a zero value', () => {
+    const state = parseEndpointEditorPatch({
+      endpoints: [{ id: 'lm', provider: 'lm-studio', idleSeconds: 900, totalSeconds: 0 }],
+    })
+    const patches = endpointTimeoutPatches(state, PROVIDERS)
+    expect(patches).toEqual([
+      { namespace: 'llm-pi-ai', provider: 'lm-studio', streamIdleTimeoutMs: 900_000, timeoutMs: null },
+    ])
+  })
+
   it('skips endpoints on unknown providers', () => {
     const state = parseEndpointEditorPatch({ endpoints: [{ id: 'ghost', provider: 'nope', idleSeconds: 600 }] })
     expect(endpointTimeoutPatches(state, PROVIDERS)).toEqual([])

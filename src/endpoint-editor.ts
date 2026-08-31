@@ -263,7 +263,9 @@ export function endpointEditorOps(state: EndpointEditorState): SettingsPathOp[] 
  * Build the provider-timeout writes one endpoint state implies: each endpoint
  * whose provider resolves to a known route carries its idle (and, for pi-ai,
  * total) timeout through to that route's settings. Endpoints on unknown
- * providers are skipped (their timeouts cannot be applied anywhere).
+ * providers are skipped (their timeouts cannot be applied anywhere). A blank
+ * (0) total timeout maps to an explicit unset — DSH's schema refuses a zero
+ * value, and blank means "no bound" (the backend default), not zero.
  * @param state - the validated editor state.
  * @param catalog - the resolved provider catalog.
  * @returns per-endpoint timeout patches keyed by endpoint index, in input order.
@@ -271,8 +273,8 @@ export function endpointEditorOps(state: EndpointEditorState): SettingsPathOp[] 
 export function endpointTimeoutPatches(
   state: EndpointEditorState,
   catalog: readonly EndpointProviderInfo[],
-): Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number }> {
-  const patches: Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number }> = []
+): Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number | null }> {
+  const patches: Array<{ namespace: 'llm-pi-ai' | 'llm-deepseek'; provider: string; streamIdleTimeoutMs: number; timeoutMs?: number | null }> = []
   for (const endpoint of state.endpoints) {
     const info = catalog.find(candidate => candidate.provider === endpoint.provider)
     if (info === undefined) continue
@@ -280,7 +282,9 @@ export function endpointTimeoutPatches(
       namespace: info.namespace,
       provider: info.provider,
       streamIdleTimeoutMs: endpoint.idleSeconds * 1000,
-      ...(info.namespace === 'llm-pi-ai' ? { timeoutMs: endpoint.totalSeconds * 1000 } : {}),
+      ...(info.namespace === 'llm-pi-ai'
+        ? { timeoutMs: endpoint.totalSeconds > 0 ? endpoint.totalSeconds * 1000 : null }
+        : {}),
     })
   }
   return patches

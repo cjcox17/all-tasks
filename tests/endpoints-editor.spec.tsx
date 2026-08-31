@@ -142,6 +142,46 @@ describe('EndpointsEditor', () => {
     expect(container.textContent).toContain('settings.endpointSaved')
   })
 
+  it('keeps the id input focused while typing (stable row key, no remount)', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => jsonResponse(200, GET_BODY))
+    vi.stubGlobal('fetch', fetchMock)
+    const container = mount()
+    await flush()
+
+    const setValue = nativeValueSetter()
+    const row = rowOf(container, 'lm-studio-nas')
+    const input = inputOf(row, 'endpoint-id-0')
+    // The id is part of the row key; typing must not remount the row (which
+    // would drop focus). Capture the element and confirm the same node lives on.
+    act(() => { setValue(input, 'lm-studio-nas-2') })
+    await flush()
+    expect(rowOf(container, 'lm-studio-nas-2').contains(input)).toBe(true)
+    expect(inputOf(rowOf(container, 'lm-studio-nas-2'), 'endpoint-id-0')).toBe(input)
+  })
+
+  it('saves a blank total timeout as an unset value', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return jsonResponse(200, { endpoints: [GET_BODY.endpoints[0]], defaultEndpoints: ['lm-studio-nas'] })
+      }
+      return jsonResponse(200, GET_BODY)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const container = mount()
+    await flush()
+
+    const setValue = nativeValueSetter()
+    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-total-0'), '') })
+    act(() => { buttonByText(container, 'settings.endpointSave').click() })
+    await flush()
+
+    const posts = fetchMock.mock.calls.filter(call => (call[1] as RequestInit | undefined)?.method === 'POST')
+    expect(posts).toHaveLength(1)
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body)) as { endpoints: Array<Record<string, unknown>> }
+    expect(body.endpoints[0].totalSeconds).toBe(0)
+    expect(container.textContent).toContain('settings.endpointSaved')
+  })
+
   it('rejects invalid rows locally without posting', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => jsonResponse(200, GET_BODY))
     vi.stubGlobal('fetch', fetchMock)

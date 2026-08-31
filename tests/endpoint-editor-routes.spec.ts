@@ -223,6 +223,22 @@ describe('TaskBoardHostService endpoint write path', () => {
     service.dispose()
   })
 
+  it('unsets a blank total timeout instead of writing a zero value', async () => {
+    const settings = fakeSettings({
+      'task-board': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
+      'llm-pi-ai': { providers: { 'lm-studio': { displayName: 'LM Studio', streamIdleTimeoutMs: 300_000, timeoutMs: 3_600_000 } } },
+      'llm-deepseek': {},
+    })
+    const service = serviceWith(settings)
+    // VIEW has totalSeconds: 0 (blank = unlimited); the write must unset the
+    // stored timeoutMs, not try to set it to zero (which DSH's schema refuses).
+    const stored = await service.applyEndpoints(STATE)
+    expect(stored.endpoints[0]).toMatchObject({ totalSeconds: 0 })
+    const piAi = settings.applied.find(entry => entry.ns === 'llm-pi-ai')
+    expect(piAi?.ops).toContainEqual({ op: 'unset', path: ['providers', 'lm-studio', 'timeoutMs'] })
+    service.dispose()
+  })
+
   it('reports empty state and refuses writes without a settings seam', async () => {
     const service = serviceWith(undefined)
     expect(service.endpoints()).toEqual({ endpoints: [], defaultEndpoints: [] })

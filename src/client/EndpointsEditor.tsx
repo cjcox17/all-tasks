@@ -302,7 +302,7 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
             const knownModels = providerModels.length > 0
             const totalOnly = providers.find(candidate => candidate.provider === row.provider)?.namespace === 'llm-pi-ai'
             return (
-              <div className={css.row} key={`${index}-${row.id}`} data-endpoint={row.id || `row-${index}`}>
+              <div className={css.row} key={index} data-endpoint={row.id || `row-${index}`}>
                 <div className={css.rowHead}>
                   <span className={css.rowIndex}>{index + 1}</span>
                   <span className={css.rowName}>{row.name.trim() !== '' ? row.name.trim() : row.id || t('settings.endpointNew')}</span>
