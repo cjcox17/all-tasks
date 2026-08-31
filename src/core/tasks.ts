@@ -4,6 +4,7 @@
  * Framework-free (no cordis, no runtime imports) so the state machine is
  * unit-testable in isolation.
  */
+import { normalizeEndpointList } from './endpoints.ts'
 
 /** Task lifecycle status, one per kanban column. */
 export type TaskStatus = 'backlog' | 'todo' | 'running' | 'done' | 'failed'
@@ -26,6 +27,17 @@ export interface ExecutionRecord {
   result: 'succeeded' | 'failed' | 'cancelled' | undefined
   /** Human failure text when the run failed (prompt rejection or agent error). */
   error: string | undefined
+  /**
+   * When the router queued this run waiting for an eligible endpoint. A queued
+   * run has no session yet (nothing billed), keeps the task in 'running', and
+   * survives Host restarts (it is not treated as an interrupted start).
+   */
+  queuedAt?: number
+  /**
+   * The endpoint this run is routed through: the preferred candidate while
+   * queued, the actually chosen endpoint once launched.
+   */
+  endpointId?: string
 }
 
 /**
@@ -107,6 +119,13 @@ export interface TaskRecord {
    * + model id); absent means the deployment default model.
    */
   model?: TaskModelSelection
+  /**
+   * Priority-ordered endpoint ids the router must route this task through
+   * (the first eligible endpoint wins; absent means the global default list,
+   * and an empty effective list means no routing — the model pin applies
+   * directly).
+   */
+  endpoints?: string[]
   /**
    * When the task was archived (ms epoch). Archived tasks keep their status
    * and execution history, leave the main board, and cannot run until restored;
@@ -197,6 +216,12 @@ export interface NewTaskInput {
   mode?: string
   /** Model selection the execution session must be pinned to; absent = deployment default. */
   model?: TaskModelSelection
+  /**
+   * Priority-ordered endpoint ids to route this task through (first eligible
+   * wins; empty/absent = global default list, and an empty effective list =
+   * no routing, direct model pin).
+   */
+  endpoints?: string[]
   /** Permission preset applied to the execution session; absent = session default. */
   permission?: TaskPermission
   /**
@@ -257,6 +282,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     workspaceId: normalizeTargetId(input.workspaceId),
     mode: normalizeTargetId(input.mode),
     model: normalizeModelSelection(input.model),
+    endpoints: normalizeEndpointList(input.endpoints),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
   }
 }

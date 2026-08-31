@@ -47,6 +47,19 @@ export interface OpenExecutionReference {
   readonly executionId: string
   readonly sessionId: string | undefined
   readonly startedAt: number
+  /** Endpoint this run is routed through (set while queued or once launched). */
+  readonly endpointId?: string
+  /** Set while the router is holding this run for an eligible endpoint. */
+  readonly queuedAt?: number
+}
+
+/** An open execution the router is holding for an eligible endpoint. */
+export interface QueuedRunReference {
+  readonly taskId: string
+  readonly executionId: string
+  readonly queuedAt: number
+  /** Task clone (read-only view; the router reads pins only). */
+  readonly task: TaskRecord
 }
 
 /** Minimal value copy used by the Host scheduler. */
@@ -323,10 +336,56 @@ export class HostTaskLedger {
           executionId: execution.id,
           sessionId: execution.sessionId,
           startedAt: execution.startedAt,
+          ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
+          ...(execution.queuedAt === undefined ? {} : { queuedAt: execution.queuedAt }),
         })
       }
     }
     return { armedSchedules, openExecutions }
+  }
+
+  /** Open executions the router is holding (queued, no session yet), with task clones. */
+  queuedRuns(): QueuedRunReference[] {
+    const queued: QueuedRunReference[] = []
+    for (const task of this.document.tasks) {
+      for (const execution of task.executions) {
+        if (execution.endedAt !== undefined || execution.sessionId !== undefined || execution.queuedAt === undefined) continue
+        queued.push({
+          taskId: task.id,
+          executionId: execution.id,
+          queuedAt: execution.queuedAt,
+          task: cloneTasks([task])[0],
+        })
+      }
+    }
+    return queued
+  }
+
+  /**
+   * Record that a run is queued for an eligible endpoint: no session is
+   * created yet, so nothing is billed, and the run survives Host restarts.
+   */
+  markQueued(taskId: string, executionId: string, endpointId: string | undefined, queuedAt: number): void {
+    this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
+      ...task,
+      updatedAt: this.now(),
+      executions: task.executions.map(entry => entry.id !== executionId ? entry : {
+        ...entry,
+        queuedAt,
+        ...(endpointId === undefined ? {} : { endpointId }),
+      }),
+    })
+    this.commit()
+  }
+
+  /** Record the endpoint a launched (or about-to-launch) run is routed through. */
+  attachEndpoint(taskId: string, executionId: string, endpointId: string): void {
+    this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
+      ...task,
+      updatedAt: this.now(),
+      executions: task.executions.map(entry => entry.id !== executionId ? entry : { ...entry, endpointId }),
+    })
+    this.commit()
   }
 
   /** Count armed, non-archived schedules without cloning task histories. */
@@ -572,6 +631,9 @@ export class HostTaskLedger {
       if (task.status !== 'running') return task
       const execution = task.executions.at(-1)
       if (execution === undefined || execution.endedAt !== undefined || execution.sessionId !== undefined) return task
+      // A queued run (waiting for an eligible endpoint) has no session yet by
+      // design; it survives the restart and the router resumes it.
+      if (execution.queuedAt !== undefined) return task
       changed = true
       return settleExecution(task, execution.id, 'cancelled', now, 'host restarted before the execution session was recorded')
     })

@@ -1,5 +1,7 @@
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRouterConfig, type RouteDecision } from './core/endpoints.ts'
 import { nextRunAtMs } from './core/schedule.ts'
+import type { TaskRecord } from './core/tasks.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
@@ -8,6 +10,17 @@ import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '
 const SESSION_POLL_MS = 5_000
 const SCHEDULE_TICK_MS = 30_000
 const RESUME_GAP_MS = SCHEDULE_TICK_MS + 15_000
+const HOUR_MS = 3_600_000
+
+/** Host-local IANA time zone (the allowed-hours clock). */
+function hostTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
+/** The empty router config: no endpoints, no routing (today's direct behavior). */
+function emptyRouterConfig(): EndpointRouterConfig {
+  return { offPeak: { start: '16:30', end: '00:30', timezone: 'UTC' }, endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] }
+}
 
 export class TaskBoardHostService {
   readonly ledger: HostTaskLedger
@@ -19,9 +32,14 @@ export class TaskBoardHostService {
   private disposed = false
   private pollInFlight = false
   private tickInFlight = false
+  private routePassInFlight = false
   private active = true
   private preventIdleSleep = false
   private lastPowerJson = ''
+  private routerConfig: EndpointRouterConfig = emptyRouterConfig()
+  private readonly readModelMaxTokens: ((provider: string, model: string) => number | undefined) | undefined
+  /** Execution ids with an in-flight launch; guards the queue re-check against double-launches. */
+  private readonly launching = new Set<string>()
   private readonly now: () => number
 
   constructor(api: ApiProxy, options: {
@@ -29,11 +47,15 @@ export class TaskBoardHostService {
     power?: PowerInhibitor
     now?: () => number
     commandDispatcher?: SessionCommandDispatcher
+    routerConfig?: EndpointRouterConfig
+    readModelMaxTokens?: (provider: string, model: string) => number | undefined
   } = {}) {
     this.ledger = options.ledger ?? new HostTaskLedger()
     this.runner = new HostExecutionRunner(api, options.commandDispatcher)
     this.power = options.power ?? new PowerInhibitor()
     this.now = options.now ?? Date.now
+    if (options.routerConfig !== undefined) this.routerConfig = options.routerConfig
+    this.readModelMaxTokens = options.readModelMaxTokens
     this.ledger.subscribe(() => {
       this.syncPowerReasons()
       this.emit()
@@ -56,6 +78,14 @@ export class TaskBoardHostService {
     this.timers.push(setInterval(() => { this.scheduleTick(false) }, SCHEDULE_TICK_MS))
     this.schedulePoll()
     this.scheduleTick(true)
+    this.scheduleRoutePass()
+  }
+
+  /** Replace the endpoint router configuration live (settings changed). */
+  setEndpointConfig(config: EndpointRouterConfig): void {
+    this.routerConfig = config
+    if (this.active) this.scheduleRoutePass()
+    this.emit()
   }
 
   setConfiguration(active: boolean, preventIdleSleep: boolean): void {
@@ -74,6 +104,7 @@ export class TaskBoardHostService {
     if (resumed) {
       this.schedulePoll()
       this.scheduleTick(true)
+      this.scheduleRoutePass()
     }
     this.emit()
   }
@@ -116,20 +147,106 @@ export class TaskBoardHostService {
   dispose(): void {
     this.disposed = true
     for (const timer of this.timers.splice(0)) clearInterval(timer)
+    this.launching.clear()
     this.power.dispose()
     this.ledger.dispose()
     this.listeners.clear()
   }
 
-  private async launch(opened: OpenedRun): Promise<void> {
+  /**
+   * Route one freshly opened run through the endpoint router: launch through
+   * the first eligible endpoint, queue it (no session, nothing billed) when
+   * every candidate is blocked, or launch directly when no endpoints are
+   * configured at all.
+   */
+  private async launchRouted(opened: OpenedRun): Promise<void> {
+    if (this.launching.has(opened.execution.id)) return
+    this.launching.add(opened.execution.id)
     try {
-      const sessionId = await this.runner.launch(opened.task)
-      this.ledger.attachSession(opened.task.id, opened.execution.id, sessionId)
+      const route = this.routeFor(opened.task)
+      if (route.mode === 'wait') {
+        this.ledger.markQueued(opened.task.id, opened.execution.id, route.endpointId, this.now())
+        return
+      }
+      if (route.mode === 'routed') {
+        this.ledger.attachEndpoint(opened.task.id, opened.execution.id, route.endpoint.id)
+      }
+      await this.launch(opened.task, opened.execution.id, route.mode === 'routed' ? route.selection : undefined)
+    } finally {
+      this.launching.delete(opened.execution.id)
+    }
+  }
+
+  /**
+   * Re-check queued runs (a window may have opened, a slot freed, or the
+   * max-wait elapsed): expire them, or launch the moment the first endpoint
+   * becomes eligible. Runs once per poll/tick; a pass never re-enters.
+   */
+  private async routeQueued(): Promise<void> {
+    if (this.disposed || !this.active) return
+    const now = this.now()
+    const maxWaitMs = this.routerConfig.endpointMaxWaitHours * HOUR_MS
+    for (const queued of this.ledger.queuedRuns()) {
+      if (now - queued.queuedAt > maxWaitMs) {
+        this.ledger.settle(queued.taskId, queued.executionId, 'failed', 'endpoint never became eligible within the max-wait window')
+        continue
+      }
+      if (this.launching.has(queued.executionId)) continue
+      const route = this.routeFor(queued.task)
+      if (route.mode !== 'routed') continue
+      this.launching.add(queued.executionId)
+      try {
+        this.ledger.attachEndpoint(queued.taskId, queued.executionId, route.endpoint.id)
+        await this.launch(queued.task, queued.executionId, route.selection)
+      } finally {
+        this.launching.delete(queued.executionId)
+      }
+    }
+  }
+
+  /** The endpoint router decision for one task (pure engine + live state). */
+  private routeFor(task: OpenedRun['task']): RouteDecision {
+    const config = this.routerConfig
+    if (!shouldUseRouter(task, config)) return { mode: 'unrouted' }
+    const now = new Date(this.now())
+    return pickEndpoint(task, config, {
+      localMinutes: clockMinutesInTimeZone(now, hostTimeZone()),
+      offPeakMinutes: clockMinutesInTimeZone(now, config.offPeak.timezone ?? 'UTC'),
+      activeCounts: this.activeCounts(),
+      modelMaxTokens: (provider, model) => this.readModelMaxTokens?.(provider, model),
+    })
+  }
+
+  /** Launched-and-unsettled executions per endpoint (queued runs do not consume concurrency). */
+  private activeCounts(): Map<string, number> {
+    const counts = new Map<string, number>()
+    for (const execution of this.ledger.runtimeView().openExecutions) {
+      if (execution.sessionId === undefined || execution.endpointId === undefined) continue
+      counts.set(execution.endpointId, (counts.get(execution.endpointId) ?? 0) + 1)
+    }
+    return counts
+  }
+
+  private scheduleRoutePass(): void {
+    if (this.routePassInFlight || this.disposed) return
+    this.routePassInFlight = true
+    void this.routeQueued().catch(error => {
+      console.error('[dsh-task-board] endpoint queue re-check failed', error)
+    }).finally(() => { this.routePassInFlight = false })
+  }
+
+  private async launch(task: TaskRecord, executionId: string, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
+    try {
+      const sessionId = await this.runner.launch(task, route)
+      this.ledger.attachSession(task.id, executionId, sessionId)
     } catch (error) {
       if (error instanceof SessionLaunchError) {
-        this.ledger.attachSession(opened.task.id, opened.execution.id, error.sessionId)
+        this.ledger.attachSession(task.id, executionId, error.sessionId)
       }
-      this.ledger.settle(opened.task.id, opened.execution.id, 'failed', error instanceof Error ? error.message : String(error))
+      this.ledger.settle(task.id, executionId, 'failed', error instanceof Error ? error.message : String(error))
+    } finally {
+      // A slot just freed (or a launch failed): re-check anyone still queued.
+      this.scheduleRoutePass()
     }
   }
 
@@ -198,7 +315,7 @@ export class TaskBoardHostService {
   }
 
   private scheduleLaunch(opened: OpenedRun): void {
-    void this.launch(opened).catch(error => {
+    void this.launchRouted(opened).catch(error => {
       console.error('[dsh-task-board] execution launch settlement failed', error)
     })
   }

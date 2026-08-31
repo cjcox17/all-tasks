@@ -289,3 +289,37 @@ describe('schedule persistence', () => {
     const blank = parseLedger(JSON.stringify([{ ...base, model: { provider: 'deepseek', model: '' } }]))
     expect(blank[0].model).toBeUndefined()
   })
+
+  it('round-trips the endpoint pin and repairs malformed lists', () => {
+    const base = {
+      id: 't1', title: 'a', description: '', prompt: 'a',
+      createdAt: NOW, updatedAt: NOW, executions: [], status: 'todo' as const,
+    }
+    const kept = parseLedger(JSON.stringify([{ ...base, endpoints: [' cloud ', 'local'] }]))
+    expect(kept[0].endpoints).toEqual(['cloud', 'local'])
+    const repaired = parseLedger(JSON.stringify([
+      { ...base, endpoints: 'cloud' },
+      { ...base, endpoints: ['', '  '] },
+      { ...base, endpoints: [5] },
+    ]))
+    for (const task of repaired) expect(task.endpoints).toBeUndefined()
+    const empty = parseLedger(JSON.stringify([{ ...base, endpoints: [] }]))
+    expect(empty[0].endpoints).toBeUndefined()
+  })
+
+  it('round-trips queued-run execution fields and rejects malformed ones', () => {
+    const base = {
+      id: 't1', title: 'a', description: '', prompt: 'a',
+      createdAt: NOW, updatedAt: NOW, status: 'running' as const,
+      executions: [{ id: 'e1', sessionId: undefined, startedAt: NOW, queuedAt: NOW, endpointId: 'cloud' }],
+    }
+    expect(parseLedger(JSON.stringify([base]))[0].executions[0]).toMatchObject({ queuedAt: NOW, endpointId: 'cloud' })
+    expect(parseLedger(JSON.stringify([{
+      ...base,
+      executions: [{ id: 'e1', sessionId: undefined, startedAt: NOW, queuedAt: 'bad', endpointId: 'cloud' }],
+    }]))).toEqual([])
+    expect(parseLedger(JSON.stringify([{
+      ...base,
+      executions: [{ id: 'e1', sessionId: undefined, startedAt: NOW, queuedAt: NOW, endpointId: 5 }],
+    }]))).toEqual([])
+  })

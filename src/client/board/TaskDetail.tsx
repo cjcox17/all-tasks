@@ -16,6 +16,7 @@ import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EditTaskModal } from './EditTaskModal.tsx'
+import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
 import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import { STATUS_KEY } from './status-key.ts'
@@ -28,17 +29,26 @@ const RESULT_KEY: Record<NonNullable<ExecutionRecord['result']>, TaskBoardKey> =
 }
 
 /** One execution-history row. */
-function ExecutionRow({ execution, timeZone, onOpen }: { execution: ExecutionRecord; timeZone?: string; onOpen: (sessionId: string) => void }) {
+function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
+  execution: ExecutionRecord
+  timeZone?: string
+  endpointName: (id: string) => string
+  onOpen: (sessionId: string) => void
+}) {
   const result = execution.result
+  const waiting = execution.queuedAt !== undefined && execution.sessionId === undefined
   return (
     <li className={css.executionRow} data-result={result}>
       <span className={css.executionBadge} data-result={result}>
-        {result === undefined ? t('detail.result.running') : t(RESULT_KEY[result])}
+        {result === undefined ? (waiting ? t('detail.result.waiting') : t('detail.result.running')) : t(RESULT_KEY[result])}
       </span>
       <span className={css.executionTimes}>
         {t('detail.executionStarted')} {formatTime(execution.startedAt, timeZone)}
         {execution.endedAt !== undefined && ` · ${t('detail.executionEnded')} ${formatTime(execution.endedAt, timeZone)}`}
       </span>
+      {execution.endpointId !== undefined && (
+        <span className={css.executionEndpoint}>{t('exec.endpoint.via', { name: endpointName(execution.endpointId) })}</span>
+      )}
       {execution.sessionId !== undefined && (
         <button
           type="button"
@@ -150,6 +160,15 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           />
         </label>
       )}
+      <label className={css.field}>
+        <span className={css.fieldLabel}>{t('new.endpoints')}</span>
+        <EndpointOrderEditor
+          endpoints={task.endpoints ?? []}
+          options={options.endpoints}
+          disabled={pending}
+          onChange={list => { void controller.updateTask(task.id, { endpoints: list.length === 0 ? null : list }) }}
+        />
+      </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>
         <select
@@ -292,6 +311,9 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
   const pending = snapshot.pendingTaskIds.includes(current.id)
   const transportError = snapshot.transportError
   const timeZone = snapshot.host?.scheduler.timeZone
+  const endpointName = (id: string): string => {
+    return snapshot.executionOptions.endpoints.find(option => option.id === id)?.name ?? id
+  }
 
   return (
     <div className={css.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) controller.closeTask() }}>
@@ -348,6 +370,7 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
                     key={execution.id}
                     execution={execution}
                     timeZone={timeZone}
+                    endpointName={endpointName}
                     onOpen={sessionId => { controller.openSession(sessionId) }}
                   />
                 ))}

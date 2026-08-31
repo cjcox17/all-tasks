@@ -9,6 +9,7 @@
  * and never cleared. An unknown permission string is ignored so stale UI
  * can never persist a value the execution service rejects.
  */
+import { normalizeEndpointList } from '../endpoints.ts'
 import { isTaskPermission, normalizeModelSelection, normalizeTargetId, type TaskModelSelection, type TaskRecord, type TaskPermission } from '../tasks.ts'
 
 /** Editable fields on a task (the update patch surface). */
@@ -18,6 +19,11 @@ export type TaskUpdatePatch = Partial<Pick<TaskRecord, 'title' | 'description' |
    * the pin and the task falls back to the deployment default.
    */
   model?: TaskModelSelection | null
+  /**
+   * Priority-ordered endpoint ids to route this task through; `null` (or an
+   * empty array) clears the pin and the global default endpoint list applies.
+   */
+  endpoints?: string[] | null
 }
 
 /**
@@ -72,12 +78,21 @@ export function applyUpdateTask(
     const model = 'model' in patch
       ? (patch.model === null || patch.model === undefined ? undefined : normalizeModelSelection(patch.model))
       : undefined
+    const endpoints = 'endpoints' in patch
+      ? (patch.endpoints === null || patch.endpoints === undefined ? undefined : normalizeEndpointList(patch.endpoints))
+      : undefined
     const permission = 'permission' in patch ? normalizePermission(task.permission, patch.permission) : undefined
-    // The patch may carry `model: null` to clear the pin; the normalized value
-    // (a selection or undefined) is written back so the ledger never stores
-    // null, and the rest of the patch spreads without it.
-    const { model: _patchedModel, ...patchRest } = patch
-    const next: TaskRecord = { ...task, ...patchRest, updatedAt: now, ...('model' in patch ? { model } : {}) }
+    // The patch may carry `model: null`/`endpoints: null` to clear a pin; the
+    // normalized value (or undefined) is written back so the ledger never
+    // stores null, and the rest of the patch spreads without it.
+    const { model: _patchedModel, endpoints: _patchedEndpoints, ...patchRest } = patch
+    const next: TaskRecord = {
+      ...task,
+      ...patchRest,
+      updatedAt: now,
+      ...('model' in patch ? { model } : {}),
+      ...('endpoints' in patch ? { endpoints } : {}),
+    }
     // Content fields normalize like creation does (trimmed); an explicit
     // undefined keeps the current value — content cannot be cleared.
     for (const field of TASK_CONTENT_FIELDS) {

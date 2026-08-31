@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NewTaskModal } from '../src/client/board/NewTaskModal.tsx'
 import { t } from '../src/client/locales.ts'
-import type { BoardController, ControllerSnapshot, ExecutionModelOption } from '../src/core/controller.ts'
+import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
 import { createTask, modelSelectionKey, type NewTaskInput, type TaskRecord } from '../src/core/tasks.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -28,13 +28,21 @@ const MODELS: readonly ExecutionModelOption[] = [
   { provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-reasoner' },
 ]
 
-function fakeController(createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>): BoardController {
+const ENDPOINTS: readonly ExecutionEndpointOption[] = [
+  { id: 'deepseek-official', name: 'DeepSeek Official' },
+  { id: 'lm-studio-nas', name: 'LM Studio (NAS)' },
+]
+
+function fakeController(
+  createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
+  endpoints: readonly ExecutionEndpointOption[] = [],
+): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [],
     boardOpen: true,
     archiveView: false,
     selectedTaskId: undefined,
-    executionOptions: { workspaces: [], presets: [], models: MODELS },
+    executionOptions: { workspaces: [], presets: [], models: MODELS, endpoints },
     pendingTaskIds: [],
   }
   return {
@@ -44,7 +52,10 @@ function fakeController(createTaskConfirmed: (input: NewTaskInput) => Promise<Ta
   } as unknown as BoardController
 }
 
-async function renderModal(createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>): Promise<{
+async function renderModal(
+  createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
+  endpoints: readonly ExecutionEndpointOption[] = [],
+): Promise<{
   container: HTMLElement
   onClose: ReturnType<typeof vi.fn>
 }> {
@@ -54,7 +65,7 @@ async function renderModal(createTaskConfirmed: (input: NewTaskInput) => Promise
   roots.push(root)
   const onClose = vi.fn()
   await act(async () => {
-    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed)} onClose={onClose} />)
+    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints)} onClose={onClose} />)
   })
   return { container, onClose }
 }
@@ -129,5 +140,36 @@ describe('NewTaskModal model + reasoning-effort pin', () => {
 
     expect(createTaskConfirmed).toHaveBeenCalledOnce()
     expect(createTaskConfirmed.mock.calls[0][0].model).toBeUndefined()
+  })
+})
+
+describe('NewTaskModal endpoint order', () => {
+  it('submits the priority-ordered endpoint list', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, ENDPOINTS)
+
+    const add = container.querySelector(`select[aria-label="${t('endpoint.add')}"]`) as HTMLSelectElement
+    expect(add).not.toBeNull()
+    await act(async () => { setSelect(add, 'deepseek-official') })
+    await act(async () => { setSelect(add, 'lm-studio-nas') })
+
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    expect(createTaskConfirmed.mock.calls[0][0].endpoints).toEqual(['deepseek-official', 'lm-studio-nas'])
+  })
+
+  it('omits endpoints when none are picked', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, ENDPOINTS)
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed.mock.calls[0][0].endpoints).toBeUndefined()
+  })
+
+  it('shows a note when no endpoints are configured', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'))
+    expect(container.textContent).toContain(t('endpoint.none'))
+    expect(container.querySelector(`select[aria-label="${t('endpoint.add')}"]`)).toBeNull()
   })
 })

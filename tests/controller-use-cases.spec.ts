@@ -254,3 +254,27 @@ describe('use-case: update model pin', () => {
     expect(updated[0].model).toBeUndefined()
   })
 })
+
+describe('use-case: update endpoint pin', () => {
+  it('sets, replaces, and clears the endpoint pin', () => {
+    const pinned = applyUpdateTask(seed(2), 'id-0', { endpoints: ['cloud'] }, NOW + 10)
+    expect(pinned[0].endpoints).toEqual(['cloud'])
+
+    const replaced = applyUpdateTask(pinned, 'id-0', { endpoints: ['local', 'cloud'] }, NOW + 11)
+    expect(replaced[0].endpoints).toEqual(['local', 'cloud'])
+
+    const cleared = applyUpdateTask(replaced, 'id-0', { endpoints: null }, NOW + 12)
+    expect(cleared[0].endpoints).toBeUndefined()
+
+    const clearedEmpty = applyUpdateTask(pinned, 'id-0', { endpoints: [] }, NOW + 13)
+    expect(clearedEmpty[0].endpoints).toBeUndefined()
+
+    const clearedUndefined = applyUpdateTask(pinned, 'id-0', { endpoints: undefined }, NOW + 14)
+    expect(clearedUndefined[0].endpoints).toBeUndefined()
+  })
+
+  it('normalizes a malformed endpoint list instead of storing it', () => {
+    const updated = applyUpdateTask(seed(2), 'id-0', { endpoints: ['', '  ', 'cloud'] }, NOW + 10)
+    expect(updated[0].endpoints).toEqual(['cloud'])
+  })
+})

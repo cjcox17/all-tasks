@@ -63,7 +63,15 @@ export class HostExecutionRunner {
     private readonly commands?: SessionCommandDispatcher,
   ) {}
 
-  async launch(task: TaskRecord): Promise<string> {
+  /**
+   * Launch one execution.
+   * @param task - the task being run.
+   * @param route - the endpoint router's resolved model selection (provider +
+   *   model + optional effort). Present when the task was routed through an
+   *   endpoint; absent means the task's own model pin applies (the direct
+   *   behavior when no endpoints are configured).
+   */
+  async launch(task: TaskRecord, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<string> {
     if (task.workspaceId !== undefined) {
       const workspaces = await this.api.workspace.list(request({}))
       if (!workspaces.result.ok) throw failure(workspaces.result.error)
@@ -88,12 +96,15 @@ export class HostExecutionRunner {
       // A pinned model selection is applied to the fresh session before the
       // prompt; a rejected selection fails closed (the session is recorded
       // but never queued), mirroring the workspace/preset/permission pins.
-      if (task.model !== undefined) {
+      // The router's resolved selection (when routed) takes precedence over
+      // the task's own model pin.
+      const selection = route ?? task.model
+      if (selection !== undefined) {
         const selected = await this.api.sessions.selectModel(request({
           sessionId,
-          provider: task.model.provider,
-          model: task.model.model,
-          ...(task.model.reasoningEffort === undefined ? {} : { reasoningEffort: task.model.reasoningEffort }),
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
         }))
         if (!selected.result.ok) throw failure(selected.result.error)
       }

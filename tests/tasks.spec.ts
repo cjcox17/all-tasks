@@ -291,3 +291,17 @@ describe('createTask model pin', () => {
     ).model).toBeUndefined()
   })
 })
+
+describe('createTask endpoint pin', () => {
+  it('carries a normalized endpoint list and collapses empty ones', () => {
+    const pinned = createTask(
+      { title: 'x', description: '', prompt: '', endpoints: [' cloud ', 'local'] },
+      NOW,
+      'task-endpoints',
+    )
+    expect(pinned.endpoints).toEqual(['cloud', 'local'])
+    expect(createTask({ title: 'x', description: '', prompt: '' }, NOW, 'task-none').endpoints).toBeUndefined()
+    expect(createTask({ title: 'x', description: '', prompt: '', endpoints: [] }, NOW, 'task-empty').endpoints).toBeUndefined()
+    expect(createTask({ title: 'x', description: '', prompt: '', endpoints: ['', '  '] }, NOW, 'task-blank').endpoints).toBeUndefined()
+  })
+})

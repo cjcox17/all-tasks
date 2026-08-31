@@ -184,6 +184,21 @@ export function apply(ctx: ClientContext): void {
         console.error('[dsh-task-board] agent preset roster read failed', error)
       }
     }
+    // Endpoint options come from the plugin's own settings (the `task-board`
+    // namespace the Host validates and the router enforces), not the runtime.
+    const pushEndpointOptions = (): void => {
+      const settings = settingsScope.getSnapshot()
+      controller.setExecutionOptions({
+        endpoints: settings.status === 'ready'
+          ? (settings.value?.endpoints ?? []).map(endpoint => ({
+              id: endpoint.id,
+              name: endpoint.name ?? endpoint.id,
+            }))
+          : [],
+      })
+    }
+    pushEndpointOptions()
+    disposers.push(settingsScope.subscribe(pushEndpointOptions))
     const pushModelOptions = async (): Promise<void> => {
       try {
         const response = await connection.api.llm.models({})

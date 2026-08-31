@@ -1,4 +1,5 @@
 import type { TaskUpdatePatch } from './core/use-cases/task-update.ts'
+import { normalizeEndpointList } from './core/endpoints.ts'
 import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
 
@@ -153,16 +154,23 @@ function importedTask(value: unknown): TaskRecord | undefined {
     ...(task.mode === undefined ? {} : { mode: task.mode }),
     ...(task.permission === undefined ? {} : { permission: task.permission }),
     ...(task.model === undefined ? {} : { model: task.model }),
+    ...(task.endpoints === undefined ? {} : { endpoints: task.endpoints }),
     ...(task.archivedAt === undefined ? {} : { archivedAt: task.archivedAt }),
   }
 }
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'permission', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'permission', 'schedule'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
+  // A malformed endpoint list (non-array, oversized, or non-string entries)
+  // rejects the whole create instead of silently dropping the pin; an empty
+  // array is fine (it normalizes to no pin).
+  if (input.endpoints !== undefined
+    && !Array.isArray(input.endpoints)
+    && normalizeEndpointList(input.endpoints) === undefined) return false
   if (input.permission !== undefined && !isTaskPermission(input.permission)) return false
   if (input.schedule !== undefined) {
     const schedule = record(input.schedule)
@@ -174,12 +182,18 @@ function createInput(value: unknown): value is NewTaskInput {
 
 function updatePatch(value: unknown): boolean {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'permission'])) return false
+  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'permission'])) return false
   for (const key of ['title', 'description', 'prompt', 'workspaceId', 'mode'] as const) {
     if (!optionalString(patch[key])) return false
   }
   // null clears the model pin; an object must pass the model gate.
   if (patch.model !== undefined && patch.model !== null && modelPayload(patch.model) === undefined) return false
+  // null (or an empty array) clears the endpoint pin; a non-empty array must
+  // normalize.
+  if (patch.endpoints !== undefined
+    && patch.endpoints !== null
+    && !Array.isArray(patch.endpoints)
+    && normalizeEndpointList(patch.endpoints) === undefined) return false
   return patch.permission === undefined || isTaskPermission(patch.permission)
 }
 
@@ -214,7 +228,10 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       {
         const input = action.input as NewTaskInput
         const model = input.model === undefined ? undefined : modelPayload(input.model)
-        const sanitized = model === undefined || model === input.model ? input : { ...input, model }
+        const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
+        const sanitized = model === input.model && endpoints === input.endpoints
+          ? input
+          : { ...input, model, endpoints }
         return { requestId: envelope.requestId, action: { kind: 'create', id: action.id, input: sanitized } }
       }
     case 'update':
@@ -223,7 +240,10 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       {
         const patch = action.patch as TaskUpdatePatch
         const model = patch.model === undefined || patch.model === null ? patch.model : modelPayload(patch.model)
-        const sanitized = model === patch.model ? patch : { ...patch, model }
+        const endpoints = patch.endpoints === undefined || patch.endpoints === null ? patch.endpoints : normalizeEndpointList(patch.endpoints)
+        const sanitized = model === patch.model && endpoints === patch.endpoints
+          ? patch
+          : { ...patch, model, endpoints }
         return { requestId: envelope.requestId, action: { kind: 'update', taskId, patch: sanitized } }
       }
     case 'set-schedule':

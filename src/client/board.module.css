@@ -577,6 +577,45 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* --- endpoint order editor ---------------------------------------------------- */
+
+.endpointOrder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.endpointOrderList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.endpointOrderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+.endpointOrderName {
+  overflow-wrap: anywhere;
+}
+
+.endpointOrderActions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
 .formError {
   margin: 0;
   font-size: 12px;
@@ -789,6 +828,11 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .executionTimes {
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
+}
+
+.executionEndpoint {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .executionError {

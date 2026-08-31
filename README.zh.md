@@ -23,6 +23,7 @@
 - **真实执行**：手动运行和定时运行共用 Host runner，新建独立会话、重命名、应用 agent 预设、通过 `session.selectModel` 钉住模型选择、应用 `/permission <id>`，再以 queue 模式发送任务 Prompt。
 - **钉子失败即关闭**：工作区缺失、预设缺失或损坏、模型选择被拒绝、权限命令被拒绝时，任务 Prompt 不会发送。
 - **任务级模型钉**：每个任务都可以从 Host 模型目录中挑选提供商与模型钉住执行会话，并可选择推理强度（minimal/low/medium/high 或提供商自定义值）；留空则回落到部署默认模型。
+- **端点模型路由器**：命名计算端点（DeepSeek Official、NAS 上的 LM Studio 等），每个端点有并发上限、token 上限、可选可用时段与 off-peak-only 开关。路由器按任务的端点优先级顺序选择第一个可用端点启动每次运行，端点缺少 token 空间或处于时段外时自动回落到下一个。所有端点都被阻塞时，运行进入排队（不创建会话、不产生费用、重启后仍等待），时段一开或并发空出就自动启动，超过可配置的等待上限（默认 24 小时）才失败。峰值/低谷时段默认采用 DeepSeek 官方 off-peak 窗口（16:30–00:30 UTC，chat 半价 / reasoner 2.5 折），支持全局与按端点覆盖。
 - **Host 调度器**：5 段 cron 支持 `*`、`*/n`、范围、逗号列表、周日 `0/7` 和标准的日期/星期 OR 语义，时间基准为 Host 本地时区。
 - **确定性恢复**：已有 session id 的 running execution 在重启后继续观察；没有 session id 的启动中断会取消且不会重发。
 - **实时同步**：变更返回完整 revision snapshot；SSE 只提示 revision、scheduler 与 power 变化，重连和页面恢复可见时重新拉完整 snapshot。
@@ -68,8 +69,45 @@ dsh plugin --profile web add link:$(pwd)
 | `preventIdleSleep` | `false` | 存在运行中的 DSH 会话、已启用计划或未知会话状态时，持有一个系统空闲睡眠断言。 |
 | `trustedProxyHosts` | `[]` | 仅通过已认证 loopback 反向代理路径接受的规范 `host[:port]` authority 白名单。 |
 | `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | 保存反向代理 token 的环境变量名；token 本身不会写入插件配置。 |
+| `offPeak` | `{start: "16:30", end: "00:30", timezone: "UTC"}` | 全局峰值/低谷窗口（默认 DeepSeek 官方 off-peak 折扣时段）。 |
+| `endpointMaxWaitHours` | `24` | 排队运行等待可用端点的最长时间，超时后判定失败。 |
+| `defaultEndpoints` | `[]` | 未显式钉端点的任务使用的有序端点列表。 |
+| `endpoints` | `[]` | 路由器用于路由任务的命名计算端点（见下）。 |
 
 浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
+
+### 端点路由配置
+
+端点在 `task-board` 设置命名空间下（编辑 `~/.dsh/settings.yaml`；路由器实时重载，无需重启）：
+
+```yaml
+task-board:
+  offPeak:
+    start: "16:30"
+    end: "00:30"
+    timezone: UTC
+  defaultEndpoints: [deepseek-official]
+  endpoints:
+    - id: deepseek-official
+      name: DeepSeek Official
+      provider: deepseek            # llm.models provider group id
+      defaultModel: deepseek-chat
+      maxConcurrency: 2
+      maxTokens: 8192               # DSH maxTokens 超过该值的模型视为不可用
+      offPeakOnly: false
+    - id: lm-studio-nas
+      name: LM Studio (NAS)
+      provider: lm-studio
+      models: [qwen/qwen3.8-27b]    # 为空 = 提供商的全部模型
+      defaultModel: qwen/qwen3.8-27b
+      maxConcurrency: 1
+      allowedHours:                 # Host 本地时间；start > end 表示跨午夜
+        start: "09:00"
+        end: "23:00"
+      offPeakOnly: true
+```
+
+任务按优先级钉端点（新建任务弹窗 / 任务详情 → 端点）；路由器使用第一个可用端点，并沿列表自动回落。所有候选都被阻塞时任务显示**等待端点**，时段一开自动启动。端点级 `offPeak` 覆盖全局窗口；任务钉的模型在所选端点可服务时使用，否则使用端点的 `defaultModel`。`max_tokens` 约束复用 DSH 设置中 Models 一节（`llm-pi-ai`）的按模型 `maxTokens` 配置，与各端点 `maxTokens` 上限比较；无需修改 DSH 本身。
 
 macOS 后端启动 `/usr/bin/caffeinate -i -w <host-pid>`，绝不请求 `-d`。Windows 后端从 `SystemRoot` 启动绝对路径的 Windows PowerShell，固定 helper 只请求 `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`；不请求 `ES_DISPLAY_REQUIRED`，不修改电源计划，也不需要管理员权限。Linux 后端只从 `/usr/bin/systemd-inhibit` 或 `/bin/systemd-inhibit` 启动 systemd-logind `idle` block inhibitor，不请求 `sleep`、`handle-lid-switch` 或显示器/屏保 inhibitor；没有 systemd-logind 时显示 `unsupported` 或可见错误，不启动桌面环境专用替代命令。其他平台报告 `unsupported`。
 
@@ -107,11 +145,12 @@ pnpm build
 1. 挂载插件并重启 `dsh web`，打开任务看板，确认 Host 时区和电源状态可见。
 2. 新建并编辑任务；刷新或打开第二个同源标签页，确认两者显示同一 Host revision。
 3. 执行一个钉住工作区、预设、模型（含推理强度）和权限的任务；确认出现新会话，并由该会话的 `turn/end` 历史结算任务。
-4. 启用一个即将到期的 cron，关闭全部浏览器页面，确认 Host 仍只创建并结算一次 execution。
-5. 让 Host 停止并错过一个 cron 触发点，重启后确认该次被跳过，`nextRunAt` 从当前 Host 时间向后滚动。
-6. 开启 `preventIdleSleep` 并运行长任务，让显示器自动熄灭；恢复显示后确认会话继续且 execution 已结算。
-7. 关闭设置并禁用所有计划，再停止 DSH，确认 helper 退出；macOS 可用 `pmset -g assertions` 辅助确认插件没有 display-sleep assertion。
-8. Linux 可用 `systemd-inhibit --list` 确认只存在 `idle`/`block` 条目；显示器仍按桌面设置关闭，手动睡眠和合盖仍由系统策略处理。
+4. 配置一个 `offPeakOnly: true`（或窄 `allowedHours`）的端点并钉到任务上，在时段外执行：任务显示**等待端点**，不创建会话，时段一开自动启动；同时确认执行记录里显示实际使用的端点。
+5. 启用一个即将到期的 cron，关闭全部浏览器页面，确认 Host 仍只创建并结算一次 execution。
+6. 让 Host 停止并错过一个 cron 触发点，重启后确认该次被跳过，`nextRunAt` 从当前 Host 时间向后滚动。
+7. 开启 `preventIdleSleep` 并运行长任务，让显示器自动熄灭；恢复显示后确认会话继续且 execution 已结算。
+8. 关闭设置并禁用所有计划，再停止 DSH，确认 helper 退出；macOS 可用 `pmset -g assertions` 辅助确认插件没有 display-sleep assertion。
+9. Linux 可用 `systemd-inhibit --list` 确认只存在 `idle`/`block` 条目；显示器仍按桌面设置关闭，手动睡眠和合盖仍由系统策略处理。
 
 ## 已知限制
 

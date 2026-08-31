@@ -119,3 +119,77 @@ describe('model selection gate', () => {
     expect(parsed.action.tasks[0]?.model).toEqual(model)
   })
 })
+
+describe('endpoint pin gate', () => {
+  it('accepts an endpoint list on create and normalizes it', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'create-endpoints',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', endpoints: [' cloud ', 'local'] } },
+    })
+    expect(parsed?.action.kind).toBe('create')
+    if (parsed?.action.kind !== 'create') throw new Error('expected create')
+    expect(parsed.action.input.endpoints).toEqual(['cloud', 'local'])
+  })
+
+  it('rejects non-array endpoint pins on create', () => {
+    for (const bad of ['cloud', 5, { id: 'cloud' }]) {
+      expect(parseActionEnvelope({
+        requestId: 'create-endpoints-bad',
+        action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', endpoints: bad } },
+      })).toBeUndefined()
+    }
+  })
+
+  it('normalizes malformed arrays on create to no pin (never stores them)', () => {
+    for (const bad of [['', '  '], [5], ['x'.repeat(300)]]) {
+      const parsed = parseActionEnvelope({
+        requestId: 'create-endpoints-clean',
+        action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', endpoints: bad } },
+      })
+      expect(parsed?.action.kind).toBe('create')
+      if (parsed?.action.kind !== 'create') throw new Error('expected create')
+      expect(parsed.action.input.endpoints).toBeUndefined()
+    }
+  })
+
+  it('accepts setting and clearing the endpoint pin on update', () => {
+    const set = parseActionEnvelope({
+      requestId: 'update-endpoints',
+      action: { kind: 'update', taskId: 'task-a', patch: { endpoints: ['cloud'] } },
+    })
+    expect(set?.action.kind).toBe('update')
+    if (set?.action.kind !== 'update') throw new Error('expected update')
+    expect(set.action.patch.endpoints).toEqual(['cloud'])
+
+    const cleared = parseActionEnvelope({
+      requestId: 'clear-endpoints',
+      action: { kind: 'update', taskId: 'task-a', patch: { endpoints: null } },
+    })
+    expect(cleared?.action.kind).toBe('update')
+    if (cleared?.action.kind !== 'update') throw new Error('expected update')
+    expect(cleared.action.patch.endpoints).toBeNull()
+
+    const empty = parseActionEnvelope({
+      requestId: 'empty-endpoints',
+      action: { kind: 'update', taskId: 'task-a', patch: { endpoints: [] } },
+    })
+    expect(empty?.action.kind).toBe('update')
+    if (empty?.action.kind !== 'update') throw new Error('expected update')
+    // An empty array normalizes to an explicit clear (the key is present).
+    expect('endpoints' in empty.action.patch).toBe(true)
+    expect(empty.action.patch.endpoints).toBeUndefined()
+
+    expect(parseActionEnvelope({
+      requestId: 'update-endpoints-bad',
+      action: { kind: 'update', taskId: 'task-a', patch: { endpoints: 'cloud' } },
+    })).toBeUndefined()
+  })
+
+  it('carries an endpoint pin through import', () => {
+    const task = createTask({ title: 'A', description: '', prompt: '', endpoints: ['cloud'] }, 1, 'task-a')
+    const parsed = parseActionEnvelope({ requestId: 'import-endpoints', action: { kind: 'import', sourceId: 'browser', tasks: [task] } })
+    expect(parsed?.action.kind).toBe('import')
+    if (parsed?.action.kind !== 'import') throw new Error('expected import')
+    expect(parsed.action.tasks[0]?.endpoints).toEqual(['cloud'])
+  })
+})

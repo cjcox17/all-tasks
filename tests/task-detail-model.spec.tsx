@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
 import { t } from '../src/client/locales.ts'
-import type { BoardController, ControllerSnapshot, ExecutionModelOption } from '../src/core/controller.ts'
+import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
 
@@ -39,13 +39,14 @@ function controllerFake(
   taskRecord: TaskRecord,
   models: readonly ExecutionModelOption[] = MODEL_CATALOG,
   updateTask: (id: string, patch: TaskUpdatePatch) => Promise<boolean> = async () => true,
+  endpoints: readonly ExecutionEndpointOption[] = [],
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [taskRecord],
     boardOpen: true,
     archiveView: false,
     selectedTaskId: taskRecord.id,
-    executionOptions: { workspaces: [], presets: [], models },
+    executionOptions: { workspaces: [], presets: [], models, endpoints },
     pendingTaskIds: [],
   }
   return {
@@ -65,13 +66,18 @@ function controllerFake(
   } as unknown as BoardController
 }
 
-async function renderDetail(taskRecord: TaskRecord, models?: readonly ExecutionModelOption[], updateTask?: (id: string, patch: TaskUpdatePatch) => Promise<boolean>): Promise<HTMLElement> {
+async function renderDetail(
+  taskRecord: TaskRecord,
+  models?: readonly ExecutionModelOption[],
+  updateTask?: (id: string, patch: TaskUpdatePatch) => Promise<boolean>,
+  endpoints?: readonly ExecutionEndpointOption[],
+): Promise<HTMLElement> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   roots.push(root)
   await act(async () => {
-    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask)} task={taskRecord} />)
+    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask, endpoints)} task={taskRecord} />)
   })
   return container
 }
@@ -136,5 +142,93 @@ describe('TaskDetail model reasoning-effort pin', () => {
     expect(effort!.value).toBe('turbo')
     expect(effort!.textContent).toContain('turbo')
     expect(effort!.textContent).toContain(t('exec.model.effort.custom'))
+  })
+})
+
+const ENDPOINTS: readonly ExecutionEndpointOption[] = [
+  { id: 'deepseek-official', name: 'DeepSeek Official' },
+  { id: 'lm-studio-nas', name: 'LM Studio (NAS)' },
+]
+
+function addEndpointSelectOf(container: HTMLElement): HTMLSelectElement | null {
+  return container.querySelector(`select[aria-label="${t('endpoint.add')}"]`)
+}
+
+function addEndpoint(container: HTMLElement, id: string): void {
+  const select = addEndpointSelectOf(container)!
+  select.value = id
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+describe('TaskDetail endpoint order pin', () => {
+  it('shows the pinned endpoints and updates through the controller', async () => {
+    const updateTask = vi.fn(async () => true)
+    const container = await renderDetail(
+      task({ endpoints: ['deepseek-official'] }),
+      MODEL_CATALOG,
+      updateTask,
+      ENDPOINTS,
+    )
+    expect(container.textContent).toContain('DeepSeek Official')
+
+    await act(async () => { addEndpoint(container, 'lm-studio-nas') })
+    expect(updateTask).toHaveBeenCalledWith('t1', { endpoints: ['deepseek-official', 'lm-studio-nas'] })
+  })
+
+  it('clears the pin to null when the last endpoint is removed', async () => {
+    const updateTask = vi.fn(async () => true)
+    const container = await renderDetail(
+      task({ endpoints: ['deepseek-official'] }),
+      MODEL_CATALOG,
+      updateTask,
+      ENDPOINTS,
+    )
+    const remove = container.querySelector(`button[aria-label="${t('endpoint.remove')}"]`) as HTMLButtonElement
+    await act(async () => { remove.click() })
+    expect(updateTask).toHaveBeenCalledWith('t1', { endpoints: null })
+  })
+
+  it('shows a note when no endpoints are configured', async () => {
+    const container = await renderDetail(task())
+    expect(container.textContent).toContain(t('endpoint.none'))
+  })
+})
+
+describe('TaskDetail queued-run display', () => {
+  it('shows the waiting badge and preferred endpoint for a queued run', async () => {
+    const queued = {
+      id: 'e-queued',
+      sessionId: undefined,
+      startedAt: Date.now() - 1000,
+      endedAt: undefined,
+      result: undefined,
+      error: undefined,
+      queuedAt: Date.now() - 1000,
+      endpointId: 'deepseek-official',
+    }
+    const container = await renderDetail(task({
+      status: 'running' as const,
+      executions: [queued],
+    }), MODEL_CATALOG, async () => true, ENDPOINTS)
+    expect(container.textContent).toContain(t('detail.result.waiting'))
+    expect(container.textContent).toContain(t('exec.endpoint.via', { name: 'DeepSeek Official' }))
+  })
+
+  it('shows the endpoint a completed run used', async () => {
+    const done = {
+      id: 'e-done',
+      sessionId: 'session-1',
+      startedAt: Date.now() - 60_000,
+      endedAt: Date.now() - 10_000,
+      result: 'succeeded' as const,
+      error: undefined,
+      endpointId: 'lm-studio-nas',
+    }
+    const container = await renderDetail(task({
+      status: 'done' as const,
+      executions: [done],
+    }), MODEL_CATALOG, async () => true, ENDPOINTS)
+    expect(container.textContent).toContain(t('exec.endpoint.via', { name: 'LM Studio (NAS)' }))
+    expect(container.textContent).not.toContain(t('detail.result.waiting'))
   })
 })

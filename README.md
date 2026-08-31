@@ -27,6 +27,7 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 - **Real execution**: manual and scheduled runs use the same Host runner, create a fresh session, rename it, apply the agent preset, pin the model selection through `session.selectModel`, apply `/permission <id>`, then queue the task prompt.
 - **Fail-closed pins**: a missing workspace, missing or broken preset, rejected model selection, or rejected permission command fails before the task prompt is sent.
 - **Per-task model pin**: each task may pin its execution session to a specific provider/model chosen from the host model catalog, plus an optional reasoning-effort level (minimal/low/medium/high or the provider's own value); a blank pin falls back to the deployment default model.
+- **Endpoint model-router**: named compute endpoints (DeepSeek Official, an LM Studio on the NAS, …) each with a concurrency cap, a token cap, optional allowed hours, and an off-peak-only flag. The router launches every run through the first eligible endpoint in the task's priority order (or the global default list) and automatically falls back when an endpoint lacks token space or is outside its window. A run whose endpoints are all blocked waits (queued, nothing billed, survives restarts) and auto-starts the moment a window opens or a slot frees, failing only after a configurable max-wait (24 h by default). Peak/off-peak defaults to DeepSeek's off-peak window (16:30–00:30 UTC, 50% off chat / 75% off reasoner) with global and per-endpoint overrides.
 - **Host scheduler**: 5-field cron supports `*`, `*/n`, ranges, comma lists, Sunday `0/7`, and standard day-of-month/day-of-week OR semantics in the Host local time zone.
 - **Deterministic recovery**: a running execution with a recorded session is observed after restart; an interrupted start without a session id is cancelled and is not resent.
 - **Live synchronization**: mutations return a full revisioned snapshot; SSE announces revision, scheduler, and power changes, while reconnect and page visibility recovery fetch a full snapshot.
@@ -73,8 +74,45 @@ dsh plugin --profile web add link:$(pwd)
 | `preventIdleSleep` | `false` | Holds one system idle-sleep assertion while any DSH session runs, any schedule is enabled, or session state is unknown. |
 | `trustedProxyHosts` | `[]` | Canonical `host[:port]` authorities accepted only through the authenticated loopback reverse-proxy path. |
 | `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | Environment variable containing the reverse-proxy token; the token itself is never stored in plugin config. |
+| `offPeak` | `{start: "16:30", end: "00:30", timezone: "UTC"}` | Global peak/off-peak window (DeepSeek's off-peak discount hours by default). |
+| `endpointMaxWaitHours` | `24` | How long a queued run may wait for an eligible endpoint before it settles failed. |
+| `defaultEndpoints` | `[]` | Ordered endpoints used by tasks without explicit endpoint pins. |
+| `endpoints` | `[]` | Named compute endpoints the router routes tasks through (see below). |
 
 Direct browser access remains limited to the DSH loopback origin. For a same-host authenticated reverse proxy, bind DSH Web to loopback, set `trustedProxyHosts`, place a high-entropy token in the environment variable selected by `proxyTokenEnv`, and configure the proxy to replace (not forward from the client) `X-Dsh-Task-Board-Proxy-Token` after it authenticates the request. The proxy Host must be allowlisted, and the browser `Origin` must have that same authority. Restart the Host after changing these composition-level proxy settings.
+
+### Endpoint routing configuration
+
+Endpoints live under the `task-board` settings namespace (edit `~/.dsh/settings.yaml`; the router reloads them live, no restart needed):
+
+```yaml
+task-board:
+  offPeak:
+    start: "16:30"
+    end: "00:30"
+    timezone: UTC
+  defaultEndpoints: [deepseek-official]
+  endpoints:
+    - id: deepseek-official
+      name: DeepSeek Official
+      provider: deepseek            # an llm.models provider group id
+      defaultModel: deepseek-chat
+      maxConcurrency: 2
+      maxTokens: 8192               # a model whose DSH maxTokens exceeds this is ineligible
+      offPeakOnly: false
+    - id: lm-studio-nas
+      name: LM Studio (NAS)
+      provider: lm-studio
+      models: [qwen/qwen3.8-27b]    # empty = all models of the provider
+      defaultModel: qwen/qwen3.8-27b
+      maxConcurrency: 1
+      allowedHours:                 # host-local time; start > end crosses midnight
+        start: "09:00"
+        end: "23:00"
+      offPeakOnly: true
+```
+
+A task pins endpoints in priority order (new-task modal / task detail → Endpoints); the router uses the first eligible one and falls back down the list. While every candidate is blocked the task shows **waiting for endpoint** and starts automatically when a window opens. Per-endpoint `offPeak` overrides the global window; the per-task model pin is used when the chosen endpoint serves it, otherwise the endpoint's `defaultModel` applies. `max_tokens` enforcement reuses DSH's per-model `maxTokens` config from the Models section (`llm-pi-ai`), compared against each endpoint's `maxTokens` cap; no DSH changes are required.
 
 On macOS the backend starts `/usr/bin/caffeinate -i -w <host-pid>` and never requests `-d`. On Windows it starts the absolute Windows PowerShell under `SystemRoot` with a fixed helper that requests only `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`; it never requests `ES_DISPLAY_REQUIRED`, changes a power plan, or requires administrator privileges. On Linux it starts a systemd-logind `idle` block inhibitor only from `/usr/bin/systemd-inhibit` or `/bin/systemd-inhibit`; it does not request `sleep`, `handle-lid-switch`, or a display/screensaver inhibitor. A Linux host without systemd-logind reports `unsupported` or a visible error and does not start a desktop-specific fallback. Other platforms report `unsupported`.
 
@@ -113,11 +151,12 @@ Set `DSH_POWER_SMOKE=1` to opt into the native helper smoke test on Windows, mac
 1. Mount the package, restart `dsh web`, open the task board, and confirm the Host time zone and power status are visible.
 2. Create and edit a task; refresh or open a second same-origin tab and confirm both show the same Host revision.
 3. Run a task with pinned workspace, preset, model (plus a reasoning-effort level), and permission; confirm a new session appears and the task settles from its `turn/end` history.
-4. Enable a near-future cron, close all browser pages, and confirm the Host still creates and settles exactly one execution.
-5. Stop the Host past a cron occurrence, restart it, and confirm the missed occurrence is skipped and `nextRunAt` rolls forward from current Host time.
-6. Enable `preventIdleSleep`, run a long session, and let the display turn off; after restoring the display, confirm the session continued and the execution settled.
-7. Disable the setting and all schedules, stop DSH, and confirm the helper exits; on macOS, `pmset -g assertions` should show no display-sleep assertion from this plugin.
-8. On Linux, use `systemd-inhibit --list` to confirm that only an `idle`/`block` entry exists; the display should still follow desktop settings, while manual sleep and lid close remain under system policy.
+4. Configure an endpoint with `offPeakOnly: true` (or a narrow `allowedHours`), pin it on a task, and run it outside the window: the task shows **waiting for endpoint**, no session is created, and it auto-starts when the window opens. Also confirm the execution row shows which endpoint ran it.
+5. Enable a near-future cron, close all browser pages, and confirm the Host still creates and settles exactly one execution.
+6. Stop the Host past a cron occurrence, restart it, and confirm the missed occurrence is skipped and `nextRunAt` rolls forward from current Host time.
+7. Enable `preventIdleSleep`, run a long session, and let the display turn off; after restoring the display, confirm the session continued and the execution settled.
+8. Disable the setting and all schedules, stop DSH, and confirm the helper exits; on macOS, `pmset -g assertions` should show no display-sleep assertion from this plugin.
+9. On Linux, use `systemd-inhibit --list` to confirm that only an `idle`/`block` entry exists; the display should still follow desktop settings, while manual sleep and lid close remain under system policy.
 
 ## Known limitations
 

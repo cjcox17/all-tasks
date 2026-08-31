@@ -51,7 +51,7 @@ function fakeController(
     boardOpen: false,
     archiveView: false,
     selectedTaskId: undefined,
-    executionOptions: { workspaces: [], presets: [], models: [] },
+    executionOptions: { workspaces: [], presets: [], models: [], endpoints: [] },
     pendingTaskIds: [],
     ...snapshot,
   }

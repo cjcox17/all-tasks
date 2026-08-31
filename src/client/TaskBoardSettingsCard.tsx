@@ -19,6 +19,25 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
+  /** Global off-peak window (DeepSeek 16:30–00:30 UTC by default). */
+  offPeak?: { start?: string; end?: string; timezone?: string }
+  /** How long a queued run may wait for an eligible endpoint before failing (hours). */
+  endpointMaxWaitHours?: number
+  /** Ordered endpoints used by tasks without explicit endpoint pins. */
+  defaultEndpoints?: string[]
+  /** Named compute endpoints the router routes tasks through. */
+  endpoints?: Array<{
+    id: string
+    name?: string
+    provider?: string
+    models?: string[]
+    defaultModel?: string
+    maxConcurrency?: number
+    maxTokens?: number
+    allowedHours?: { start?: string; end?: string }
+    offPeakOnly?: boolean
+    offPeak?: { start?: string; end?: string; timezone?: string }
+  }>
 }
 
 /** What the task-board card renders. */

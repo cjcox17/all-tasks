@@ -10,6 +10,7 @@ import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskP
 import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
+import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
 import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import css from '../board.module.css'
@@ -46,6 +47,7 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
   const [mode, setMode] = useState('')
   const [modelKey, setModelKey] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
+  const [endpoints, setEndpoints] = useState<string[]>([])
   const [permission, setPermission] = useState('')
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleCron, setScheduleCron] = useState('')
@@ -79,6 +81,7 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
       workspaceId: workspaceId === '' ? undefined : workspaceId,
       mode: mode === '' ? undefined : mode,
       model: model === undefined ? undefined : withReasoningEffort(model, reasoningEffort),
+      endpoints: endpoints.length === 0 ? undefined : endpoints,
       permission: permission === '' ? undefined : permission as TaskPermission,
       schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : undefined,
     })
@@ -157,6 +160,11 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
             <ReasoningEffortPicker value={reasoningEffort} onChange={setReasoningEffort} />
           </label>
         )}
+
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('new.endpoints')}</span>
+          <EndpointOrderEditor endpoints={endpoints} options={options.endpoints} onChange={setEndpoints} />
+        </label>
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.permission')}</span>

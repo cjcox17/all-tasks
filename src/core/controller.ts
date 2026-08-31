@@ -78,11 +78,20 @@ export interface ExecutionModelOption {
   modelName?: string
 }
 
+/** One endpoint option the execution-target picker offers (from the plugin settings). */
+export interface ExecutionEndpointOption {
+  /** Stable endpoint id. */
+  id: string
+  /** Display name. */
+  name: string
+}
+
 /** The execution-target option sets the UI feeds into the controller. */
 export interface ExecutionOptionsSnapshot {
   workspaces: readonly ExecutionWorkspaceOption[]
   presets: readonly ExecutionPresetOption[]
   models: readonly ExecutionModelOption[]
+  endpoints: readonly ExecutionEndpointOption[]
 }
 
 /**
@@ -154,7 +163,7 @@ export class BoardController {
   private boardOpen = false
   private archiveView = false
   private selectedTaskId: string | undefined
-  private executionOptions: ExecutionOptionsSnapshot = { workspaces: [], presets: [], models: [] }
+  private executionOptions: ExecutionOptionsSnapshot = { workspaces: [], presets: [], models: [], endpoints: [] }
   private listeners = new Set<() => void>()
   private disposers: Array<() => void> = []
   private readonly now: () => number
