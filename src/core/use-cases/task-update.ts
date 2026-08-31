@@ -24,6 +24,11 @@ export type TaskUpdatePatch = Partial<Pick<TaskRecord, 'title' | 'description' |
    * empty array) clears the pin and the global default endpoint list applies.
    */
   endpoints?: string[] | null
+  /**
+   * The task group this task belongs to; `null` clears the membership and the
+   * task becomes ungrouped (the group's order is synced by the caller).
+   */
+  groupId?: string | null
 }
 
 /**
@@ -81,17 +86,21 @@ export function applyUpdateTask(
     const endpoints = 'endpoints' in patch
       ? (patch.endpoints === null || patch.endpoints === undefined ? undefined : normalizeEndpointList(patch.endpoints))
       : undefined
+    const groupId = 'groupId' in patch
+      ? (patch.groupId === null || patch.groupId === undefined ? undefined : normalizeTargetId(patch.groupId))
+      : undefined
     const permission = 'permission' in patch ? normalizePermission(task.permission, patch.permission) : undefined
-    // The patch may carry `model: null`/`endpoints: null` to clear a pin; the
-    // normalized value (or undefined) is written back so the ledger never
-    // stores null, and the rest of the patch spreads without it.
-    const { model: _patchedModel, endpoints: _patchedEndpoints, ...patchRest } = patch
+    // The patch may carry `model: null`/`endpoints: null`/`groupId: null` to
+    // clear a pin; the normalized value (or undefined) is written back so the
+    // ledger never stores null, and the rest of the patch spreads without it.
+    const { model: _patchedModel, endpoints: _patchedEndpoints, groupId: _patchedGroupId, ...patchRest } = patch
     const next: TaskRecord = {
       ...task,
       ...patchRest,
       updatedAt: now,
       ...('model' in patch ? { model } : {}),
       ...('endpoints' in patch ? { endpoints } : {}),
+      ...('groupId' in patch ? { groupId } : {}),
     }
     // Content fields normalize like creation does (trimmed); an explicit
     // undefined keeps the current value — content cannot be cleared.

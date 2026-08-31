@@ -294,7 +294,16 @@ export function isEndpointEligible(input: EndpointEligibilityInput): EndpointEli
 export type RouteDecision =
   | { mode: 'unrouted' }
   | { mode: 'routed'; endpoint: EndpointConfig; selection: { provider: string; model: string; reasoningEffort?: string } }
-  | { mode: 'wait'; endpointId: string | undefined; reasons: EndpointBlockReason[] }
+  | {
+    mode: 'wait'
+    endpointId: string | undefined
+    reasons: EndpointBlockReason[]
+    /**
+     * Why the run is held before launch: no eligible endpoint (the default),
+     * a group slot is occupied, or the group's allowed window is closed.
+     */
+    reason?: 'endpoint' | 'group' | 'window'
+  }
 
 /** Live state the pure picker needs (assembled per evaluation). */
 export interface EndpointPickerState {

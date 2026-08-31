@@ -64,6 +64,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
   if (record.mode !== undefined && typeof record.mode !== 'string') return false
   if (record.permission !== undefined && typeof record.permission !== 'string') return false
   if (record.endpoints !== undefined && !Array.isArray(record.endpoints)) return false
+  if (record.groupId !== undefined && typeof record.groupId !== 'string') return false
   if (!Array.isArray(record.executions)) return false
   for (const execution of record.executions) {
     if (typeof execution !== 'object' || execution === null) return false
@@ -75,6 +76,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
     if (entry.result !== undefined && entry.result !== 'succeeded' && entry.result !== 'failed' && entry.result !== 'cancelled') return false
     if (entry.error !== undefined && typeof entry.error !== 'string') return false
     if (entry.queuedAt !== undefined && typeof entry.queuedAt !== 'number') return false
+    if (entry.queuedReason !== undefined && entry.queuedReason !== 'endpoint' && entry.queuedReason !== 'group' && entry.queuedReason !== 'window') return false
     if (entry.endpointId !== undefined && typeof entry.endpointId !== 'string') return false
   }
   return true
@@ -149,6 +151,7 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     // same way (blank/malformed collapses to no routing).
     task.model = normalizeModelSelection(row.model)
     task.endpoints = normalizeEndpointList(row.endpoints)
+    task.groupId = normalizeTargetId(row.groupId)
     task.archivedAt = typeof row.archivedAt === 'number' && Number.isFinite(row.archivedAt) ? row.archivedAt : undefined
     task.permission = isTaskPermission(row.permission) ? row.permission as TaskPermission : undefined
     tasks.push(task)

@@ -1,5 +1,15 @@
 import type { TaskUpdatePatch } from './core/use-cases/task-update.ts'
-import { normalizeEndpointList } from './core/endpoints.ts'
+import { normalizeDailyWindow, normalizeEndpointList } from './core/endpoints.ts'
+import {
+  GROUP_FIELD_BOUND,
+  GROUP_MAX_PARALLEL_BOUND,
+  GROUP_ORDER_BOUND,
+  isGroupExecutionMode,
+  normalizeMaxParallel,
+  type GroupCreateInput,
+  type GroupUpdatePatch,
+  type TaskGroupRecord,
+} from './core/groups.ts'
 import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
 
@@ -30,6 +40,8 @@ export interface TaskBoardSnapshot {
   schemaVersion: typeof TASK_BOARD_SCHEMA_VERSION
   revision: number
   tasks: TaskRecord[]
+  /** Task groups (named member sets with shared execution policy). */
+  groups: TaskGroupRecord[]
   scheduler: TaskBoardSchedulerSnapshot
   power: TaskBoardPowerSnapshot
 }
@@ -52,6 +64,10 @@ export type TaskBoardAction =
   | { kind: 'set-schedule'; taskId: string; patch: { enabled?: boolean; cron?: string } }
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
+  | { kind: 'create-group'; id: string; input: GroupCreateInput }
+  | { kind: 'update-group'; groupId: string; patch: GroupUpdatePatch }
+  | { kind: 'delete-group'; groupId: string }
+  | { kind: 'set-group-order'; groupId: string; order: string[] }
 
 export interface TaskBoardActionEnvelope {
   requestId: string
@@ -161,7 +177,7 @@ function importedTask(value: unknown): TaskRecord | undefined {
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'permission', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
@@ -171,6 +187,7 @@ function createInput(value: unknown): value is NewTaskInput {
   if (input.endpoints !== undefined
     && !Array.isArray(input.endpoints)
     && normalizeEndpointList(input.endpoints) === undefined) return false
+  if (input.groupId !== undefined && !boundedId(input.groupId)) return false
   if (input.permission !== undefined && !isTaskPermission(input.permission)) return false
   if (input.schedule !== undefined) {
     const schedule = record(input.schedule)
@@ -182,7 +199,7 @@ function createInput(value: unknown): value is NewTaskInput {
 
 function updatePatch(value: unknown): boolean {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'permission'])) return false
+  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission'])) return false
   for (const key of ['title', 'description', 'prompt', 'workspaceId', 'mode'] as const) {
     if (!optionalString(patch[key])) return false
   }
@@ -194,6 +211,8 @@ function updatePatch(value: unknown): boolean {
     && patch.endpoints !== null
     && !Array.isArray(patch.endpoints)
     && normalizeEndpointList(patch.endpoints) === undefined) return false
+  // null clears the group membership; a string must be a bounded id.
+  if (patch.groupId !== undefined && patch.groupId !== null && !boundedId(patch.groupId)) return false
   return patch.permission === undefined || isTaskPermission(patch.permission)
 }
 
@@ -203,6 +222,65 @@ function schedulePatch(value: unknown): boolean {
     && exactKeys(patch, ['enabled', 'cron'])
     && (patch.enabled === undefined || typeof patch.enabled === 'boolean')
     && (patch.cron === undefined || typeof patch.cron === 'string')
+}
+
+/** A non-blank bounded id (group ids and group-member references). */
+function boundedId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= GROUP_FIELD_BOUND
+}
+
+/** Gate one group create/update schedule field (a task-style schedule patch). */
+function groupScheduleField(value: unknown): boolean {
+  return schedulePatch(value)
+}
+
+/** Gate a group create input. */
+function groupInput(value: unknown): value is GroupCreateInput {
+  const input = record(value)
+  if (input === undefined || !exactKeys(input, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
+  if (typeof input.name !== 'string' || input.name.trim() === '' || input.name.length > GROUP_FIELD_BOUND) return false
+  if (input.mode !== undefined && !isGroupExecutionMode(input.mode)) return false
+  if (input.maxParallel !== undefined && normalizeMaxParallel(input.maxParallel) === undefined) return false
+  if (input.endpoints !== undefined && !Array.isArray(input.endpoints) && normalizeEndpointList(input.endpoints) === undefined) return false
+  if (input.allowedHours !== undefined && normalizeDailyWindow(input.allowedHours) === undefined) return false
+  if (input.offPeakOnly !== undefined && typeof input.offPeakOnly !== 'boolean') return false
+  if (input.schedule !== undefined && !groupScheduleField(input.schedule)) return false
+  return true
+}
+
+/** Gate a group update patch (every field optional; null clears a field). */
+function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
+  const patch = record(value)
+  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
+  if (patch.name !== undefined && (typeof patch.name !== 'string' || patch.name.trim() === '' || patch.name.length > GROUP_FIELD_BOUND)) return false
+  if (patch.mode !== undefined && !isGroupExecutionMode(patch.mode)) return false
+  if (patch.maxParallel !== undefined && patch.maxParallel !== null && normalizeMaxParallel(patch.maxParallel) === undefined) return false
+  if (patch.endpoints !== undefined && patch.endpoints !== null && !Array.isArray(patch.endpoints) && normalizeEndpointList(patch.endpoints) === undefined) return false
+  if (patch.allowedHours !== undefined && patch.allowedHours !== null && normalizeDailyWindow(patch.allowedHours) === undefined) return false
+  if (patch.offPeakOnly !== undefined && typeof patch.offPeakOnly !== 'boolean') return false
+  if (patch.schedule !== undefined && patch.schedule !== null && !groupScheduleField(patch.schedule)) return false
+  return true
+}
+
+/** Gate a set-group-order payload: bounded ids, capped length (membership checked Host-side). */
+function groupOrderPayload(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length > GROUP_ORDER_BOUND) return false
+  return value.every(id => boundedId(id))
+}
+
+/** Sanitize the optional fields of a group create/update payload (mirror of the create/update task sanitizer). */
+function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUpdatePatch | GroupCreateInput {
+  const sanitized: GroupUpdatePatch | GroupCreateInput = { ...patch }
+  if ('maxParallel' in sanitized && sanitized.maxParallel !== undefined && sanitized.maxParallel !== null) {
+    sanitized.maxParallel = normalizeMaxParallel(sanitized.maxParallel)
+  }
+  if ('endpoints' in sanitized && sanitized.endpoints !== undefined && sanitized.endpoints !== null) {
+    sanitized.endpoints = normalizeEndpointList(sanitized.endpoints)
+  }
+  if ('allowedHours' in sanitized && sanitized.allowedHours !== undefined && sanitized.allowedHours !== null) {
+    sanitized.allowedHours = normalizeDailyWindow(sanitized.allowedHours)
+  }
+  return sanitized
 }
 
 export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | undefined {
@@ -229,9 +307,10 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         const input = action.input as NewTaskInput
         const model = input.model === undefined ? undefined : modelPayload(input.model)
         const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
-        const sanitized = model === input.model && endpoints === input.endpoints
+        const groupId = input.groupId === undefined ? undefined : input.groupId.trim()
+        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId
           ? input
-          : { ...input, model, endpoints }
+          : { ...input, model, endpoints, groupId }
         return { requestId: envelope.requestId, action: { kind: 'create', id: action.id, input: sanitized } }
       }
     case 'update':
@@ -241,11 +320,32 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         const patch = action.patch as TaskUpdatePatch
         const model = patch.model === undefined || patch.model === null ? patch.model : modelPayload(patch.model)
         const endpoints = patch.endpoints === undefined || patch.endpoints === null ? patch.endpoints : normalizeEndpointList(patch.endpoints)
-        const sanitized = model === patch.model && endpoints === patch.endpoints
+        const groupId = patch.groupId === undefined || patch.groupId === null ? patch.groupId : patch.groupId.trim()
+        const sanitized = model === patch.model && endpoints === patch.endpoints && groupId === patch.groupId
           ? patch
-          : { ...patch, model, endpoints }
+          : { ...patch, model, endpoints, groupId }
         return { requestId: envelope.requestId, action: { kind: 'update', taskId, patch: sanitized } }
       }
+    case 'create-group':
+      if (!exactKeys(action, ['kind', 'id', 'input'])) return undefined
+      if (typeof action.id !== 'string' || action.id === '') return undefined
+      if (!groupInput(action.input)) return undefined
+      return { requestId: envelope.requestId, action: { kind: 'create-group', id: action.id, input: sanitizeGroupPatch(action.input) as GroupCreateInput } }
+    case 'update-group':
+      if (!exactKeys(action, ['kind', 'groupId', 'patch'])) return undefined
+      if (typeof action.groupId !== 'string' || action.groupId === '') return undefined
+      if (!groupUpdatePatch(action.patch)) return undefined
+      return { requestId: envelope.requestId, action: { kind: 'update-group', groupId: action.groupId, patch: sanitizeGroupPatch(action.patch) as GroupUpdatePatch } }
+    case 'delete-group':
+      if (!exactKeys(action, ['kind', 'groupId'])) return undefined
+      return typeof action.groupId === 'string' && action.groupId !== ''
+        ? { requestId: envelope.requestId, action: { kind: 'delete-group', groupId: action.groupId } }
+        : undefined
+    case 'set-group-order':
+      if (!exactKeys(action, ['kind', 'groupId', 'order'])) return undefined
+      return typeof action.groupId === 'string' && action.groupId !== '' && groupOrderPayload(action.order)
+        ? { requestId: envelope.requestId, action: { kind: 'set-group-order', groupId: action.groupId, order: action.order } }
+        : undefined
     case 'set-schedule':
       if (!exactKeys(action, ['kind', 'taskId', 'patch'])) return undefined
       return taskId !== undefined && schedulePatch(action.patch)

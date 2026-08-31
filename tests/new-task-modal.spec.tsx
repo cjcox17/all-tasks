@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NewTaskModal } from '../src/client/board/NewTaskModal.tsx'
 import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import { createTask, modelSelectionKey, type NewTaskInput, type TaskRecord } from '../src/core/tasks.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -36,6 +37,7 @@ const ENDPOINTS: readonly ExecutionEndpointOption[] = [
 function fakeController(
   createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
   endpoints: readonly ExecutionEndpointOption[] = [],
+  groups: readonly TaskGroupRecord[] = [],
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [],
@@ -43,6 +45,7 @@ function fakeController(
     archiveView: false,
     selectedTaskId: undefined,
     executionOptions: { workspaces: [], presets: [], models: MODELS, endpoints },
+    groups,
     pendingTaskIds: [],
   }
   return {
@@ -55,6 +58,7 @@ function fakeController(
 async function renderModal(
   createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
   endpoints: readonly ExecutionEndpointOption[] = [],
+  groups: readonly TaskGroupRecord[] = [],
 ): Promise<{
   container: HTMLElement
   onClose: ReturnType<typeof vi.fn>
@@ -65,7 +69,7 @@ async function renderModal(
   roots.push(root)
   const onClose = vi.fn()
   await act(async () => {
-    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints)} onClose={onClose} />)
+    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints, groups)} onClose={onClose} />)
   })
   return { container, onClose }
 }
@@ -171,5 +175,30 @@ describe('NewTaskModal endpoint order', () => {
     const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'))
     expect(container.textContent).toContain(t('endpoint.none'))
     expect(container.querySelector(`select[aria-label="${t('endpoint.add')}"]`)).toBeNull()
+  })
+})
+
+describe('NewTaskModal group picker', () => {
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+
+  it('submits the chosen group on create', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, [], [GROUP])
+
+    setFieldValue(container.querySelector('input') as HTMLInputElement, 'Grouped task')
+    await act(async () => { setSelect(selectOf(container, 'g1'), 'g1') })
+
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    expect(createTaskConfirmed.mock.calls[0][0].groupId).toBe('g1')
+  })
+
+  it('omits the group when none is chosen', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, [], [GROUP])
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed.mock.calls[0][0].groupId).toBeUndefined()
   })
 })

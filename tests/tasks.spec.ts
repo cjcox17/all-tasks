@@ -305,3 +305,14 @@ describe('createTask endpoint pin', () => {
     expect(createTask({ title: 'x', description: '', prompt: '', endpoints: ['', '  '] }, NOW, 'task-blank').endpoints).toBeUndefined()
   })
 })
+
+describe('group membership on createTask', () => {
+  it('carries a normalized groupId and drops a blank one', () => {
+    const grouped = createTask({ title: 'A', description: '', prompt: '', groupId: ' g1 ' }, 1, 't-1')
+    expect(grouped.groupId).toBe('g1')
+    const blank = createTask({ title: 'B', description: '', prompt: '', groupId: '   ' }, 1, 't-2')
+    expect(blank.groupId).toBeUndefined()
+    const absent = createTask({ title: 'C', description: '', prompt: '' }, 1, 't-3')
+    expect(absent.groupId).toBeUndefined()
+  })
+})

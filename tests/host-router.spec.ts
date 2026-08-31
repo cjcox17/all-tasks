@@ -233,7 +233,7 @@ describe('TaskBoardHostService endpoint routing', () => {
     const settled = ledger.state().tasks[0]!.executions[0]!
     expect(settled.result).toBe('failed')
     expect(settled.endedAt).toBeDefined()
-    expect(settled.error).toContain('endpoint never became eligible')
+    expect(settled.error).toContain('never became eligible to launch within the max-wait window')
     expect(create).not.toHaveBeenCalled()
     service.dispose()
   })

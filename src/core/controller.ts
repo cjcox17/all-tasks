@@ -12,6 +12,17 @@
  * owns only the orchestration seam (state, persistence, notify, navigation).
  */
 import type { TaskStore } from './store.ts'
+import {
+  applyCreateGroup,
+  applyDeleteGroup,
+  applyUpdateGroup,
+  orderedGroupMembers,
+  withGroupMembershipChange,
+  withGroupOrder,
+  type GroupCreateInput,
+  type GroupUpdatePatch,
+  type TaskGroupRecord,
+} from './groups.ts'
 import { withStatus, type NewTaskInput, type TaskRecord, type TaskStatus } from './tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './use-cases/task-archive.ts'
 import { applyCreateTask } from './use-cases/task-create.ts'
@@ -117,6 +128,8 @@ export function groupExecutionModelOptions(
 /** Immutable controller snapshot for UI subscriptions. */
 export interface ControllerSnapshot {
   tasks: readonly TaskRecord[]
+  /** Task groups (named member sets with shared execution policy). */
+  groups: readonly TaskGroupRecord[]
   boardOpen: boolean
   /** True when the board shows the archive view instead of the columns. */
   archiveView: boolean
@@ -160,6 +173,7 @@ function messageOf(error: unknown): string {
  */
 export class BoardController {
   private tasks: TaskRecord[] = []
+  private groups: TaskGroupRecord[] = []
   private boardOpen = false
   private archiveView = false
   private selectedTaskId: string | undefined
@@ -213,6 +227,7 @@ export class BoardController {
   getSnapshot(): ControllerSnapshot {
     return {
       tasks: this.tasks,
+      groups: this.groups,
       boardOpen: this.boardOpen,
       archiveView: this.archiveView,
       selectedTaskId: this.selectedTaskId,
@@ -290,6 +305,10 @@ export class BoardController {
     const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id)
     if (task === undefined) return undefined
     this.tasks = [...tasks]
+    // Legacy path only: the Host ledger syncs the group order on its own.
+    if (task.groupId !== undefined && this.groups.some(group => group.id === task.groupId)) {
+      this.groups = withGroupMembershipChange(this.groups, id, undefined, task.groupId, this.now())
+    }
     this.persistAndNotify()
     return task
   }
@@ -317,7 +336,15 @@ export class BoardController {
     if (this.deps.transport !== undefined) {
       return await this.commitRemote({ kind: 'update', taskId: id, patch }, id)
     }
+    const previous = this.tasks.find(task => task.id === id)?.groupId
     this.tasks = [...applyUpdateTask(this.tasks, id, patch, this.now())]
+    // Legacy path only: the Host ledger syncs the group order on its own.
+    if ('groupId' in patch) {
+      const next = patch.groupId === null || patch.groupId === undefined ? undefined : patch.groupId.trim() === '' ? undefined : patch.groupId.trim()
+      if (previous !== next) {
+        this.groups = withGroupMembershipChange(this.groups, id, previous, next, this.now())
+      }
+    }
     this.persistAndNotify()
     return true
   }
@@ -345,8 +372,13 @@ export class BoardController {
       void this.commitRemote({ kind: 'delete', taskId: id }, id)
       return
     }
+    const previous = this.tasks.find(task => task.id === id)?.groupId
     const { tasks, selectionCleared } = applyDeleteTask(this.tasks, this.selectedTaskId, id)
     this.tasks = [...tasks]
+    // Legacy path only: the Host ledger syncs the group order on its own.
+    if (previous !== undefined) {
+      this.groups = withGroupMembershipChange(this.groups, id, previous, undefined, this.now())
+    }
     if (selectionCleared) this.selectedTaskId = undefined
     this.persistAndNotify()
   }
@@ -383,6 +415,71 @@ export class BoardController {
     if (this.selectedTaskId === id) this.selectedTaskId = undefined
     this.persistAndNotify()
     return true
+  }
+
+  // --- group mutations (pure transitions in core/groups) ----------------------
+
+  /** Create a group through the Host; exposes it only after confirmation. */
+  async createGroupConfirmed(input: GroupCreateInput): Promise<TaskGroupRecord | undefined> {
+    const id = this.uuid()
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'create-group', id, input }, id)
+        ? this.groups.find(group => group.id === id)
+        : undefined
+    }
+    const result = applyCreateGroup(this.groups, input, this.now(), id)
+    if (result.group === undefined) return undefined
+    this.groups = [...result.groups]
+    this.notify()
+    return result.group
+  }
+
+  /**
+   * Update a group (name, mode, cap, endpoints, window, schedule).
+   * @returns true when the authority accepted the patch.
+   */
+  async updateGroup(groupId: string, patch: GroupUpdatePatch): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'update-group', groupId, patch }, groupId)
+    }
+    const result = applyUpdateGroup(this.groups, groupId, patch, this.now())
+    if (!result.applied) return false
+    this.groups = [...result.groups]
+    this.notify()
+    return true
+  }
+
+  /** Delete a group (members become ungrouped; their tasks stay). */
+  async deleteGroup(groupId: string): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'delete-group', groupId }, groupId)
+    }
+    const result = applyDeleteGroup(this.tasks, this.groups, groupId, this.now())
+    if (!result.applied) return false
+    this.tasks = [...result.tasks]
+    this.groups = [...result.groups]
+    this.notify()
+    return true
+  }
+
+  /** Replace a group's member order (every listed id must be a member, once). */
+  async setGroupOrder(groupId: string, order: string[]): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'set-group-order', groupId, order }, groupId)
+    }
+    const memberIds = this.tasks.filter(task => task.groupId === groupId).map(task => task.id)
+    const memberSet = new Set(memberIds)
+    const orderSet = new Set(order)
+    if (orderSet.size !== order.length || !order.every(id => memberSet.has(id))) return false
+    this.groups = withGroupOrder(this.groups, groupId, order, memberIds, this.now())
+    this.notify()
+    return true
+  }
+
+  /** The member tasks of a group in group order (for pickers and editors). */
+  groupMembers(groupId: string): TaskRecord[] {
+    const group = this.groups.find(candidate => candidate.id === groupId)
+    return group === undefined ? [] : orderedGroupMembers(group, this.tasks)
   }
 
   // --- scheduling ---------------------------------------------------------------
@@ -583,6 +680,7 @@ export class BoardController {
     const sameGeneration = currentLedgerId === nextLedgerId
     if (sameGeneration && this.hostState !== undefined && snapshot.revision < this.hostState.revision) return false
     this.tasks = [...snapshot.tasks]
+    this.groups = [...snapshot.groups]
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }
     this.transportError = undefined
     if (this.selectedTaskId !== undefined && !this.tasks.some(task => task.id === this.selectedTaskId)) {

@@ -24,6 +24,7 @@
 - **钉子失败即关闭**：工作区缺失、预设缺失或损坏、模型选择被拒绝、权限命令被拒绝时，任务 Prompt 不会发送。
 - **任务级模型钉**：每个任务都可以从 Host 模型目录中挑选提供商与模型钉住执行会话，并可选择推理强度（minimal/low/medium/high 或提供商自定义值）；留空则回落到部署默认模型。
 - **端点模型路由器**：命名计算端点（DeepSeek Official、NAS 上的 LM Studio 等），每个端点有并发上限、token 上限、可选可用时段与 off-peak-only 开关。路由器按任务的端点优先级顺序选择第一个可用端点启动每次运行，端点缺少 token 空间或处于时段外时自动回落到下一个。所有端点都被阻塞时，运行进入排队（不创建会话、不产生费用、重启后仍等待），时段一开或并发空出就自动启动，超过可配置的等待上限（默认 24 小时）才失败。峰值/低谷时段默认采用 DeepSeek 官方 off-peak 窗口（16:30–00:30 UTC，chat 半价 / reasoner 2.5 折），支持全局与按端点覆盖。
+- **任务分组**：一组共享执行策略的命名任务集合，在每个看板列内以独立横幅聚合展示。分组有执行模式——顺序（同一时刻只运行一个成员，按组内成员顺序）或并行（最多同时运行可配置的数量，留空为不限）——组内任务的任何启动（手动、定时、路由自动启动）都受此限制。分组可钉住自己的端点优先级列表（成员的自身钉优先，其次分组，最后全局默认）、可用时段窗口与 off-peak-only 开关，以及可选的分组 cron。分组 cron 启用后，组内成员继承它并忽略各自的定时；成员结算后，按顺序的下一个可运行成员自动启动。被阻塞的手动运行会显示等待原因（**等待组内插槽** / **等待允许时段** / **等待端点**），插槽或时段一空出就自动启动，与端点排队行为一致。
 - **Host 调度器**：5 段 cron 支持 `*`、`*/n`、范围、逗号列表、周日 `0/7` 和标准的日期/星期 OR 语义，时间基准为 Host 本地时区。
 - **确定性恢复**：已有 session id 的 running execution 在重启后继续观察；没有 session id 的启动中断会取消且不会重发。
 - **实时同步**：变更返回完整 revision snapshot；SSE 只提示 revision、scheduler 与 power 变化，重连和页面恢复可见时重新拉完整 snapshot。
@@ -33,7 +34,7 @@
 ## 架构与协议
 
 - `src/index.ts` 通过官方 `@deepseek-ai/dsh-host-apiproxy` 与 `@deepseek-ai/dsh-host-webserver` SDK 挂载 Host 服务。
-- `src/host-ledger.ts` 串行动作，并用临时文件加原子 rename 持久化 `{ schemaVersion: 2, revision, tasks, scheduler, recentRequests }`。
+- `src/host-ledger.ts` 串行动作，并用临时文件加原子 rename 持久化 `{ schemaVersion: 2, revision, tasks, groups, scheduler, recentRequests }`。
 - `src/host-service.ts` 负责 cron tick、错过触发跳过、runner 启动、重启对账和电源保护理由。
 - `src/client/host-api.ts` 单次导入旧浏览器数据、提交幂等动作，并把 Host snapshot 当作唯一已确认 UI 状态。
 - 同源接口为 `GET /api/task-board/state`、`GET /api/task-board/events` 和 `POST /api/task-board/action`。
@@ -111,6 +112,17 @@ task-board:
 
 macOS 后端启动 `/usr/bin/caffeinate -i -w <host-pid>`，绝不请求 `-d`。Windows 后端从 `SystemRoot` 启动绝对路径的 Windows PowerShell，固定 helper 只请求 `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`；不请求 `ES_DISPLAY_REQUIRED`，不修改电源计划，也不需要管理员权限。Linux 后端只从 `/usr/bin/systemd-inhibit` 或 `/bin/systemd-inhibit` 启动 systemd-logind `idle` block inhibitor，不请求 `sleep`、`handle-lid-switch` 或显示器/屏保 inhibitor；没有 systemd-logind 时显示 `unsupported` 或可见错误，不启动桌面环境专用替代命令。其他平台报告 `unsupported`。
 
+## 任务分组
+
+分组是看板级实体，在界面中创建（头部 **+ 新建分组**），持久化在 Host 账本中，并在每个看板列内以横幅聚合展示成员卡片：
+
+- **成员关系**：一个任务最多属于一个分组；在新建任务弹窗或任务详情（分组栏）中选择。加入分组会把成员追加到组内顺序；移出即取消分组。删除分组会取消所有成员的分组（任务保留），且当任一成员存在未结算运行时会拒绝删除。
+- **执行模式**：顺序模式同一时刻只运行一个成员，按组内成员顺序——成员结算后，下一个可运行成员（待规划/待办、未归档）自动启动。并行模式最多同时运行配置的 `maxParallel` 个（留空为不限）。组内任务的任何启动——手动、分组 cron、路由自动启动——都受分组的容量与窗口限制。
+- **端点**：分组可钉住端点优先级列表（分组编辑器 → 端点）。成员的有效端点列表为：成员自身钉 > 分组列表 > 全局 `defaultEndpoints`。
+- **窗口**：分组可把启动限制在 `allowedHours`（Host 本地时间）和/或全局 off-peak 窗口（`offPeakOnly`）。
+- **定时**：分组可启用自己的 cron。启用后组内成员继承它——各自的定时被忽略（详情页会显示提示）——cron 触发序列（第一个可运行成员；随后按成员结算继续链条）。
+- **等待**：被容量阻塞的手动运行显示**等待组内插槽**；被分组窗口阻塞显示**等待允许时段**；被端点阻塞显示**等待端点**。三者都在 Host 侧排队（不产生费用、重启后仍等待），插槽或时段一空出就自动启动，超过 `endpointMaxWaitHours` 才失败。
+
 ## 数据存储与迁移
 
 - v2 账本位于 `$DSH_HOME/task-board/ledger-v2.json`。POSIX 新文件权限为 `0600`；Windows 继承用户目录 ACL。
@@ -146,11 +158,12 @@ pnpm build
 2. 新建并编辑任务；刷新或打开第二个同源标签页，确认两者显示同一 Host revision。
 3. 执行一个钉住工作区、预设、模型（含推理强度）和权限的任务；确认出现新会话，并由该会话的 `turn/end` 历史结算任务。
 4. 配置一个 `offPeakOnly: true`（或窄 `allowedHours`）的端点并钉到任务上，在时段外执行：任务显示**等待端点**，不创建会话，时段一开自动启动；同时确认执行记录里显示实际使用的端点。
-5. 启用一个即将到期的 cron，关闭全部浏览器页面，确认 Host 仍只创建并结算一次 execution。
-6. 让 Host 停止并错过一个 cron 触发点，重启后确认该次被跳过，`nextRunAt` 从当前 Host 时间向后滚动。
-7. 开启 `preventIdleSleep` 并运行长任务，让显示器自动熄灭；恢复显示后确认会话继续且 execution 已结算。
-8. 关闭设置并禁用所有计划，再停止 DSH，确认 helper 退出；macOS 可用 `pmset -g assertions` 辅助确认插件没有 display-sleep assertion。
-9. Linux 可用 `systemd-inhibit --list` 确认只存在 `idle`/`block` 条目；显示器仍按桌面设置关闭，手动睡眠和合盖仍由系统策略处理。
+5. 创建含两个待办成员的顺序分组，执行第一个成员，确认第一个结算后第二个自动启动。再加第三个成员并在第一个仍运行时执行它：显示**等待组内插槽**，结算后启动。
+6. 启用一个即将到期的 cron，关闭全部浏览器页面，确认 Host 仍只创建并结算一次 execution。
+7. 让 Host 停止并错过一个 cron 触发点，重启后确认该次被跳过，`nextRunAt` 从当前 Host 时间向后滚动。
+8. 开启 `preventIdleSleep` 并运行长任务，让显示器自动熄灭；恢复显示后确认会话继续且 execution 已结算。
+9. 关闭设置并禁用所有计划，再停止 DSH，确认 helper 退出；macOS 可用 `pmset -g assertions` 辅助确认插件没有 display-sleep assertion。
+10. Linux 可用 `systemd-inhibit --list` 确认只存在 `idle`/`block` 条目；显示器仍按桌面设置关闭，手动睡眠和合盖仍由系统策略处理。
 
 ## 已知限制
 

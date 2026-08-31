@@ -7,6 +7,7 @@ const snapshot: TaskBoardSnapshot = {
   schemaVersion: 2,
   revision: 1,
   tasks: [],
+    groups: [],
   scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
   power: {
     platform: 'linux', phase: 'unsupported', enabled: false,

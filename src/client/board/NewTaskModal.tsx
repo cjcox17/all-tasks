@@ -48,6 +48,7 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
   const [modelKey, setModelKey] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [endpoints, setEndpoints] = useState<string[]>([])
+  const [groupId, setGroupId] = useState('')
   const [permission, setPermission] = useState('')
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleCron, setScheduleCron] = useState('')
@@ -55,12 +56,17 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
   const [error, setError] = useState<string | undefined>(undefined)
   const [pending, setPending] = useState(false)
   const [options, setOptions] = useState(controller.getSnapshot().executionOptions)
+  const [groups, setGroups] = useState(controller.getSnapshot().groups)
 
-  // The workspace list, preset roster, and model catalog arrive from the
-  // runtime after mount; follow them so the pickers never freeze on an empty
-  // snapshot.
+  // The workspace list, preset roster, model catalog, and group roster arrive
+  // from the runtime after mount; follow them so the pickers never freeze on
+  // an empty snapshot.
   useEffect(
-    () => controller.subscribe(() => setOptions(controller.getSnapshot().executionOptions)),
+    () => controller.subscribe(() => {
+      const snapshot = controller.getSnapshot()
+      setOptions(snapshot.executionOptions)
+      setGroups(snapshot.groups)
+    }),
     [controller],
   )
 
@@ -82,6 +88,7 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
       mode: mode === '' ? undefined : mode,
       model: model === undefined ? undefined : withReasoningEffort(model, reasoningEffort),
       endpoints: endpoints.length === 0 ? undefined : endpoints,
+      groupId: groupId === '' ? undefined : groupId,
       permission: permission === '' ? undefined : permission as TaskPermission,
       schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : undefined,
     })
@@ -116,6 +123,20 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
         onDescriptionChange={setDescription}
         onPromptChange={setPrompt}
       />
+
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('new.group')}</span>
+          <select
+            className={css.select}
+            value={groupId}
+            onChange={event => { setGroupId(event.target.value) }}
+          >
+            <option value="">{t('exec.group.default')}</option>
+            {groups.map(group => (
+              <option key={group.id} value={group.id}>{group.name}</option>
+            ))}
+          </select>
+        </label>
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.workspace')}</span>

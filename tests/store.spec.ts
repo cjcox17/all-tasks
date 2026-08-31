@@ -323,3 +323,17 @@ describe('schedule persistence', () => {
       executions: [{ id: 'e1', sessionId: undefined, startedAt: NOW, queuedAt: NOW, endpointId: 5 }],
     }]))).toEqual([])
   })
+
+describe('task groupId', () => {
+  it('round-trips groupId and drops malformed values', () => {
+    const grouped = createTask({ title: 'x', description: '', prompt: '', groupId: 'g1' }, 1, 't-1')
+    const parsed = parseLedger(JSON.stringify([grouped]))
+    expect(parsed[0].groupId).toBe('g1')
+    const blank = parseLedger(JSON.stringify([{ ...grouped, groupId: '  ' }]))
+    expect(blank[0].groupId).toBeUndefined()
+    const repaired = parseLedger(JSON.stringify([{ ...grouped, groupId: 5 }]))
+    expect(repaired).toHaveLength(0)
+    expect(isTaskRecord(grouped)).toBe(true)
+    expect(isTaskRecord({ ...grouped, groupId: 5 })).toBe(false)
+  })
+})

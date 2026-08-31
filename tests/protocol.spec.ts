@@ -193,3 +193,98 @@ describe('endpoint pin gate', () => {
     expect(parsed.action.tasks[0]?.endpoints).toEqual(['cloud'])
   })
 })
+
+describe('group action gate', () => {
+  it('accepts a group create and normalizes its optional fields', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'create-group',
+      action: {
+        kind: 'create-group', id: 'g1',
+        input: { name: ' Nightly ', mode: 'parallel', maxParallel: 2, endpoints: [' cloud ', 'local'], allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' } },
+      },
+    })
+    expect(parsed?.action.kind).toBe('create-group')
+    if (parsed?.action.kind !== 'create-group') throw new Error('expected create-group')
+    expect(parsed.action.input).toMatchObject({
+      name: ' Nightly ', mode: 'parallel', maxParallel: 2, endpoints: ['cloud', 'local'],
+      allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' },
+    })
+  })
+
+  it('rejects malformed group creates', () => {
+    const cases: unknown[] = [
+      { kind: 'create-group', id: 'g1', input: { name: '   ' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', mode: 'sideways' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', maxParallel: 0 } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', endpoints: 'cloud' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', allowedHours: { start: '99:99', end: '00:00' } } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', offPeakOnly: 'yes' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', schedule: { enabled: 'yes', cron: '0 9 * * *' } } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', extra: 1 } },
+      { kind: 'create-group', id: 'g1' },
+    ]
+    for (const action of cases) {
+      expect(parseActionEnvelope({ requestId: 'create-group-bad', action })).toBeUndefined()
+    }
+  })
+
+  it('accepts a group update patch and clears fields with null', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'update-group',
+      action: { kind: 'update-group', groupId: 'g1', patch: { name: 'Renamed', maxParallel: null, endpoints: null, allowedHours: null, schedule: null, offPeakOnly: false } },
+    })
+    expect(parsed?.action.kind).toBe('update-group')
+    if (parsed?.action.kind !== 'update-group') throw new Error('expected update-group')
+    expect(parsed.action.patch.maxParallel).toBeNull()
+    expect(parsed.action.patch.schedule).toBeNull()
+  })
+
+  it('rejects malformed group update patches', () => {
+    for (const patch of [
+      { name: '' },
+      { mode: 'nope' },
+      { maxParallel: 'three' },
+      { endpoints: 5 },
+      { allowedHours: { start: '24:00', end: '00:00' } },
+      { schedule: { enabled: 'yes', cron: '0 9 * * *' } },
+      { unknown: 1 },
+    ]) {
+      expect(parseActionEnvelope({ requestId: 'update-group-bad', action: { kind: 'update-group', groupId: 'g1', patch } })).toBeUndefined()
+    }
+  })
+
+  it('gates delete-group and set-group-order', () => {
+    expect(parseActionEnvelope({ requestId: 'del', action: { kind: 'delete-group', groupId: 'g1' } })).toMatchObject({ action: { kind: 'delete-group', groupId: 'g1' } })
+    expect(parseActionEnvelope({ requestId: 'del', action: { kind: 'delete-group' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: ['a', 'b'] } })).toMatchObject({ action: { kind: 'set-group-order', order: ['a', 'b'] } })
+    expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: 'a' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: ['a', 5] } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: Array.from({ length: 513 }, (_, i) => `t${i}`) } })).toBeUndefined()
+  })
+
+  it('accepts and normalizes a groupId on create', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'create-grouped',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', groupId: ' g1 ' } },
+    })
+    expect(parsed?.action.kind).toBe('create')
+    if (parsed?.action.kind !== 'create') throw new Error('expected create')
+    expect(parsed.action.input.groupId).toBe('g1')
+    expect(parseActionEnvelope({
+      requestId: 'create-grouped-bad',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', groupId: 5 } },
+    })).toBeUndefined()
+  })
+
+  it('accepts setting and clearing the groupId on update', () => {
+    const set = parseActionEnvelope({ requestId: 'set-group', action: { kind: 'update', taskId: 'task-a', patch: { groupId: 'g1' } } })
+    expect(set?.action.kind).toBe('update')
+    if (set?.action.kind !== 'update') throw new Error('expected update')
+    expect(set.action.patch.groupId).toBe('g1')
+    const cleared = parseActionEnvelope({ requestId: 'clear-group', action: { kind: 'update', taskId: 'task-a', patch: { groupId: null } } })
+    expect(cleared?.action.kind).toBe('update')
+    if (cleared?.action.kind !== 'update') throw new Error('expected update')
+    expect(cleared.action.patch.groupId).toBeNull()
+    expect(parseActionEnvelope({ requestId: 'set-group-bad', action: { kind: 'update', taskId: 'task-a', patch: { groupId: 5 } } })).toBeUndefined()
+  })
+})

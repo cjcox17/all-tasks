@@ -28,6 +28,13 @@ const RESULT_KEY: Record<NonNullable<ExecutionRecord['result']>, TaskBoardKey> =
   cancelled: 'detail.result.cancelled',
 }
 
+/** Why a queued run is waiting → locale key (endpoint is the default). */
+function waitingKey(reason: ExecutionRecord['queuedReason']): TaskBoardKey {
+  if (reason === 'group') return 'detail.result.waitingGroup'
+  if (reason === 'window') return 'detail.result.waitingWindow'
+  return 'detail.result.waiting'
+}
+
 /** One execution-history row. */
 function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
   execution: ExecutionRecord
@@ -40,7 +47,7 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
   return (
     <li className={css.executionRow} data-result={result}>
       <span className={css.executionBadge} data-result={result}>
-        {result === undefined ? (waiting ? t('detail.result.waiting') : t('detail.result.running')) : t(RESULT_KEY[result])}
+        {result === undefined ? (waiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running')) : t(RESULT_KEY[result])}
       </span>
       <span className={css.executionTimes}>
         {t('detail.executionStarted')} {formatTime(execution.startedAt, timeZone)}
@@ -66,22 +73,29 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
   )
 }
 
-/** The execution-target editor: workspace / mode / permission pickers. */
+/** The execution-target editor: group / workspace / mode / permission pickers. */
 function ExecutionSettingsSection({ controller, task, pending }: { controller: BoardController; task: TaskRecord; pending: boolean }) {
   const [options, setOptions] = useState(controller.getSnapshot().executionOptions)
+  const [groups, setGroups] = useState(controller.getSnapshot().groups)
   useEffect(
-    () => controller.subscribe(() => setOptions(controller.getSnapshot().executionOptions)),
+    () => controller.subscribe(() => {
+      const snapshot = controller.getSnapshot()
+      setOptions(snapshot.executionOptions)
+      setGroups(snapshot.groups)
+    }),
     [controller],
   )
+  const groupId = task.groupId ?? ''
   const workspaceId = task.workspaceId ?? ''
   const mode = task.mode ?? ''
   const permission = task.permission ?? ''
   const model = task.model
   const modelKey = model === undefined ? '' : modelSelectionKey(model)
   // A pinned target may disappear from the runtime (workspace deleted,
-  // preset removed, model dropped from the catalog); keep it selectable as a
-  // stale row instead of silently dropping it, so the user sees exactly what
-  // the task will ask for.
+  // preset removed, model dropped from the catalog, group deleted); keep it
+  // selectable as a stale row instead of silently dropping it, so the user
+  // sees exactly what the task will ask for.
+  const groupKnown = groupId === '' || groups.some(group => group.id === groupId)
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
   const modelKnown = model === undefined || options.models.some(item => item.provider === model.provider && item.model === model.model)
@@ -90,6 +104,21 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
     <section className={css.detailSection}>
       <h4>{t('detail.executionSettings')}</h4>
       <p className={css.detailText}>{t('exec.hint')}</p>
+      <label className={css.field}>
+        <span className={css.fieldLabel}>{t('new.group')}</span>
+        <select
+          className={css.select}
+          value={groupId}
+          disabled={pending}
+          onChange={event => { controller.updateTask(task.id, { groupId: event.target.value === '' ? null : event.target.value }) }}
+        >
+          <option value="">{t('exec.group.default')}</option>
+          {!groupKnown && <option value={groupId}>{groupId}{t('exec.mode.removed')}</option>}
+          {groups.map(group => (
+            <option key={group.id} value={group.id}>{group.name}</option>
+          ))}
+        </select>
+      </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.workspace')}</span>
         <select
@@ -196,6 +225,13 @@ function ScheduleSection({ controller, task, pending }: { controller: BoardContr
   const [lastTriggeredAt, setLastTriggeredAt] = useState<number | undefined>(schedule?.lastTriggeredAt)
   const [error, setError] = useState<string | undefined>(undefined)
   const timeZone = controller.getSnapshot().host?.scheduler.timeZone
+  // A member of a group with an armed group cron inherits it: its own cron is
+  // ignored at runtime (the Host skips it), so surface that here.
+  const groupScheduled = ((): boolean => {
+    if (task.groupId === undefined) return false
+    const group = controller.getSnapshot().groups.find(candidate => candidate.id === task.groupId)
+    return group?.schedule?.enabled === true
+  })()
 
   // Keep the editor in sync when the task record changes underneath (the
   // schedule rolls forward as runs trigger).
@@ -286,6 +322,7 @@ function ScheduleSection({ controller, task, pending }: { controller: BoardContr
         </select>
       </div>
       {error !== undefined && <p className={css.formError}>{error}</p>}
+      {groupScheduled && <p className={css.detailText}>{t('group.scheduleInherits')}</p>}
       <p className={css.scheduleMeta}>
         {t('detail.schedule.nextRun')} {nextLabel}
         {' · '}{t('detail.schedule.lastTriggered')} {lastLabel}

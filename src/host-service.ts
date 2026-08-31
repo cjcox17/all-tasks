@@ -1,8 +1,9 @@
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRouterConfig, type RouteDecision } from './core/endpoints.ts'
+import { effectiveEndpointIds, groupCapacityFull, groupWindowOpen } from './core/groups.ts'
 import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
-import { HostTaskLedger, type OpenedRun, type OpenExecutionReference } from './host-ledger.ts'
+import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
 import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from './protocol.ts'
@@ -33,6 +34,7 @@ export class TaskBoardHostService {
   private pollInFlight = false
   private tickInFlight = false
   private routePassInFlight = false
+  private routePassPending = false
   private active = true
   private preventIdleSleep = false
   private lastPowerJson = ''
@@ -59,6 +61,10 @@ export class TaskBoardHostService {
     this.ledger.subscribe(() => {
       this.syncPowerReasons()
       this.emit()
+      // Any ledger mutation can free a group slot (a member settled), open a
+      // window (a schedule rolled), or change membership — re-check the queue
+      // and group sequences. The pass is non-reentrant and cheap when idle.
+      this.scheduleRoutePass()
     })
     this.power.subscribe(() => {
       // updateReasons emits on every poll tick even when nothing changed;
@@ -115,6 +121,7 @@ export class TaskBoardHostService {
       schemaVersion: 2,
       revision: state.revision,
       tasks: state.tasks,
+      groups: state.groups,
       scheduler: state.scheduler,
       power: this.power.snapshot(),
     }
@@ -139,6 +146,7 @@ export class TaskBoardHostService {
       schemaVersion: 2,
       revision: result.state.revision,
       tasks: result.state.tasks,
+      groups: result.state.groups,
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }
@@ -154,10 +162,10 @@ export class TaskBoardHostService {
   }
 
   /**
-   * Route one freshly opened run through the endpoint router: launch through
-   * the first eligible endpoint, queue it (no session, nothing billed) when
-   * every candidate is blocked, or launch directly when no endpoints are
-   * configured at all.
+   * Route one freshly opened run through the group gates and the endpoint
+   * router: launch through the first eligible endpoint, queue it (no session,
+   * nothing billed) when a group slot, the group window, or every endpoint
+   * blocks, or launch directly when no endpoints are configured at all.
    */
   private async launchRouted(opened: OpenedRun): Promise<void> {
     if (this.launching.has(opened.execution.id)) return
@@ -165,7 +173,7 @@ export class TaskBoardHostService {
     try {
       const route = this.routeFor(opened.task)
       if (route.mode === 'wait') {
-        this.ledger.markQueued(opened.task.id, opened.execution.id, route.endpointId, this.now())
+        this.ledger.markQueued(opened.task.id, opened.execution.id, route.endpointId, this.now(), route.reason ?? 'endpoint')
         return
       }
       if (route.mode === 'routed') {
@@ -178,9 +186,9 @@ export class TaskBoardHostService {
   }
 
   /**
-   * Re-check queued runs (a window may have opened, a slot freed, or the
-   * max-wait elapsed): expire them, or launch the moment the first endpoint
-   * becomes eligible. Runs once per poll/tick; a pass never re-enters.
+   * Re-check queued runs (a group slot, the group window, or an endpoint may
+   * have opened): expire them, or launch the moment the run becomes eligible.
+   * Runs once per poll/tick; a pass never re-enters.
    */
   private async routeQueued(): Promise<void> {
     if (this.disposed || !this.active) return
@@ -188,33 +196,109 @@ export class TaskBoardHostService {
     const maxWaitMs = this.routerConfig.endpointMaxWaitHours * HOUR_MS
     for (const queued of this.ledger.queuedRuns()) {
       if (now - queued.queuedAt > maxWaitMs) {
-        this.ledger.settle(queued.taskId, queued.executionId, 'failed', 'endpoint never became eligible within the max-wait window')
+        this.ledger.settle(queued.taskId, queued.executionId, 'failed', 'run never became eligible to launch within the max-wait window')
         continue
       }
       if (this.launching.has(queued.executionId)) continue
       const route = this.routeFor(queued.task)
-      if (route.mode !== 'routed') continue
+      if (route.mode === 'wait') {
+        const reason = route.reason ?? 'endpoint'
+        const endpointId = route.endpointId
+        if (reason !== queued.queuedReason || endpointId !== queued.endpointId) {
+          this.ledger.requeue(queued.taskId, queued.executionId, endpointId, reason)
+        }
+        continue
+      }
       this.launching.add(queued.executionId)
       try {
-        this.ledger.attachEndpoint(queued.taskId, queued.executionId, route.endpoint.id)
-        await this.launch(queued.task, queued.executionId, route.selection)
+        if (route.mode === 'routed') {
+          this.ledger.attachEndpoint(queued.taskId, queued.executionId, route.endpoint.id)
+        }
+        await this.launch(queued.task, queued.executionId, route.mode === 'routed' ? route.selection : undefined)
       } finally {
         this.launching.delete(queued.executionId)
       }
     }
   }
 
-  /** The endpoint router decision for one task (pure engine + live state). */
+  /** The routing decision for one task: group gates first, then endpoints. */
   private routeFor(task: OpenedRun['task']): RouteDecision {
     const config = this.routerConfig
-    if (!shouldUseRouter(task, config)) return { mode: 'unrouted' }
+    const group = task.groupId === undefined ? undefined : this.ledger.groupById(task.groupId)
+    // Endpoint precedence: the task's own pin wins, then the group's list,
+    // then the global default list (an empty effective list = no routing).
+    const effective = { ...task, endpoints: effectiveEndpointIds(task, group) }
+    // The group gates (capacity, window) apply to every member launch even
+    // when no endpoints are configured at all — only a group-less task with
+    // no routing list bypasses the router entirely.
+    if (group === undefined && !shouldUseRouter(effective, config)) return { mode: 'unrouted' }
     const now = new Date(this.now())
-    return pickEndpoint(task, config, {
-      localMinutes: clockMinutesInTimeZone(now, hostTimeZone()),
-      offPeakMinutes: clockMinutesInTimeZone(now, config.offPeak.timezone ?? 'UTC'),
+    const localMinutes = clockMinutesInTimeZone(now, hostTimeZone())
+    const offPeakMinutes = clockMinutesInTimeZone(now, config.offPeak.timezone ?? 'UTC')
+    if (group !== undefined) {
+      if (groupCapacityFull(group, this.groupLaunchedCount(group.id))) {
+        return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'group' }
+      }
+      if (!groupWindowOpen(group, localMinutes, offPeakMinutes, config.offPeak)) {
+        return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'window' }
+      }
+    }
+    return pickEndpoint(effective, config, {
+      localMinutes,
+      offPeakMinutes,
       activeCounts: this.activeCounts(),
       modelMaxTokens: (provider, model) => this.readModelMaxTokens?.(provider, model),
     })
+  }
+
+  /**
+   * Advance group sequences: after a member settles (or a group cron fires),
+   * start the next runnable member(s) in group order, respecting the group's
+   * capacity, window, and endpoint eligibility. A group advances only when a
+   * slot actually freed — its newest member execution settled — or its cron is
+   * armed, so idle groups are never started spontaneously and manual launches
+   * are never raced by the chain. Queued (manually requested) members take
+   * priority over auto-advance.
+   */
+  private advanceGroups(): void {
+    if (this.disposed || !this.active) return
+    const now = this.now()
+    const config = this.routerConfig
+    const localMinutes = clockMinutesInTimeZone(new Date(now), hostTimeZone())
+    const offPeakMinutes = clockMinutesInTimeZone(new Date(now), config.offPeak.timezone ?? 'UTC')
+    for (const view of this.ledger.groupRuntimeViews()) {
+      // Triggers: an armed group schedule, or a settled member freeing a slot.
+      if (!view.scheduleEnabled && !view.newestExecutionSettled) continue
+      // A queued member is waiting for a slot/window/endpoint; it holds the
+      // sequence's place — never start another member over it.
+      if (view.members.some(member => member.queued)) continue
+      if (!groupWindowOpen(view, localMinutes, offPeakMinutes, config.offPeak)) continue
+      const group = this.ledger.groupById(view.id)
+      if (group === undefined) continue
+      let launched = view.members.filter(member => member.launched).length
+      for (const member of view.members) {
+        if (!member.runnable) continue
+        if (groupCapacityFull(group, launched)) break
+        const task = this.ledger.taskById(member.taskId)
+        if (task === undefined) continue
+        const decision = this.routeFor(task)
+        // Auto-advance never queues: a member that cannot launch now is left
+        // in place and the next pass (tick/settle/config) retries it.
+        if (decision.mode === 'wait') continue
+        const opened = this.ledger.openExecution(member.taskId, now)
+        if (opened === undefined) continue
+        launched += 1
+        if (decision.mode === 'routed') {
+          this.ledger.attachEndpoint(opened.task.id, opened.execution.id, decision.endpoint.id)
+        }
+        this.launching.add(opened.execution.id)
+        void this.launch(opened.task, opened.execution.id, decision.mode === 'routed' ? decision.selection : undefined)
+          .catch(error => {
+            console.error('[dsh-task-board] group advance launch failed', error)
+          })
+          .finally(() => { this.launching.delete(opened.execution.id) })
+      }
+    }
   }
 
   /** Launched-and-unsettled executions per endpoint (queued runs do not consume concurrency). */
@@ -227,12 +311,37 @@ export class TaskBoardHostService {
     return counts
   }
 
+  /** Launched-and-unsettled executions of one group's members (capacity accounting). */
+  private groupLaunchedCount(groupId: string): number {
+    let count = 0
+    for (const execution of this.ledger.runtimeView().openExecutions) {
+      if (execution.sessionId === undefined || execution.groupId !== groupId) continue
+      count += 1
+    }
+    return count
+  }
+
   private scheduleRoutePass(): void {
-    if (this.routePassInFlight || this.disposed) return
+    if (this.disposed) return
+    // The queue re-check is async and only clears its in-flight flag in a
+    // microtask, so a synchronous burst of ledger commits (several actions in
+    // one tick) would otherwise drop every pass after the first. Coalesce:
+    // mark a pass pending and re-run once the current one settles.
+    if (this.routePassInFlight) {
+      this.routePassPending = true
+      return
+    }
     this.routePassInFlight = true
+    this.routePassPending = false
     void this.routeQueued().catch(error => {
       console.error('[dsh-task-board] endpoint queue re-check failed', error)
-    }).finally(() => { this.routePassInFlight = false })
+    }).finally(() => {
+      this.routePassInFlight = false
+      if (this.routePassPending) this.scheduleRoutePass()
+    })
+    // Group sequences advance on the same pass (after the queued runs — a
+    // queued manual run has priority over auto-advance).
+    this.advanceGroups()
   }
 
   private async launch(task: TaskRecord, executionId: string, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
@@ -307,6 +416,13 @@ export class TaskBoardHostService {
       const next = nextRunAtMs(schedule.cron, schedule.nextRunAt)
       const opened = this.ledger.openScheduled(schedule.taskId, next, now)
       if (opened !== undefined) this.scheduleLaunch(opened)
+    }
+    // A due group schedule fires the group sequence: roll the rule forward and
+    // let the route pass advance the next runnable member(s).
+    for (const schedule of this.ledger.dueGroupSchedules(now)) {
+      const next = nextRunAtMs(schedule.cron, schedule.nextRunAt)
+      this.ledger.rollGroupSchedule(schedule.groupId, next, now)
+      this.scheduleRoutePass()
     }
   }
 

@@ -5,9 +5,11 @@
  */
 import { memo, useCallback, useEffect, useState } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
+import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
 import { COLUMNS, canMoveManually, type TaskRecord } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
+import { GroupModal } from './GroupModal.tsx'
 import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard } from './TaskCard.tsx'
@@ -31,6 +33,28 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
   return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} />
 })
 
+/** Group section header inside a column: name, member count, mode badge, manage. */
+function GroupBanner({ group, count, onManage }: { group: TaskGroupRecord; count: number; onManage: () => void }) {
+  return (
+    <header className={css.groupHeader} data-dsh-part="group">
+      <span className={css.groupName} title={group.name}>{group.name}</span>
+      <span className={css.groupBadge} data-mode={group.mode}>
+        {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
+      </span>
+      {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
+      <span className={css.groupCount}>{count}</span>
+      <button
+        type="button"
+        className={css.ghostButton}
+        aria-label={t('group.manage')}
+        onClick={onManage}
+      >
+        ⚙
+      </button>
+    </header>
+  )
+}
+
 /** Board component; subscribes to the controller snapshot. */
 export function TaskBoard({ controller }: { controller: BoardController }) {
   const [snapshot, setSnapshot] = useState(controller.getSnapshot())
@@ -40,6 +64,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
   )
   const [filter, setFilter] = useState('')
   const [showNew, setShowNew] = useState(false)
+  const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const selected = selectedTaskOf(snapshot)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
@@ -91,6 +116,13 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         </button>
         <button
           type="button"
+          className={css.ghostButton}
+          onClick={() => { setGroupEditor({}) }}
+        >
+          + {t('board.newGroup')}
+        </button>
+        <button
+          type="button"
           className={css.primaryButton}
           onClick={() => { setShowNew(true) }}
         >
@@ -124,6 +156,10 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         ) : (
           COLUMNS.map(column => {
             const tasks = visible.filter(task => task.status === column.status)
+            const ungrouped = tasks.filter(task => task.groupId === undefined)
+            const grouped = snapshot.groups
+              .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
+              .filter(entry => entry.members.length > 0)
             const isManualDropTarget = column.status === 'backlog' || column.status === 'todo'
             return (
               <section
@@ -151,8 +187,20 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                   <span className={css.columnCount}>{tasks.length}</span>
                 </header>
                 <div className={css.cards}>
-                  {tasks.map(task => (
+                  {ungrouped.map(task => (
                     <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                  ))}
+                  {grouped.map(({ group, members }) => (
+                    <div key={group.id} className={css.groupSection} data-group={group.id}>
+                      <GroupBanner
+                        group={group}
+                        count={members.length}
+                        onManage={() => { setGroupEditor({ group }) }}
+                      />
+                      {members.map(task => (
+                        <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                      ))}
+                    </div>
                   ))}
                   {tasks.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
                 </div>
@@ -169,6 +217,13 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         <NewTaskModal
           controller={controller}
           onClose={() => { setShowNew(false) }}
+        />
+      )}
+      {groupEditor !== undefined && (
+        <GroupModal
+          controller={controller}
+          group={groupEditor.group}
+          onClose={() => { setGroupEditor(undefined) }}
         />
       )}
     </div>

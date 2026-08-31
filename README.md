@@ -28,6 +28,7 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 - **Fail-closed pins**: a missing workspace, missing or broken preset, rejected model selection, or rejected permission command fails before the task prompt is sent.
 - **Per-task model pin**: each task may pin its execution session to a specific provider/model chosen from the host model catalog, plus an optional reasoning-effort level (minimal/low/medium/high or the provider's own value); a blank pin falls back to the deployment default model.
 - **Endpoint model-router**: named compute endpoints (DeepSeek Official, an LM Studio on the NAS, …) each with a concurrency cap, a token cap, optional allowed hours, and an off-peak-only flag. The router launches every run through the first eligible endpoint in the task's priority order (or the global default list) and automatically falls back when an endpoint lacks token space or is outside its window. A run whose endpoints are all blocked waits (queued, nothing billed, survives restarts) and auto-starts the moment a window opens or a slot frees, failing only after a configurable max-wait (24 h by default). Peak/off-peak defaults to DeepSeek's off-peak window (16:30–00:30 UTC, 50% off chat / 75% off reasoner) with global and per-endpoint overrides.
+- **Task groups**: named sets of tasks with shared execution policy, shown as a group inside every kanban column under its own banner. A group has an execution mode — sequential (one member at a time, in the group's member order) or parallel (up to a configurable cap, blank = unlimited) — that gates every launch of a member (manual, cron, or router auto-start). A group may pin its own priority-ordered endpoint list (the member's own pin wins, then the group's, then the global default), an allowed-hours window plus an off-peak-only flag, and an optional group cron. When the group cron is armed, members inherit it and their own schedules are ignored; when a member settles, the next runnable member in order starts automatically. Blocked manual runs show why they wait (**waiting for a group slot** / **waiting for the allowed window** / **waiting for endpoint**) and auto-start when a slot or window frees, exactly like the endpoint queue.
 - **Host scheduler**: 5-field cron supports `*`, `*/n`, ranges, comma lists, Sunday `0/7`, and standard day-of-month/day-of-week OR semantics in the Host local time zone.
 - **Deterministic recovery**: a running execution with a recorded session is observed after restart; an interrupted start without a session id is cancelled and is not resent.
 - **Live synchronization**: mutations return a full revisioned snapshot; SSE announces revision, scheduler, and power changes, while reconnect and page visibility recovery fetch a full snapshot.
@@ -37,7 +38,7 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 ## Architecture and protocol
 
 - `src/index.ts` mounts the Host service through the official `@deepseek-ai/dsh-host-apiproxy` and `@deepseek-ai/dsh-host-webserver` SDKs.
-- `src/host-ledger.ts` serializes actions and persists `{ schemaVersion: 2, revision, tasks, scheduler, recentRequests }` through a temporary file plus atomic rename.
+- `src/host-ledger.ts` serializes actions and persists `{ schemaVersion: 2, revision, tasks, groups, scheduler, recentRequests }` through a temporary file plus atomic rename.
 - `src/host-service.ts` owns cron ticks, missed-trigger skipping, runner launch, restart reconciliation, and power reasons.
 - `src/client/host-api.ts` imports legacy browser data once, submits idempotent actions, and treats Host snapshots as the only confirmed UI state.
 - Same-origin endpoints are `GET /api/task-board/state`, `GET /api/task-board/events`, and `POST /api/task-board/action`.
@@ -114,6 +115,17 @@ task-board:
 
 A task pins endpoints in priority order (new-task modal / task detail → Endpoints); the router uses the first eligible one and falls back down the list. While every candidate is blocked the task shows **waiting for endpoint** and starts automatically when a window opens. Per-endpoint `offPeak` overrides the global window; the per-task model pin is used when the chosen endpoint serves it, otherwise the endpoint's `defaultModel` applies. `max_tokens` enforcement reuses DSH's per-model `maxTokens` config from the Models section (`llm-pi-ai`), compared against each endpoint's `maxTokens` cap; no DSH changes are required.
 
+## Task groups
+
+Groups are board-level entities created in the UI (header **+ New Group**), persisted in the Host ledger, and shown as a banner grouping their member cards inside every kanban column:
+
+- **Membership**: a task belongs to at most one group; pick it in the new-task modal or the task detail (Groups section). Assigning appends the member to the group's order; removing ungroups it. Deleting a group ungroups its members (their tasks stay) and is refused while any member has an open run.
+- **Execution mode**: sequential runs one member at a time, in the group's member order — when a member settles, the next runnable member (backlog/todo, not archived) starts automatically. Parallel runs up to the configured `maxParallel` at once (blank = unlimited). Every launch of a member — manual, group cron, or router auto-start — respects the group's capacity and window.
+- **Endpoints**: a group may pin a priority-ordered endpoint list (group editor → Endpoints). The effective list for a member is the member's own pin, then the group's, then the global `defaultEndpoints`.
+- **Window**: a group may restrict launches to `allowedHours` (host-local time) and/or to the global off-peak window (`offPeakOnly`).
+- **Schedule**: a group may arm its own cron. While armed, members inherit it — their own schedules are ignored (the detail view shows a hint) — and the cron starts the sequence (first runnable member; the chain then continues as members settle).
+- **Waiting**: a manual run blocked by capacity shows **waiting for a group slot**; blocked by the group window, **waiting for the allowed window**; blocked by endpoints, **waiting for endpoint**. All three queue host-side (nothing billed, survive restarts) and auto-start when a slot or window frees, failing only after `endpointMaxWaitHours`.
+
 On macOS the backend starts `/usr/bin/caffeinate -i -w <host-pid>` and never requests `-d`. On Windows it starts the absolute Windows PowerShell under `SystemRoot` with a fixed helper that requests only `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`; it never requests `ES_DISPLAY_REQUIRED`, changes a power plan, or requires administrator privileges. On Linux it starts a systemd-logind `idle` block inhibitor only from `/usr/bin/systemd-inhibit` or `/bin/systemd-inhibit`; it does not request `sleep`, `handle-lid-switch`, or a display/screensaver inhibitor. A Linux host without systemd-logind reports `unsupported` or a visible error and does not start a desktop-specific fallback. Other platforms report `unsupported`.
 
 ## Data storage and migration
@@ -152,11 +164,12 @@ Set `DSH_POWER_SMOKE=1` to opt into the native helper smoke test on Windows, mac
 2. Create and edit a task; refresh or open a second same-origin tab and confirm both show the same Host revision.
 3. Run a task with pinned workspace, preset, model (plus a reasoning-effort level), and permission; confirm a new session appears and the task settles from its `turn/end` history.
 4. Configure an endpoint with `offPeakOnly: true` (or a narrow `allowedHours`), pin it on a task, and run it outside the window: the task shows **waiting for endpoint**, no session is created, and it auto-starts when the window opens. Also confirm the execution row shows which endpoint ran it.
-5. Enable a near-future cron, close all browser pages, and confirm the Host still creates and settles exactly one execution.
-6. Stop the Host past a cron occurrence, restart it, and confirm the missed occurrence is skipped and `nextRunAt` rolls forward from current Host time.
-7. Enable `preventIdleSleep`, run a long session, and let the display turn off; after restoring the display, confirm the session continued and the execution settled.
-8. Disable the setting and all schedules, stop DSH, and confirm the helper exits; on macOS, `pmset -g assertions` should show no display-sleep assertion from this plugin.
-9. On Linux, use `systemd-inhibit --list` to confirm that only an `idle`/`block` entry exists; the display should still follow desktop settings, while manual sleep and lid close remain under system policy.
+5. Create a sequential group with two backlog members; run the first member and confirm the second starts automatically once the first settles. Add a third member and run it while the first is still running: it shows **waiting for a group slot** and launches after the settle.
+6. Enable a near-future cron, close all browser pages, and confirm the Host still creates and settles exactly one execution.
+7. Stop the Host past a cron occurrence, restart it, and confirm the missed occurrence is skipped and `nextRunAt` rolls forward from current Host time.
+8. Enable `preventIdleSleep`, run a long session, and let the display turn off; after restoring the display, confirm the session continued and the execution settled.
+9. Disable the setting and all schedules, stop DSH, and confirm the helper exits; on macOS, `pmset -g assertions` should show no display-sleep assertion from this plugin.
+10. On Linux, use `systemd-inhibit --list` to confirm that only an `idle`/`block` entry exists; the display should still follow desktop settings, while manual sleep and lid close remain under system policy.
 
 ## Known limitations
 

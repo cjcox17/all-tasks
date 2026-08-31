@@ -85,7 +85,9 @@ function TaskCardInner({ task, pending, timeZone, onClick }: { task: TaskRecord;
       {!archived && pending && <span className={css.cardRunningLabel}>{t('board.pending')}…</span>}
       {!archived && latest !== undefined && executionLabel(latest) === 'running' && (
         latest.queuedAt !== undefined && latest.sessionId === undefined
-          ? <span className={css.cardRunningLabel}>{t('detail.result.waiting')}</span>
+          ? <span className={css.cardRunningLabel}>{t(latest.queuedReason === 'group'
+            ? 'detail.result.waitingGroup'
+            : latest.queuedReason === 'window' ? 'detail.result.waitingWindow' : 'detail.result.waiting')}</span>
           : <span className={css.cardRunningLabel}>{t('detail.result.running')}…</span>
       )}
     </button>

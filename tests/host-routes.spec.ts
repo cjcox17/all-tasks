@@ -8,6 +8,7 @@ const snapshot: TaskBoardSnapshot = {
   schemaVersion: 2,
   revision: 0,
   tasks: [],
+    groups: [],
   scheduler: { timeZone: 'UTC' },
   power: {
     platform: 'linux', phase: 'unsupported', enabled: false,

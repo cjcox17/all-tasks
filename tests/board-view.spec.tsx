@@ -10,7 +10,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountBoard } from '../src/client/board-mount.tsx'
 import { TaskBoard } from '../src/client/board/TaskBoard.tsx'
+import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { TaskRecord } from '../src/core/tasks.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -52,6 +54,7 @@ function fakeController(
     archiveView: false,
     selectedTaskId: undefined,
     executionOptions: { workspaces: [], presets: [], models: [], endpoints: [] },
+    groups: [],
     pendingTaskIds: [],
     ...snapshot,
   }
@@ -63,6 +66,11 @@ function fakeController(
     retryHostSync: async () => {},
     openTask: () => {},
     moveTask: () => {},
+    groupMembers: (id: string) => state.tasks.filter(t => t.groupId === id),
+    createGroupConfirmed: async () => undefined,
+    updateGroup: async () => true,
+    deleteGroup: async () => true,
+    setGroupOrder: async () => true,
     ...overrides,
   } as unknown as BoardController
 }
@@ -275,5 +283,60 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
       document.body.appendChild(document.createElement('span'))
     })
     expect(column.querySelector('[data-dsh-taskboard-view]')).not.toBeNull()
+  })
+})
+
+describe('TaskBoard group sections', () => {
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot)} />) })
+    return { container }
+  }
+
+  it('renders a group banner with its member cards inside the column, separate from ungrouped cards', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' }),
+        task({ id: 't2', title: 'Member B', status: 'todo', groupId: 'g1' }),
+        task({ id: 't3', title: 'Lone', status: 'todo' }),
+      ],
+      groups: [GROUP],
+    })
+
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    expect(section!.textContent).toContain('Nightly')
+    expect(section!.textContent).toContain(t('group.sequentialBadge'))
+    const memberCards = section!.querySelectorAll('button[data-dsh-part="card"]')
+    expect(memberCards).toHaveLength(2)
+
+    // The ungrouped card lives outside the group section.
+    const lone = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(card => card.textContent?.includes('Lone'))
+    expect(lone?.closest('[data-group="g1"]')).toBeNull()
+  })
+
+  it('opens the group editor from the banner manage button', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    })
+    const manage = container.querySelector(`button[aria-label="${t('group.manage')}"]`) as HTMLButtonElement
+    expect(manage).not.toBeNull()
+    await act(async () => { manage.click() })
+    expect(container.textContent).toContain(t('group.edit'))
+    expect(container.textContent).toContain(t('group.members'))
+  })
+
+  it('shows a new-group button in the header', async () => {
+    const { container } = await renderBoard({ tasks: [], groups: [] })
+    const button = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('board.newGroup')))
+    expect(button).not.toBeNull()
+    await act(async () => { button!.click() })
+    expect(container.textContent).toContain(t('group.create'))
   })
 })

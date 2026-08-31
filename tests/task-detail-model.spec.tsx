@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
 import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
 
@@ -40,6 +41,7 @@ function controllerFake(
   models: readonly ExecutionModelOption[] = MODEL_CATALOG,
   updateTask: (id: string, patch: TaskUpdatePatch) => Promise<boolean> = async () => true,
   endpoints: readonly ExecutionEndpointOption[] = [],
+  groups: readonly TaskGroupRecord[] = [],
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [taskRecord],
@@ -47,6 +49,7 @@ function controllerFake(
     archiveView: false,
     selectedTaskId: taskRecord.id,
     executionOptions: { workspaces: [], presets: [], models, endpoints },
+    groups,
     pendingTaskIds: [],
   }
   return {
@@ -230,5 +233,49 @@ describe('TaskDetail queued-run display', () => {
     }), MODEL_CATALOG, async () => true, ENDPOINTS)
     expect(container.textContent).toContain(t('exec.endpoint.via', { name: 'LM Studio (NAS)' }))
     expect(container.textContent).not.toContain(t('detail.result.waiting'))
+  })
+})
+
+describe('task detail group membership', () => {
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+
+  function selectOf(container: HTMLElement, optionValue: string): HTMLSelectElement {
+    const select = [...container.querySelectorAll('select')].find(candidate =>
+      [...candidate.querySelectorAll('option')].some(option => option.value === optionValue))
+    expect(select, `select with option ${optionValue}`).toBeDefined()
+    return select as HTMLSelectElement
+  }
+
+  it('assigns and clears the group through the controller', async () => {
+    const updateTask = vi.fn(async () => true)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => {
+      root.render(<TaskDetail controller={controllerFake(task(), MODEL_CATALOG, updateTask, [], [GROUP])} task={task()} />)
+    })
+
+    const select = selectOf(container, 'g1')
+    select.value = 'g1'
+    await act(async () => { select.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(updateTask).toHaveBeenCalledWith('t1', { groupId: 'g1' })
+
+    select.value = ''
+    await act(async () => { select.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(updateTask).toHaveBeenCalledWith('t1', { groupId: null })
+  })
+
+  it('shows the inheritance hint when the task group has an armed schedule', async () => {
+    const scheduled = { ...GROUP, schedule: { enabled: true, cron: '0 9 * * *' } }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const groupedTask = task({ groupId: 'g1' })
+    await act(async () => {
+      root.render(<TaskDetail controller={controllerFake(groupedTask, MODEL_CATALOG, async () => true, [], [scheduled])} task={groupedTask} />)
+    })
+    expect(container.textContent).toContain(t('group.scheduleInherits'))
   })
 })

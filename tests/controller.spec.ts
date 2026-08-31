@@ -44,6 +44,7 @@ function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger
     schemaVersion: 2,
     revision,
     tasks,
+    groups: [],
     scheduler: { timeZone: 'UTC', ledgerId },
     power: {
       platform: 'linux', phase: 'unsupported', enabled: false,
@@ -502,5 +503,35 @@ describe('external (cross-tab) ledger changes', () => {
     controller.dispose()
     store.writeFromElsewhere([])
     expect(notified).toBe(0)
+  })
+})
+
+describe('BoardController legacy group transitions', () => {
+  it('creates, joins, orders, and deletes groups in the legacy (non-Host) path', async () => {
+    const { controller } = makeController()
+    const group = await controller.createGroupConfirmed({ name: 'Nightly', mode: 'parallel', maxParallel: 2 })
+    expect(group?.id).toBeDefined()
+    expect(controller.getSnapshot().groups[0]).toMatchObject({ name: 'Nightly', mode: 'parallel', maxParallel: 2 })
+
+    controller.createTask({ title: 'A', description: '', prompt: '', groupId: group!.id })
+    controller.createTask({ title: 'B', description: '', prompt: '', groupId: group!.id })
+    const [a, b] = controller.groupMembers(group!.id)
+    expect([a!.title, b!.title]).toEqual(['A', 'B'])
+
+    expect(await controller.setGroupOrder(group!.id, [b!.id, a!.id])).toBe(true)
+    expect(controller.groupMembers(group!.id).map(t => t.title)).toEqual(['B', 'A'])
+    // A prefix order is accepted (unlisted members appended)…
+    expect(await controller.setGroupOrder(group!.id, [a!.id])).toBe(true)
+    expect(controller.groupMembers(group!.id).map(t => t.title)).toEqual(['A', 'B'])
+    // …but a duplicate or non-member is rejected.
+    expect(await controller.setGroupOrder(group!.id, [a!.id, a!.id])).toBe(false)
+    expect(await controller.setGroupOrder(group!.id, ['unknown'])).toBe(false)
+
+    await controller.updateTask(a!.id, { groupId: null })
+    expect(controller.groupMembers(group!.id).map(t => t.title)).toEqual(['B'])
+
+    expect(await controller.deleteGroup(group!.id)).toBe(true)
+    expect(controller.getSnapshot().groups).toHaveLength(0)
+    expect(controller.getSnapshot().tasks.find(t => t.title === 'B')?.groupId).toBeUndefined()
   })
 })

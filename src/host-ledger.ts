@@ -4,6 +4,18 @@ import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readF
 import { dirname, join } from 'node:path'
 import { dshHome } from './dsh-home.ts'
 import { isValidCron, nextRunAtMs } from './core/schedule.ts'
+import {
+  applyCreateGroup,
+  applyDeleteGroup,
+  applyUpdateGroup,
+  normalizeGroupRows,
+  withGroupMembershipChange,
+  withGroupOrder,
+  withGroupScheduleRoll,
+  type GroupExecutionMode,
+  type GroupUpdatePatch,
+  type TaskGroupRecord,
+} from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
 import { canMoveManually, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
@@ -26,6 +38,8 @@ interface LedgerDocument {
   schemaVersion: typeof TASK_BOARD_SCHEMA_VERSION
   revision: number
   tasks: TaskRecord[]
+  /** Task groups (named member sets with shared execution policy). */
+  groups: TaskGroupRecord[]
   scheduler: PersistedScheduler
   recentRequests: PersistedRequest[]
 }
@@ -33,6 +47,7 @@ interface LedgerDocument {
 export interface LedgerState {
   revision: number
   tasks: TaskRecord[]
+  groups: TaskGroupRecord[]
   scheduler: TaskBoardSchedulerSnapshot
 }
 
@@ -47,6 +62,8 @@ export interface OpenExecutionReference {
   readonly executionId: string
   readonly sessionId: string | undefined
   readonly startedAt: number
+  /** Group the task belongs to (for capacity accounting). */
+  readonly groupId?: string
   /** Endpoint this run is routed through (set while queued or once launched). */
   readonly endpointId?: string
   /** Set while the router is holding this run for an eligible endpoint. */
@@ -58,6 +75,10 @@ export interface QueuedRunReference {
   readonly taskId: string
   readonly executionId: string
   readonly queuedAt: number
+  /** Why the run is held (endpoint eligibility, group slot, or group window). */
+  readonly queuedReason?: 'endpoint' | 'group' | 'window'
+  /** Preferred endpoint while waiting (the first known candidate). */
+  readonly endpointId?: string
   /** Task clone (read-only view; the router reads pins only). */
   readonly task: TaskRecord
 }
@@ -67,6 +88,46 @@ export interface DueScheduleReference {
   readonly taskId: string
   readonly cron: string
   readonly nextRunAt: number
+}
+
+/** A due group schedule (the group cron fires the group sequence). */
+export interface DueGroupScheduleReference {
+  readonly groupId: string
+  readonly cron: string
+  readonly nextRunAt: number
+}
+
+/** One member's runtime facts for group capacity/advance decisions. */
+export interface GroupMemberRuntimeView {
+  readonly taskId: string
+  /** backlog/todo, on-board, and no open execution (may auto-start). */
+  readonly runnable: boolean
+  /** Has an open launched execution (holds a capacity slot). */
+  readonly launched: boolean
+  /** Has an open queued execution (waits; takes priority over auto-advance). */
+  readonly queued: boolean
+  /** Has at least one execution record ever (the group sequence has started). */
+  readonly hasRun: boolean
+}
+
+/** Runtime-only projection of one group for the router's advance pass. */
+export interface GroupRuntimeView {
+  readonly id: string
+  readonly mode: GroupExecutionMode
+  readonly maxParallel?: number
+  readonly allowedHours?: { start: string; end: string }
+  readonly offPeakOnly: boolean
+  /** Whether the group's own cron is armed. */
+  readonly scheduleEnabled: boolean
+  /**
+   * Whether the group's newest member execution is settled. The auto-advance
+   * pass only starts further members when a slot actually freed (a member
+   * settled) or the group cron is armed — never while a member is merely
+   * running, so manual launches are never raced by the chain.
+   */
+  readonly newestExecutionSettled: boolean
+  readonly order: readonly string[]
+  readonly members: readonly GroupMemberRuntimeView[]
 }
 
 /** Derived runtime data for one session-poll pass. */
@@ -87,6 +148,10 @@ function timeZone(): string {
 
 function cloneTasks(tasks: readonly TaskRecord[]): TaskRecord[] {
   return JSON.parse(JSON.stringify(tasks)) as TaskRecord[]
+}
+
+function cloneGroups(groups: readonly TaskGroupRecord[]): TaskGroupRecord[] {
+  return JSON.parse(JSON.stringify(groups)) as TaskGroupRecord[]
 }
 
 function hasOpenExecution(task: TaskRecord): boolean {
@@ -316,7 +381,19 @@ export class HostTaskLedger {
 
   state(): LedgerState {
     const { revision, scheduler } = this.summary()
-    return { revision, tasks: cloneTasks(this.document.tasks), scheduler }
+    return { revision, tasks: cloneTasks(this.document.tasks), groups: cloneGroups(this.document.groups), scheduler }
+  }
+
+  /** Deep copy of one group (read-only view; never the authoritative object). */
+  groupById(id: string): TaskGroupRecord | undefined {
+    const group = this.document.groups.find(candidate => candidate.id === id)
+    return group === undefined ? undefined : cloneGroups([group])[0]
+  }
+
+  /** Deep copy of one task (read-only view; never the authoritative object). */
+  taskById(id: string): TaskRecord | undefined {
+    const task = this.document.tasks.find(candidate => candidate.id === id)
+    return task === undefined ? undefined : cloneTasks([task])[0]
   }
 
   /**
@@ -336,6 +413,7 @@ export class HostTaskLedger {
           executionId: execution.id,
           sessionId: execution.sessionId,
           startedAt: execution.startedAt,
+          ...(task.groupId === undefined ? {} : { groupId: task.groupId }),
           ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
           ...(execution.queuedAt === undefined ? {} : { queuedAt: execution.queuedAt }),
         })
@@ -354,6 +432,8 @@ export class HostTaskLedger {
           taskId: task.id,
           executionId: execution.id,
           queuedAt: execution.queuedAt,
+          ...(execution.queuedReason === undefined ? {} : { queuedReason: execution.queuedReason }),
+          ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
           task: cloneTasks([task])[0],
         })
       }
@@ -365,7 +445,7 @@ export class HostTaskLedger {
    * Record that a run is queued for an eligible endpoint: no session is
    * created yet, so nothing is billed, and the run survives Host restarts.
    */
-  markQueued(taskId: string, executionId: string, endpointId: string | undefined, queuedAt: number): void {
+  markQueued(taskId: string, executionId: string, endpointId: string | undefined, queuedAt: number, reason?: 'endpoint' | 'group' | 'window'): void {
     this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
       ...task,
       updatedAt: this.now(),
@@ -373,8 +453,110 @@ export class HostTaskLedger {
         ...entry,
         queuedAt,
         ...(endpointId === undefined ? {} : { endpointId }),
+        ...(reason === undefined ? {} : { queuedReason: reason }),
       }),
     })
+    this.commit()
+  }
+
+  /**
+   * Refresh why a queued run is still held (its preferred endpoint and/or the
+   * blocking reason changed while waiting). The original queuedAt is kept so
+   * the max-wait window is measured from the first queue, not the last retry.
+   */
+  requeue(taskId: string, executionId: string, endpointId: string | undefined, reason: 'endpoint' | 'group' | 'window' | undefined): void {
+    this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
+      ...task,
+      updatedAt: this.now(),
+      executions: task.executions.map(entry => entry.id !== executionId ? entry : {
+        ...entry,
+        ...(endpointId === undefined ? {} : { endpointId }),
+        ...(reason === undefined ? {} : { queuedReason: reason }),
+      }),
+    })
+    this.commit()
+  }
+
+  /**
+   * Runtime-only projection of every group for the router's advance pass:
+   * per-member runnable/launched/queued/has-run facts, no execution history.
+   */
+  groupRuntimeViews(): GroupRuntimeView[] {
+    const openByTask = new Map<string, { launched: boolean; queued: boolean }>()
+    for (const task of this.document.tasks) {
+      for (const execution of task.executions) {
+        if (execution.endedAt !== undefined) continue
+        const entry = openByTask.get(task.id) ?? { launched: false, queued: false }
+        if (execution.sessionId === undefined) entry.queued = true
+        else entry.launched = true
+        openByTask.set(task.id, entry)
+      }
+    }
+    return this.document.groups.map(group => {
+      const members: GroupMemberRuntimeView[] = []
+      let newest: { startedAt: number; endedAt: number | undefined } | undefined
+      for (const id of group.order) {
+        const task = this.document.tasks.find(candidate => candidate.id === id)
+        if (task === undefined) continue
+        const open = openByTask.get(task.id)
+        members.push({
+          taskId: task.id,
+          runnable: task.archivedAt === undefined
+            && (task.status === 'backlog' || task.status === 'todo')
+            && open === undefined,
+          launched: open?.launched === true,
+          queued: open?.queued === true,
+          hasRun: task.executions.length > 0,
+        })
+        for (const execution of task.executions) {
+          if (newest === undefined || execution.startedAt >= newest.startedAt) {
+            newest = { startedAt: execution.startedAt, endedAt: execution.endedAt }
+          }
+        }
+      }
+      return {
+        id: group.id,
+        mode: group.mode,
+        ...(group.maxParallel === undefined ? {} : { maxParallel: group.maxParallel }),
+        ...(group.allowedHours === undefined ? {} : { allowedHours: group.allowedHours }),
+        offPeakOnly: group.offPeakOnly,
+        scheduleEnabled: group.schedule?.enabled === true,
+        newestExecutionSettled: newest !== undefined && newest.endedAt !== undefined,
+        order: [...group.order],
+        members,
+      }
+    })
+  }
+
+  /**
+   * Open a fresh execution on a task without any schedule bookkeeping (the
+   * group sequence's auto-advance path). No-op when the task is running,
+   * already has an open execution, is archived, or is unknown.
+   */
+  openExecution(taskId: string, now: number): OpenedRun | undefined {
+    const task = this.document.tasks.find(item => item.id === taskId)
+    if (task === undefined || task.archivedAt !== undefined) return undefined
+    if (task.status === 'running' || hasOpenExecution(task)) return undefined
+    const opened = startExecution(task, now, crypto.randomUUID())
+    this.document.tasks = this.document.tasks.map(item => item.id === taskId ? opened.task : item)
+    this.commit()
+    return opened
+  }
+
+  /** Return value-only references for group schedules due at the supplied Host time. */
+  dueGroupSchedules(now: number): DueGroupScheduleReference[] {
+    const due: DueGroupScheduleReference[] = []
+    for (const group of this.document.groups) {
+      const schedule = group.schedule
+      if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
+      due.push({ groupId: group.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
+    }
+    return due
+  }
+
+  /** Roll a group's schedule rule forward (scheduler callback). */
+  rollGroupSchedule(groupId: string, nextRunAt: number | undefined, lastTriggeredAt: number): void {
+    this.document.groups = withGroupScheduleRoll(this.document.groups, groupId, nextRunAt, lastTriggeredAt, this.now())
     this.commit()
   }
 
@@ -388,20 +570,32 @@ export class HostTaskLedger {
     this.commit()
   }
 
-  /** Count armed, non-archived schedules without cloning task histories. */
+  /** Count armed, non-archived schedules (task and group) without cloning. */
   armedScheduleCount(): number {
     let count = 0
     for (const task of this.document.tasks) {
       if (task.archivedAt === undefined && task.schedule?.enabled === true) count += 1
     }
+    for (const group of this.document.groups) {
+      if (group.schedule?.enabled === true) count += 1
+    }
     return count
   }
 
-  /** Return value-only references for schedules due at the supplied Host time. */
+  /**
+   * Return value-only references for task schedules due at the supplied Host
+   * time. A task whose group has an enabled schedule is skipped: its own cron
+   * is ignored while the group cron governs the sequence (members inherit it).
+   */
   dueSchedules(now: number): DueScheduleReference[] {
+    const groupScheduled = new Set<string>()
+    for (const group of this.document.groups) {
+      if (group.schedule?.enabled === true) groupScheduled.add(group.id)
+    }
     const due: DueScheduleReference[] = []
     for (const task of this.document.tasks) {
       if (task.archivedAt !== undefined) continue
+      if (task.groupId !== undefined && groupScheduled.has(task.groupId)) continue
       const schedule = task.schedule
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
       due.push({ taskId: task.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
@@ -452,6 +646,11 @@ export class HostTaskLedger {
   openScheduled(taskId: string, nextRunAt: number | undefined, triggeredAt: number): OpenedRun | undefined {
     const task = this.document.tasks.find(item => item.id === taskId)
     if (task === undefined || task.archivedAt !== undefined) return undefined
+    // A task whose group has an enabled schedule is governed by the group cron;
+    // its own cron must never fire it (defensive; dueSchedules already skips).
+    if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && group.schedule?.enabled === true)) {
+      return undefined
+    }
     if (task.status === 'running' || hasOpenExecution(task)) {
       this.document.tasks = [...applyScheduleNextRun(this.document.tasks, taskId, nextRunAt, task.schedule?.lastTriggeredAt, triggeredAt)]
       this.commit()
@@ -471,6 +670,12 @@ export class HostTaskLedger {
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) return task
       changed = true
       return { ...task, schedule: { ...schedule, nextRunAt: nextRunAtMs(schedule.cron, now) }, updatedAt: now }
+    })
+    this.document.groups = this.document.groups.map(group => {
+      const schedule = group.schedule
+      if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) return group
+      changed = true
+      return { ...group, schedule: { ...schedule, nextRunAt: nextRunAtMs(schedule.cron, now) }, updatedAt: now }
     })
     if (changed) this.commit()
   }
@@ -532,9 +737,15 @@ export class HostTaskLedger {
         if (action.input.schedule?.enabled === true && (!isValidCron(action.input.schedule.cron) || nextRunAtMs(action.input.schedule.cron, now) === undefined)) {
           throw new Error('invalid schedule')
         }
+        if (action.input.groupId !== undefined && !this.document.groups.some(group => group.id === action.input.groupId)) {
+          throw new Error('group not found')
+        }
         const result = applyCreateTask(this.document.tasks, action.input, now, action.id)
         if (result.task === undefined) throw new Error('invalid task')
         this.document.tasks = [...result.tasks]
+        if (action.input.groupId !== undefined) {
+          this.document.groups = withGroupMembershipChange(this.document.groups, action.id, undefined, action.input.groupId, now)
+        }
         break
       }
       case 'update': {
@@ -549,7 +760,17 @@ export class HostTaskLedger {
           throw new Error('task has already been executed')
         }
         if ('title' in action.patch && action.patch.title?.trim() === '') throw new Error('title is required')
+        const previousGroupId = task.groupId
+        const nextGroupId = action.patch.groupId === null || action.patch.groupId === undefined
+          ? undefined
+          : action.patch.groupId.trim() === '' ? undefined : action.patch.groupId.trim()
+        if (nextGroupId !== undefined && !this.document.groups.some(group => group.id === nextGroupId)) {
+          throw new Error('group not found')
+        }
         this.document.tasks = [...applyUpdateTask(this.document.tasks, action.taskId, action.patch, now)]
+        if (previousGroupId !== nextGroupId) {
+          this.document.groups = withGroupMembershipChange(this.document.groups, action.taskId, previousGroupId, nextGroupId, now)
+        }
         break
       }
       case 'delete':
@@ -557,6 +778,9 @@ export class HostTaskLedger {
           const task = this.document.tasks.find(task => task.id === action.taskId)
           if (task === undefined) throw new Error('task not found')
           if (task.status === 'running' || hasOpenExecution(task)) throw new Error('running task cannot be deleted')
+          if (task.groupId !== undefined) {
+            this.document.groups = withGroupMembershipChange(this.document.groups, action.taskId, task.groupId, undefined, now)
+          }
         }
         this.document.tasks = [...applyDeleteTask(this.document.tasks, undefined, action.taskId).tasks]
         break
@@ -599,6 +823,50 @@ export class HostTaskLedger {
         this.document.tasks = this.document.tasks.map(item => item.id === task.id ? run!.task : item)
         break
       }
+      case 'create-group': {
+        if (this.document.groups.some(group => group.id === action.id)) throw new Error('group id already exists')
+        const result = applyCreateGroup(this.document.groups, action.input, now, action.id)
+        if (result.group === undefined) throw new Error('invalid group')
+        this.document.groups = [...result.groups]
+        break
+      }
+      case 'update-group': {
+        const result = applyUpdateGroup(this.document.groups, action.groupId, action.patch as GroupUpdatePatch, now)
+        if (!result.applied) throw new Error('group not found or invalid patch')
+        this.document.groups = [...result.groups]
+        break
+      }
+      case 'delete-group': {
+        if (!this.document.groups.some(group => group.id === action.groupId)) throw new Error('group not found')
+        // Ungrouping a member mid-run would change its routing gating under a
+        // live execution; refuse while any member has an open run.
+        if (this.document.tasks.some(task => task.groupId === action.groupId && hasOpenExecution(task))) {
+          throw new Error('group has running tasks')
+        }
+        const result = applyDeleteGroup(this.document.tasks, this.document.groups, action.groupId, now)
+        if (!result.applied) throw new Error('group not found')
+        this.document.tasks = [...result.tasks]
+        this.document.groups = [...result.groups]
+        break
+      }
+      case 'set-group-order': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
+        if (group === undefined) throw new Error('group not found')
+        // The order is a preference prefix: every listed id must be a member
+        // and appear once; members not listed keep their current relative
+        // position (appended by the normalize step). Archived members cannot
+        // be ungrouped through update-task, so the UI never sends them.
+        const memberIds = this.document.tasks
+          .filter(task => task.groupId === action.groupId)
+          .map(task => task.id)
+        const memberSet = new Set(memberIds)
+        const orderSet = new Set(action.order)
+        if (orderSet.size !== action.order.length || !action.order.every(id => memberSet.has(id))) {
+          throw new Error('order does not match group members')
+        }
+        this.document.groups = withGroupOrder(this.document.groups, action.groupId, action.order, memberIds, now)
+        break
+      }
     }
     this.commit()
     return { state: this.state(), ...(run === undefined ? {} : { run }) }
@@ -620,6 +888,20 @@ export class HostTaskLedger {
       if (schedule.nextRunAt === next) return task
       changed = true
       return { ...task, schedule: { ...schedule, nextRunAt: next }, updatedAt: now }
+    })
+    this.document.groups = this.document.groups.map(group => {
+      const schedule = group.schedule
+      if (schedule === undefined || !schedule.enabled) return group
+      if (!skipPast && schedule.nextRunAt !== undefined) return group
+      const next = nextRunAtMs(schedule.cron, now)
+      if (next === undefined) {
+        changed = true
+        this.document.scheduler.error = `invalid cron disabled for group: ${group.id}`
+        return { ...group, schedule: { ...schedule, enabled: false, nextRunAt: undefined }, updatedAt: now }
+      }
+      if (schedule.nextRunAt === next) return group
+      changed = true
+      return { ...group, schedule: { ...schedule, nextRunAt: next }, updatedAt: now }
     })
     if (changed && persist) this.commit()
   }
@@ -645,7 +927,17 @@ export class HostTaskLedger {
     try {
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<LedgerDocument>
       if (parsed.schemaVersion !== TASK_BOARD_SCHEMA_VERSION || !Array.isArray(parsed.tasks)) throw new Error('unsupported ledger schema')
-      const tasks = parseHostTasks(parsed.tasks).map(task => ({ ...task, executions: retainRecentExecutions(task.executions) }))
+      // Parse groups first (ids only) so a task pointing at a vanished group
+      // loses the dangling reference before the group order is re-derived.
+      const groupsProto = normalizeGroupRows(parsed.groups, [])
+      const groupIds = new Set(groupsProto.map(group => group.id))
+      const tasks = parseHostTasks(parsed.tasks).map(task => {
+        const normalized = { ...task, executions: retainRecentExecutions(task.executions) }
+        if (normalized.groupId === undefined || groupIds.has(normalized.groupId)) return normalized
+        const { groupId: _dangling, ...rest } = normalized
+        return rest
+      })
+      const groups = normalizeGroupRows(parsed.groups, tasks)
       const invalidScheduleIds = (parsed.tasks as unknown[]).flatMap(value => {
         if (typeof value !== 'object' || value === null) return []
         const row = value as { id?: unknown; schedule?: unknown }
@@ -666,6 +958,7 @@ export class HostTaskLedger {
         schemaVersion: TASK_BOARD_SCHEMA_VERSION,
         revision: Number.isSafeInteger(parsed.revision) && (parsed.revision as number) >= 0 ? parsed.revision as number : 0,
         tasks,
+        groups,
         scheduler: {
           timeZone: timeZone(),
           ledgerId: typeof parsed.scheduler?.ledgerId === 'string' && parsed.scheduler.ledgerId !== '' ? parsed.scheduler.ledgerId : crypto.randomUUID(),
@@ -691,6 +984,7 @@ export class HostTaskLedger {
         schemaVersion: TASK_BOARD_SCHEMA_VERSION,
         revision: 0,
         tasks: [],
+        groups: [],
         scheduler: { timeZone: timeZone(), ledgerId: crypto.randomUUID(), ...(existed ? { error: `corrupt ledger was quarantined: ${error instanceof Error ? error.message : String(error)}` } : {}) },
         recentRequests: [],
       }

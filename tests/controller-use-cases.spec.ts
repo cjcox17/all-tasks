@@ -278,3 +278,17 @@ describe('use-case: update endpoint pin', () => {
     expect(updated[0].endpoints).toEqual(['cloud'])
   })
 })
+
+describe('use-case: update group membership', () => {
+  it('sets, moves, and clears the groupId', () => {
+    const assigned = applyUpdateTask(seed(2), 'id-0', { groupId: 'g1' }, NOW + 10)
+    expect(assigned[0].groupId).toBe('g1')
+    const moved = applyUpdateTask(assigned, 'id-0', { groupId: 'g2' }, NOW + 11)
+    expect(moved[0].groupId).toBe('g2')
+    const cleared = applyUpdateTask(moved, 'id-0', { groupId: null }, NOW + 12)
+    expect(cleared[0].groupId).toBeUndefined()
+    expect(cleared[0].updatedAt).toBe(NOW + 12)
+    const blank = applyUpdateTask(seed(2), 'id-1', { groupId: '   ' }, NOW + 13)
+    expect(blank[1].groupId).toBeUndefined()
+  })
+})

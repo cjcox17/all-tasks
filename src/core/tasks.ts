@@ -34,6 +34,12 @@ export interface ExecutionRecord {
    */
   queuedAt?: number
   /**
+   * Why the run is being held before launch: the endpoint list has no eligible
+   * candidate, a group slot (sequential/parallel capacity) is occupied, or the
+   * group's allowed window is closed. Absent on launched runs.
+   */
+  queuedReason?: 'endpoint' | 'group' | 'window'
+  /**
    * The endpoint this run is routed through: the preferred candidate while
    * queued, the actually chosen endpoint once launched.
    */
@@ -126,6 +132,13 @@ export interface TaskRecord {
    * directly).
    */
   endpoints?: string[]
+  /**
+   * The task group this task belongs to (a group id). Membership is one group
+   * at most; absent means ungrouped. The group's execution policy (endpoints,
+   * sequential/parallel capacity, window, schedule) gates every launch of the
+   * member; the group's order drives sequential starts and display order.
+   */
+  groupId?: string
   /**
    * When the task was archived (ms epoch). Archived tasks keep their status
    * and execution history, leave the main board, and cannot run until restored;
@@ -222,6 +235,8 @@ export interface NewTaskInput {
    * no routing, direct model pin).
    */
   endpoints?: string[]
+  /** Task group to join (a group id); empty/absent = ungrouped. */
+  groupId?: string
   /** Permission preset applied to the execution session; absent = session default. */
   permission?: TaskPermission
   /**
@@ -283,6 +298,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     mode: normalizeTargetId(input.mode),
     model: normalizeModelSelection(input.model),
     endpoints: normalizeEndpointList(input.endpoints),
+    groupId: normalizeTargetId(input.groupId),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
   }
 }

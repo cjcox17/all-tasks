@@ -9,6 +9,7 @@ function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger
     schemaVersion: 2,
     revision,
     tasks,
+    groups: [],
     scheduler: { timeZone: 'UTC', ledgerId },
     power: {
       platform: 'linux', phase: 'unsupported', enabled: false,
