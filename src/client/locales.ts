@@ -183,6 +183,19 @@ export const zh = {
   'settings.unsaved': '未保存',
   'settings.saveFailed': '部署未接受这些值，已保留供你修改。',
   'settings.invalidNumber': '请输入数字，留空则使用默认值。',
+  'settings.modelTimeouts': '模型默认超时',
+  'settings.modelTimeoutsHint': 'DSH 在模型请求长时间未收到新内容（默认 300 秒）时会中止它；本地 LLM 重新计算大消息链或生成较慢时容易触发。此处按提供方调整默认值，立即生效，影响该提供方下的全部模型（对话与任务执行）。',
+  'settings.modelTimeoutIdle': '空闲超时（秒）',
+  'settings.modelTimeoutIdleHint': '请求在指定秒数内未收到任何新内容块即中止；默认 300。',
+  'settings.modelTimeoutTotal': '总请求超时（秒）',
+  'settings.modelTimeoutTotalHint': '整个请求的最长时长；留空使用后端默认。',
+  'settings.modelTimeoutSave': '保存',
+  'settings.modelTimeoutReset': '恢复默认',
+  'settings.modelTimeoutSaved': '已保存',
+  'settings.modelTimeoutError': '保存失败：{error}',
+  'settings.modelTimeoutInvalid': '请输入 1–86400 之间的整数秒。',
+  'settings.modelTimeoutUnavailable': '设置服务不可用，无法读取模型超时。',
+  'settings.modelTimeoutEmpty': '没有可配置的模型提供方。',
 } satisfies Record<string, string>
 
 /** en dictionary, complete against the zh key set. */
@@ -363,6 +376,19 @@ export const en: Record<keyof typeof zh, string> = {
   'settings.unsaved': 'Unsaved',
   'settings.saveFailed': 'The deployment did not accept these values; they were left for you to correct.',
   'settings.invalidNumber': 'Enter a number, or leave blank to use the default.',
+  'settings.modelTimeouts': 'Model default timeouts',
+  'settings.modelTimeoutsHint': 'DSH aborts a model request when no new content arrives for 300 seconds (the default stream-idle watchdog), which a local LLM recomputing a long message chain or generating slowly often trips. Adjust the default per provider below; it applies live to every request through that provider, chat and task runs alike.',
+  'settings.modelTimeoutIdle': 'Idle timeout (seconds)',
+  'settings.modelTimeoutIdleHint': 'Abort the request when no new content block arrives for this many seconds; default 300.',
+  'settings.modelTimeoutTotal': 'Total request timeout (seconds)',
+  'settings.modelTimeoutTotalHint': 'Overall request bound; blank keeps the backend default.',
+  'settings.modelTimeoutSave': 'Save',
+  'settings.modelTimeoutReset': 'Reset to default',
+  'settings.modelTimeoutSaved': 'Saved',
+  'settings.modelTimeoutError': 'Save failed: {error}',
+  'settings.modelTimeoutInvalid': 'Enter a whole number of seconds between 1 and 86400.',
+  'settings.modelTimeoutUnavailable': 'The settings service is unavailable; model timeouts cannot be read.',
+  'settings.modelTimeoutEmpty': 'No configurable model providers found.',
 }
 
 /** The dictionary key union. */

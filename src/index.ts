@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
+import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from 'schemastery'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -17,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { normalizeEndpointsConfig, type EndpointRouterConfig } from './core/endpoints.ts'
 import { TaskBoardHostService } from './host-service.ts'
 import { makeTaskBoardRoutes } from './host-routes.ts'
+import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
 
 /** Order of the announcement section within the tool-guidance band. */
@@ -176,6 +178,23 @@ export function resolveProxyAccess(config: Config | undefined, env: NodeJS.Proce
 const DEFAULT_ANNOUNCE = false
 
 /**
+ * Build the narrow settings seam the model-timeout editor needs. Resolved at
+ * call time so it starts working the moment the settings service is up even
+ * when the plugin applies earlier; absent service yields an undefined seam,
+ * which disables the editor routes rather than crashing them.
+ */
+function modelTimeoutSettingsSeam(ctx: Context): ModelTimeoutSettingsSeam | undefined {
+  return {
+    get: (ns) => (ctx.get('settings') as { get?: (ns: string) => unknown } | undefined)?.get?.(ns),
+    mutate: async (ns, ops, expectedRevision) => {
+      const service = ctx.get('settings') as { mutate?: (ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number) => Promise<void> } | undefined
+      if (service?.mutate === undefined) throw new Error('settings service is unavailable')
+      await service.mutate(ns, ops, expectedRevision)
+    },
+  }
+}
+
+/**
  * Register the board's announcement section, gated on the composition entry's
  * `announceToAgent` (and the live settings value once the web settings
  * surface is served). The section is re-registered whenever the source
@@ -195,6 +214,7 @@ function applyImpl(ctx: Context, config?: Config): void {
       },
     },
     readModelMaxTokens: (provider, model) => readPiAiModelMaxTokens(ctx, provider, model),
+    settings: modelTimeoutSettingsSeam(ctx),
   })
   host.setConfiguration(config?.enabled ?? true, config?.preventIdleSleep ?? false)
   host.start()

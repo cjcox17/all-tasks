@@ -1,0 +1,183 @@
+/* Model default timeouts editor inside the task-board settings card.
+ * Self-contained (the card chrome stylesheet is vendored and must not be
+ * edited); mirrors the shared field/input/button tokens so the section reads
+ * as part of the settings family. */
+
+.section {
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0 4px;
+  display: flex;
+}
+
+.head {
+  flex-direction: column;
+  gap: 4px;
+  display: flex;
+}
+
+.title {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.hint,
+.status,
+.fieldHint,
+.invalid,
+.saved {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.status {
+  color: var(--dsw-alias-label-tertiary);
+  padding: 8px 0;
+}
+
+.rows {
+  flex-direction: column;
+  gap: 8px;
+  display: flex;
+}
+
+.row {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 8px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  display: flex;
+}
+
+.rowHead {
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  display: flex;
+}
+
+.rowName {
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowProvider {
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.fields {
+  flex-wrap: wrap;
+  gap: 12px;
+  display: flex;
+}
+
+.field {
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+  display: flex;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.input {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  height: 32px;
+  font: inherit;
+  color: var(--dsw-alias-label-primary);
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.input:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+  outline: none;
+}
+
+.input:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.fieldHint {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.invalid {
+  color: var(--dsw-alias-label-error);
+}
+
+.actions {
+  align-items: center;
+  gap: 8px;
+  display: flex;
+}
+
+.save,
+.reset {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.save {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.reset {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+}
+
+.reset:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.save:disabled,
+.reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.save:focus-visible,
+.reset:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.saved {
+  color: var(--dsw-alias-brand-primary);
+}

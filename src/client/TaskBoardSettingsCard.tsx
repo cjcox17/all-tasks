@@ -8,6 +8,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { useEffect, useState } from 'react'
 import type { TaskBoardPowerSnapshot } from '../protocol.ts'
+import { ModelTimeoutsEditor } from './ModelTimeoutsEditor.tsx'
 import { PluginSettingsCard, BooleanField } from './PluginSettingsCard.tsx'
 import { CardForm, booleanField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
@@ -183,6 +184,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onEdit={(text) => { props.edit('preventIdleSleep', text) }}
         onReset={() => { props.resetField('preventIdleSleep') }}
       />
+      <ModelTimeoutsEditor t={t} disabled={disabled} />
       <p>
         {t('settings.powerStatus', {
           platform: power?.platform ?? t('settings.powerUnknown'),

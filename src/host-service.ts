@@ -5,6 +5,13 @@ import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
+import {
+  modelTimeoutOps,
+  readModelTimeoutViews,
+  type ModelTimeoutPatch,
+  type ModelTimeoutSettingsSeam,
+  type ModelTimeoutView,
+} from './model-timeouts.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
 import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from './protocol.ts'
 
@@ -43,6 +50,8 @@ export class TaskBoardHostService {
   /** Execution ids with an in-flight launch; guards the queue re-check against double-launches. */
   private readonly launching = new Set<string>()
   private readonly now: () => number
+  /** Host user-settings seam for the model default-timeout editor (absent = disabled). */
+  private readonly settings: ModelTimeoutSettingsSeam | undefined
 
   constructor(api: ApiProxy, options: {
     ledger?: HostTaskLedger
@@ -51,6 +60,7 @@ export class TaskBoardHostService {
     commandDispatcher?: SessionCommandDispatcher
     routerConfig?: EndpointRouterConfig
     readModelMaxTokens?: (provider: string, model: string) => number | undefined
+    settings?: ModelTimeoutSettingsSeam
   } = {}) {
     this.ledger = options.ledger ?? new HostTaskLedger()
     this.runner = new HostExecutionRunner(api, options.commandDispatcher)
@@ -58,6 +68,7 @@ export class TaskBoardHostService {
     this.now = options.now ?? Date.now
     if (options.routerConfig !== undefined) this.routerConfig = options.routerConfig
     this.readModelMaxTokens = options.readModelMaxTokens
+    this.settings = options.settings
     this.ledger.subscribe(() => {
       this.syncPowerReasons()
       this.emit()
@@ -150,6 +161,37 @@ export class TaskBoardHostService {
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }
+  }
+
+  /**
+   * Current effective model default timeouts, one row per provider route.
+   * Empty when no settings seam is wired (the routes then report no rows and
+   * refuse writes).
+   */
+  modelTimeouts(): ModelTimeoutView[] {
+    const settings = this.settings
+    if (settings === undefined) return []
+    return readModelTimeoutViews(settings.get('llm-pi-ai'), settings.get('llm-deepseek'))
+  }
+
+  /**
+   * Apply one provider's model default-timeout patch through the settings
+   * seam. The write validates against the provider's own schema (a rejected
+   * value refuses rather than storing), then the row is re-read so the caller
+   * gets the effective value after the change.
+   * @param patch - the provider and desired timeout state.
+   * @returns the provider's updated effective view.
+   */
+  async applyModelTimeout(patch: ModelTimeoutPatch): Promise<ModelTimeoutView> {
+    const settings = this.settings
+    if (settings === undefined) throw new Error('settings service is unavailable')
+    const target = this.modelTimeouts().find(view => view.provider === patch.provider)
+    if (target === undefined) throw new Error(`model provider not found: ${patch.provider}`)
+    const { namespace, ops } = modelTimeoutOps(target, patch)
+    await settings.mutate(namespace, ops)
+    const updated = this.modelTimeouts().find(view => view.provider === patch.provider)
+    if (updated === undefined) throw new Error(`model provider not found after update: ${patch.provider}`)
+    return updated
   }
 
   dispose(): void {

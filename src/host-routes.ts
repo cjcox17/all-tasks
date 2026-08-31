@@ -4,6 +4,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { TaskBoardHostService } from './host-service.ts'
 import { writeJson } from './http.ts'
 import { isLoopbackAddress, isLoopbackRequest } from './loopback.ts'
+import { parseModelTimeoutPatch } from './model-timeouts.ts'
 import { parseActionEnvelope, TASK_BOARD_API_PREFIX } from './protocol.ts'
 
 const ACTION_LIMIT = 64 * 1024
@@ -188,5 +189,30 @@ export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskB
       push()
     },
   }
-  return [state, action, events]
+  const modelTimeouts: WebRoute = {
+    kind: 'exact',
+    path: `${TASK_BOARD_API_PREFIX}/model-timeouts`,
+    handler: async (req, res): Promise<void> => {
+      if (req.method === 'GET') {
+        if (!guard(req, res)) return
+        writeJson(res, 200, { providers: service.modelTimeouts() }, { 'cache-control': 'no-store' })
+        return
+      }
+      if (req.method !== 'POST') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
+      if (!guard(req, res)) return
+      if (!(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+        return writeJson(res, 415, { ok: false, error: 'json-required' }, { 'cache-control': 'no-store' })
+      }
+      try {
+        const body = await readBody(req)
+        const patch = parseModelTimeoutPatch(body.value)
+        const updated = await service.applyModelTimeout(patch)
+        writeJson(res, 200, { provider: updated }, { 'cache-control': 'no-store' })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        writeJson(res, message === 'body-too-large' ? 413 : 400, { ok: false, error: message }, { 'cache-control': 'no-store' })
+      }
+    },
+  }
+  return [state, action, events, modelTimeouts]
 }
