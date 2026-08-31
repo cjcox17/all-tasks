@@ -6,7 +6,7 @@
 
 > **来源**：本仓库是 [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)
 > monorepo 中 `dsh-task-board` 包（`@linxin666/dsh-client-ui-task-board`）的独立 fork，
-> 以上游 `v0.3.6` tag 为基线，并扩展了任务级模型钉。包名、仓库与用户可见文案改名为
+> 以上游 `v0.3.6` tag 为基线，并扩展了任务级模型钉与推理强度选择。包名、仓库与用户可见文案改名为
 > All Tasks（全部任务）；内部标识（`task-board` 设置命名空间、`/api/task-board`
 > 前缀、`$DSH_HOME/task-board/` 账本目录）保持不变，因此已有 dsh-task-board 账本与
 > 设置可原样沿用。许可证与上游一致，为 Apache-2.0（见 [LICENSE](LICENSE)）。
@@ -22,7 +22,7 @@
 - **有界执行历史**：每个任务只保留最近 20 条执行记录；新运行开始时截掉最旧的记录，使账本大小与每次写入成本不随任务历史无限增长。
 - **真实执行**：手动运行和定时运行共用 Host runner，新建独立会话、重命名、应用 agent 预设、通过 `session.selectModel` 钉住模型选择、应用 `/permission <id>`，再以 queue 模式发送任务 Prompt。
 - **钉子失败即关闭**：工作区缺失、预设缺失或损坏、模型选择被拒绝、权限命令被拒绝时，任务 Prompt 不会发送。
-- **任务级模型钉**：每个任务都可以从 Host 模型目录中挑选提供商与模型（可带 reasoning effort）钉住执行会话；留空则回落到部署默认模型。
+- **任务级模型钉**：每个任务都可以从 Host 模型目录中挑选提供商与模型钉住执行会话，并可选择推理强度（minimal/low/medium/high 或提供商自定义值）；留空则回落到部署默认模型。
 - **Host 调度器**：5 段 cron 支持 `*`、`*/n`、范围、逗号列表、周日 `0/7` 和标准的日期/星期 OR 语义，时间基准为 Host 本地时区。
 - **确定性恢复**：已有 session id 的 running execution 在重启后继续观察；没有 session id 的启动中断会取消且不会重发。
 - **实时同步**：变更返回完整 revision snapshot；SSE 只提示 revision、scheduler 与 power 变化，重连和页面恢复可见时重新拉完整 snapshot。
@@ -106,7 +106,7 @@ pnpm build
 
 1. 挂载插件并重启 `dsh web`，打开任务看板，确认 Host 时区和电源状态可见。
 2. 新建并编辑任务；刷新或打开第二个同源标签页，确认两者显示同一 Host revision。
-3. 执行一个钉住工作区、预设、模型和权限的任务；确认出现新会话，并由该会话的 `turn/end` 历史结算任务。
+3. 执行一个钉住工作区、预设、模型（含推理强度）和权限的任务；确认出现新会话，并由该会话的 `turn/end` 历史结算任务。
 4. 启用一个即将到期的 cron，关闭全部浏览器页面，确认 Host 仍只创建并结算一次 execution。
 5. 让 Host 停止并错过一个 cron 触发点，重启后确认该次被跳过，`nextRunAt` 从当前 Host 时间向后滚动。
 6. 开启 `preventIdleSleep` 并运行长任务，让显示器自动熄灭；恢复显示后确认会话继续且 execution 已结算。

@@ -10,12 +10,14 @@ import { groupExecutionModelOptions } from '../../core/controller.ts'
 import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type ExecutionRecord, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
+import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EditTaskModal } from './EditTaskModal.tsx'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
+import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import { STATUS_KEY } from './status-key.ts'
 
 /** Execution outcome → locale key. */
@@ -138,6 +140,16 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           ))}
         </select>
       </label>
+      {model !== undefined && (
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('new.model.effort')}</span>
+          <ReasoningEffortPicker
+            value={model.reasoningEffort ?? ''}
+            disabled={pending}
+            onChange={effort => { void controller.updateTask(task.id, { model: withReasoningEffort(model, effort) }) }}
+          />
+        </label>
+      )}
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>
         <select

@@ -7,9 +7,11 @@ import type { BoardController, ExecutionModelOption } from '../../core/controlle
 import { groupExecutionModelOptions } from '../../core/controller.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
+import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
+import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import css from '../board.module.css'
 
 /** The model picker: one "deployment default" option plus one optgroup per provider. */
@@ -43,6 +45,7 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
   const [workspaceId, setWorkspaceId] = useState('')
   const [mode, setMode] = useState('')
   const [modelKey, setModelKey] = useState('')
+  const [reasoningEffort, setReasoningEffort] = useState('')
   const [permission, setPermission] = useState('')
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleCron, setScheduleCron] = useState('')
@@ -68,13 +71,14 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
       }
     }
     setPending(true)
+    const model = modelKey === '' ? undefined : parseModelSelectionKey(modelKey)
     const task = await controller.createTaskConfirmed({
       title,
       description,
       prompt,
       workspaceId: workspaceId === '' ? undefined : workspaceId,
       mode: mode === '' ? undefined : mode,
-      model: modelKey === '' ? undefined : parseModelSelectionKey(modelKey),
+      model: model === undefined ? undefined : withReasoningEffort(model, reasoningEffort),
       permission: permission === '' ? undefined : permission as TaskPermission,
       schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : undefined,
     })
@@ -146,6 +150,13 @@ export function NewTaskModal({ controller, onClose }: { controller: BoardControl
           <span className={css.fieldLabel}>{t('new.model')}</span>
           <ModelPicker models={options.models} value={modelKey} onChange={setModelKey} />
         </label>
+
+        {modelKey !== '' && (
+          <label className={css.field}>
+            <span className={css.fieldLabel}>{t('new.model.effort')}</span>
+            <ReasoningEffortPicker value={reasoningEffort} onChange={setReasoningEffort} />
+          </label>
+        )}
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.permission')}</span>

@@ -7,7 +7,8 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 > **Origin**: this is a standalone fork of the `dsh-task-board` package
 > (`@linxin666/dsh-client-ui-task-board`) from the
 > [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web) monorepo,
-> cut at the upstream `v0.3.6` tag and extended with a per-task model pin. The
+> cut at the upstream `v0.3.6` tag and extended with a per-task model pin
+> and a reasoning-effort picker. The
 > package name, repo, and user-visible labels are renamed to All Tasks;
 > internal identifiers (the `task-board` settings namespace, `/api/task-board`
 > prefix, and `$DSH_HOME/task-board/` ledger directory) are kept so an
@@ -25,7 +26,7 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 - **Bounded execution history**: each task keeps the most recent 20 execution records; the oldest runs are trimmed when a new run starts, so ledger size and write cost stay bounded regardless of how often a task has run.
 - **Real execution**: manual and scheduled runs use the same Host runner, create a fresh session, rename it, apply the agent preset, pin the model selection through `session.selectModel`, apply `/permission <id>`, then queue the task prompt.
 - **Fail-closed pins**: a missing workspace, missing or broken preset, rejected model selection, or rejected permission command fails before the task prompt is sent.
-- **Per-task model pin**: each task may pin its execution session to a specific provider/model (with an optional reasoning effort) chosen from the host model catalog; a blank pin falls back to the deployment default model.
+- **Per-task model pin**: each task may pin its execution session to a specific provider/model chosen from the host model catalog, plus an optional reasoning-effort level (minimal/low/medium/high or the provider's own value); a blank pin falls back to the deployment default model.
 - **Host scheduler**: 5-field cron supports `*`, `*/n`, ranges, comma lists, Sunday `0/7`, and standard day-of-month/day-of-week OR semantics in the Host local time zone.
 - **Deterministic recovery**: a running execution with a recorded session is observed after restart; an interrupted start without a session id is cancelled and is not resent.
 - **Live synchronization**: mutations return a full revisioned snapshot; SSE announces revision, scheduler, and power changes, while reconnect and page visibility recovery fetch a full snapshot.
@@ -111,7 +112,7 @@ Set `DSH_POWER_SMOKE=1` to opt into the native helper smoke test on Windows, mac
 
 1. Mount the package, restart `dsh web`, open the task board, and confirm the Host time zone and power status are visible.
 2. Create and edit a task; refresh or open a second same-origin tab and confirm both show the same Host revision.
-3. Run a task with pinned workspace, preset, model, and permission; confirm a new session appears and the task settles from its `turn/end` history.
+3. Run a task with pinned workspace, preset, model (plus a reasoning-effort level), and permission; confirm a new session appears and the task settles from its `turn/end` history.
 4. Enable a near-future cron, close all browser pages, and confirm the Host still creates and settles exactly one execution.
 5. Stop the Host past a cron occurrence, restart it, and confirm the missed occurrence is skipped and `nextRunAt` rolls forward from current Host time.
 6. Enable `preventIdleSleep`, run a long session, and let the display turn off; after restoring the display, confirm the session continued and the execution settled.
