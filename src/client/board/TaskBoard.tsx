@@ -14,6 +14,7 @@ import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
+import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
 
 /** Case-insensitive title/description match. */
 function matchesFilter(task: TaskRecord, filter: string): boolean {
@@ -63,14 +64,18 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
     [controller],
   )
   const [filter, setFilter] = useState('')
+  const [workspaceFilter, setWorkspaceFilter] = useState<string | undefined>(undefined)
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const selected = selectedTaskOf(snapshot)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
+  // The workspace scoping applies to both views: filtered views keep the
+  // workspace's pinned tasks plus the unassigned remainder (never hidden).
   const visible = snapshot.tasks.filter(task =>
     (archiveView ? task.archivedAt !== undefined : task.archivedAt === undefined)
-    && matchesFilter(task, filter),
+    && matchesFilter(task, filter)
+    && matchesWorkspace(task, workspaceFilter),
   )
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
 
@@ -105,6 +110,21 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
           onChange={event => { setFilter(event.target.value) }}
           aria-label={t('board.search')}
         />
+        <select
+          className={css.workspaceSelect}
+          aria-label={t('board.workspaceFilter')}
+          value={workspaceFilter ?? ''}
+          onChange={event => { setWorkspaceFilter(event.target.value === '' ? undefined : event.target.value) }}
+        >
+          <option value="">{t('board.allWorkspaces')}</option>
+          {snapshot.executionOptions.workspaces.map(workspace => (
+            <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.title}</option>
+          ))}
+          {/* A pinned workspace may be gone from the live list (deleted); keep the filter selectable. */}
+          {workspaceFilter !== undefined && !snapshot.executionOptions.workspaces.some(workspace => workspace.workspaceId === workspaceFilter) && (
+            <option value={workspaceFilter}>{workspaceFilter}</option>
+          )}
+        </select>
         <button
           type="button"
           className={archiveView ? css.primaryButton : css.ghostButton}
@@ -156,7 +176,9 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         ) : (
           COLUMNS.map(column => {
             const tasks = visible.filter(task => task.status === column.status)
-            const ungrouped = tasks.filter(task => task.groupId === undefined)
+            const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceFilter)
+            const ungrouped = pinned.filter(task => task.groupId === undefined)
+            const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
             const grouped = snapshot.groups
               .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
               .filter(entry => entry.members.length > 0)
@@ -190,6 +212,17 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                   {ungrouped.map(task => (
                     <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
                   ))}
+                  {workspaceFilter !== undefined && unassignedFlat.length > 0 && (
+                    <div className={css.unassignedSection} data-dsh-part="unassigned">
+                      <header className={css.unassignedHeader}>
+                        <span className={css.unassignedName}>{t('board.unassigned')}</span>
+                        <span className={css.groupCount}>{unassignedFlat.length}</span>
+                      </header>
+                      {unassignedFlat.map(task => (
+                        <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                      ))}
+                    </div>
+                  )}
                   {grouped.map(({ group, members }) => (
                     <div key={group.id} className={css.groupSection} data-group={group.id}>
                       <GroupBanner

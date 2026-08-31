@@ -671,6 +671,55 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   margin: 0 4px;
 }
 
+/* --- workspace scoping ------------------------------------------------------ */
+
+.workspaceSelect {
+  flex: 0 1 180px;
+  min-width: 120px;
+  max-width: 220px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-specific-input-major);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  outline: none;
+}
+
+/* The Unassigned section only appears while a workspace filter is active. */
+.unassignedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px dashed var(--dsw-alias-border-l2);
+}
+
+.unassignedHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  flex: none;
+}
+
+.unassignedName {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unassignedSection .card {
+  margin: 0 4px;
+}
+
 .formError {
   margin: 0;
   font-size: 12px;
@@ -954,10 +1003,16 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     order: 4;
   }
 
+  .workspaceSelect {
+    flex: 1 0 100%;
+    min-width: 0;
+    order: 5;
+  }
+
   .boardHeader > button:not(.backButton) {
     flex: 1 1 0;
     min-width: 0;
-    order: 5;
+    order: 6;
   }
 
   .columns {
@@ -1010,6 +1065,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .iconButton,
   .linkButton,
   .search,
+  .workspaceSelect,
   .input,
   .select,
   .schedulePreset,
@@ -1018,6 +1074,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .search,
+  .workspaceSelect,
   .input,
   .select,
   .schedulePreset {

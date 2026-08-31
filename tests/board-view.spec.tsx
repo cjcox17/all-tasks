@@ -340,3 +340,126 @@ describe('TaskBoard group sections', () => {
     expect(container.textContent).toContain(t('group.create'))
   })
 })
+
+describe('TaskBoard workspace scoping', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot)} />) })
+    return { container }
+  }
+
+  const WORKSPACES = [
+    { workspaceId: 'ws-a', title: 'Alpha' },
+    { workspaceId: 'ws-b', title: 'Beta' },
+  ]
+
+  function workspaceSelect(container: HTMLElement): HTMLSelectElement {
+    const select = container.querySelector(`select[aria-label="${t('board.workspaceFilter')}"]`)
+    expect(select).not.toBeNull()
+    return select as HTMLSelectElement
+  }
+
+  function cardsOf(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).map(card => card.textContent ?? '')
+  }
+
+  function hasCard(container: HTMLElement, title: string): boolean {
+    return cardsOf(container).some(text => text.includes(title))
+  }
+
+  it('offers an all-workspaces default plus one option per known workspace', async () => {
+    const { container } = await renderBoard({
+      tasks: [],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
+    })
+    const select = workspaceSelect(container)
+    expect(select.value).toBe('')
+    expect(Array.from(select.options).map(option => option.textContent)).toEqual([
+      t('board.allWorkspaces'),
+      'Alpha',
+      'Beta',
+    ])
+  })
+
+  it('keeps the general overview by default: every task visible, no Unassigned section', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-a', title: 'Pinned A', status: 'todo', workspaceId: 'ws-a' }),
+        task({ id: 't-b', title: 'Pinned B', status: 'todo', workspaceId: 'ws-b' }),
+        task({ id: 't-u', title: 'Unpinned', status: 'todo' }),
+      ],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
+    })
+    expect(hasCard(container, 'Pinned A')).toBe(true)
+    expect(hasCard(container, 'Pinned B')).toBe(true)
+    expect(hasCard(container, 'Unpinned')).toBe(true)
+    expect(container.querySelector('[data-dsh-part="unassigned"]')).toBeNull()
+  })
+
+  it('scopes the board to one workspace and collects unpinned tasks in an Unassigned section', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-a', title: 'Pinned A', status: 'todo', workspaceId: 'ws-a' }),
+        task({ id: 't-b', title: 'Pinned B', status: 'todo', workspaceId: 'ws-b' }),
+        task({ id: 't-u', title: 'Unpinned', status: 'todo' }),
+      ],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
+    })
+
+    const select = workspaceSelect(container)
+    await act(async () => {
+      select.value = 'ws-a'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // Only ws-a's pinned task and the unpinned task remain.
+    expect(hasCard(container, 'Pinned A')).toBe(true)
+    expect(hasCard(container, 'Unpinned')).toBe(true)
+    expect(hasCard(container, 'Pinned B')).toBe(false)
+
+    // The unpinned task sits inside the Unassigned section, Pinned A outside it.
+    const unassigned = container.querySelector('[data-dsh-part="unassigned"]')
+    expect(unassigned).not.toBeNull()
+    expect(unassigned!.textContent).toContain(t('board.unassigned'))
+    expect(unassigned!.textContent).toContain('Unpinned')
+    const pinnedACard = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(card => card.textContent?.includes('Pinned A'))
+    expect(pinnedACard?.closest('[data-dsh-part="unassigned"]')).toBeNull()
+  })
+
+  it('keeps groups whole in a scoped view: matching and unpinned members stay grouped, other workspaces drop out', async () => {
+    const GROUP: TaskGroupRecord = {
+      id: 'g1',
+      name: 'Nightly',
+      mode: 'sequential',
+      order: ['t-a', 't-u', 't-b'],
+      createdAt: 0,
+      updatedAt: 0,
+      offPeakOnly: false,
+    }
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-a', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
+        task({ id: 't-u', title: 'Member U', status: 'todo', groupId: 'g1' }),
+        task({ id: 't-b', title: 'Member B', status: 'todo', workspaceId: 'ws-b', groupId: 'g1' }),
+      ],
+      groups: [GROUP],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
+    })
+
+    const select = workspaceSelect(container)
+    await act(async () => {
+      select.value = 'ws-a'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    const memberTitles = Array.from(section!.querySelectorAll('button[data-dsh-part="card"]')).map(card => card.textContent ?? '')
+    expect(memberTitles.some(text => text.includes('Member A'))).toBe(true)
+    expect(memberTitles.some(text => text.includes('Member U'))).toBe(true)
+    expect(memberTitles.some(text => text.includes('Member B'))).toBe(false)
+  })
+})
