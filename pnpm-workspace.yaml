@@ -1,0 +1,6 @@
+# Standalone-repo pnpm settings (single package). The only build script in
+# the dependency tree is esbuild's platform-binary postinstall; pnpm 11
+# blocks it until allowed here (the profile that installs this repo from
+# GitHub needs its own allowBuilds entry — the dsh plugin CLI prints the key).
+allowBuilds:
+  esbuild: true
