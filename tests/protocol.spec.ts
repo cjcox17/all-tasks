@@ -399,3 +399,36 @@ describe('reorder action gate', () => {
     expect(parseActionEnvelope({ requestId: 'r4', action: { kind: 'reorder', taskId: 'task-a', beforeTaskId: 'task-b', extra: 1 } })).toBeUndefined()
   })
 })
+
+describe('pause / continue action gates', () => {
+  it('accepts task pause/continue, group pause/continue, and workspace pause/continue', () => {
+    for (const action of [
+      { kind: 'pause', taskId: 'task-a' },
+      { kind: 'continue', taskId: 'task-a' },
+      { kind: 'pause-group', groupId: 'group-a' },
+      { kind: 'continue-group', groupId: 'group-a' },
+      { kind: 'pause-workspace', workspaceId: 'workspace-a' },
+      { kind: 'continue-workspace', workspaceId: 'workspace-a' },
+      { kind: 'pause-workspace', workspaceId: '' },
+      { kind: 'continue-workspace', workspaceId: '' },
+    ]) {
+      expect(parseActionEnvelope({ requestId: 'pause-a', action })).toEqual({ requestId: 'pause-a', action })
+    }
+  })
+
+  it('rejects malformed pause/continue payloads', () => {
+    for (const action of [
+      { kind: 'pause' },
+      { kind: 'pause', taskId: '' },
+      { kind: 'continue', taskId: 5 },
+      { kind: 'pause', taskId: 'task-a', extra: 1 },
+      { kind: 'pause-group', groupId: '' },
+      { kind: 'continue-group' },
+      { kind: 'pause-workspace' },
+      { kind: 'pause-workspace', workspaceId: 'x'.repeat(300) },
+      { kind: 'continue-workspace', workspaceId: 5 },
+    ]) {
+      expect(parseActionEnvelope({ requestId: 'pause-bad', action })).toBeUndefined()
+    }
+  })
+})

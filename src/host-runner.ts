@@ -163,6 +163,22 @@ export class HostExecutionRunner {
   }
 
   /**
+   * Continue one paused execution: re-queue the task prompt in the SAME
+   * session, so the agent resumes with its full history where the pause left
+   * off. The session is idle after the pause's cancel; the queued prompt is
+   * picked up immediately. Launch-time pins (workspace, preset, model,
+   * permission) were already applied at launch and are not re-applied.
+   */
+  async continue(task: TaskRecord, sessionId: string): Promise<void> {
+    const prompt = await this.api.sessions.prompt(request({
+      sessionId: sessionId as ExecutionSessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'text' as const, text: task.prompt !== '' ? task.prompt : task.title }],
+    }))
+    if (!prompt.result.ok) throw failure(prompt.result.error)
+  }
+
+  /**
    * Resolve one execution's outcome. The caller may pass the session list it
    * already fetched this poll tick; otherwise inspect lists sessions itself.
    * Sharing the list keeps a poll with E open executions at one list RPC

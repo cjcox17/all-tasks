@@ -56,6 +56,7 @@ function fakeController(
     selectedTaskId: undefined,
     executionOptions: { workspaces: [], presets: [], models: [], endpoints: [] },
     workspaceDefaults: {},
+    workspacePaused: {},
     groups: [],
     pendingTaskIds: [],
     ...snapshot,
@@ -1133,5 +1134,61 @@ describe('TaskBoard dashboard & workspace controls', () => {
 
     await act(async () => { run.click() })
     expect(runCalls).toEqual(['ws-a'])
+  })
+})
+
+describe('pause / continue affordances', () => {
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await openAllTasks(container)
+    return { container }
+  }
+
+  it('marks a paused running card with the paused label and a continue button (no pause button)', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({
+        id: 't1',
+        title: 'Paused run',
+        status: 'running',
+        executions: [{ id: 'exec-1', sessionId: 'session-a', startedAt: 100, endedAt: undefined, result: undefined, error: undefined, pausedAt: 200 }],
+      })],
+    })
+    const card = container.querySelector('button[data-dsh-part="card"]')
+    expect(card).not.toBeNull()
+    expect(card!.getAttribute('data-paused')).toBeDefined()
+    expect(card!.textContent).toContain(t('detail.result.paused'))
+    expect(card!.textContent).toContain(t('card.paused'))
+    expect(container.querySelector(`button[aria-label="${t('card.continue')}"]`)).not.toBeNull()
+    expect(container.querySelector(`button[aria-label="${t('card.pause')}"]`)).toBeNull()
+  })
+
+  it('shows a pause button on a running (unpaused) card', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({
+        id: 't1',
+        title: 'Live run',
+        status: 'running',
+        executions: [{ id: 'exec-1', sessionId: 'session-a', startedAt: 100, endedAt: undefined, result: undefined, error: undefined }],
+      })],
+    })
+    expect(container.querySelector(`button[aria-label="${t('card.pause')}"]`)).not.toBeNull()
+    expect(container.querySelector(`button[aria-label="${t('card.continue')}"]`)).toBeNull()
+    expect(container.textContent).toContain(t('detail.result.running'))
+  })
+
+  it('shows the paused badge and a continue button on a paused group banner', async () => {
+    const { container } = await renderBoard({
+      tasks: [],
+      groups: [{ ...GROUP, paused: true }],
+    })
+    expect(container.textContent).toContain(t('group.paused'))
+    expect(container.querySelector(`button[aria-label="${t('group.continue')}"]`)).not.toBeNull()
+  })
   })
 })

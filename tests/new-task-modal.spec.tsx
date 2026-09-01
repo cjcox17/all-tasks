@@ -49,6 +49,7 @@ function fakeController(
     selectedTaskId: undefined,
     executionOptions: { workspaces, presets, models: MODELS, endpoints },
     workspaceDefaults: {},
+    workspacePaused: {},
     groups,
     pendingTaskIds: [],
   }

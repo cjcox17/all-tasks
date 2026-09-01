@@ -130,7 +130,7 @@ function pendingReasonsHint(reasons: readonly ExecutionQueuedReason[]): string {
  * drag source so a group can be moved between manual columns in one action
  * (see the column drop handler).
  */
-function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume, onManage, onDragStart }: {
+function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause, onContinue, onResume, onManage, onDragStart }: {
   group: TaskGroupRecord
   count: number
   /** Open-execution status (running/queued members) of the whole group. */
@@ -139,6 +139,8 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
   canStart: boolean
   onStart: () => void
   onStop: () => void
+  onPause: () => void
+  onContinue: () => void
   onResume: () => void
   onManage: () => void
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
@@ -147,8 +149,9 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
   // Any open execution — running or queued — holds the group's attention: the
   // banner is not draggable and the stop button is live (a queued member is
   // stopped just like a launched one).
+  const paused = group.paused === true
   const hasOpen = status.running > 0 || status.pending > 0
-  const draggable = !hasOpen && !stopped
+  const draggable = !hasOpen && !stopped && !paused
   return (
     <header
       className={css.groupHeader}
@@ -189,9 +192,10 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
         </span>
       )}
       {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
+      {paused && <span className={css.groupPaused}>{t('group.paused')}</span>}
       {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
       <span className={css.groupCount}>{count}</span>
-      {!stopped && (
+      {!stopped && !paused && (
         <button
           type="button"
           className={css.ghostButton}
@@ -203,7 +207,17 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
           ▶
         </button>
       )}
-      {stopped ? (
+      {paused ? (
+        <button
+          type="button"
+          className={css.ghostButton}
+          aria-label={t('group.continue')}
+          title={t('group.continue')}
+          onClick={onContinue}
+        >
+          ▶
+        </button>
+      ) : stopped ? (
         <button
           type="button"
           className={css.ghostButton}
@@ -213,6 +227,29 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
           ▶
         </button>
       ) : (
+        <>
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.pause')}
+            title={t('group.pause')}
+            disabled={!hasOpen}
+            onClick={onPause}
+          >
+            ⏸
+          </button>
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.stop')}
+            disabled={!hasOpen}
+            onClick={onStop}
+          >
+            ⏹
+          </button>
+        </>
+      )}
+      {paused && (
         <button
           type="button"
           className={css.ghostButton}
@@ -237,10 +274,11 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume
 
 /**
  * One group's section inside a column: the banner plus its member cards.
- * Every running/queued member gets a per-card stop button (so a group can be
- * stopped member-by-member from the board, without opening a session).
+ * Every running/queued member gets a per-card pause + stop button (so a group
+ * can be paused or stopped member-by-member from the board, without opening a
+ * session); a paused member gets continue + stop instead.
  */
-function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onPauseMember, onContinueMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Open-execution status of the whole group (running/queued members). */
@@ -252,9 +290,13 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   onOpen: (id: string) => void
   onManage: () => void
   onRunMember: (id: string) => void
+  onPauseMember: (id: string) => void
+  onContinueMember: (id: string) => void
   onStopMember: (id: string) => void
   onApproveMember: (id: string) => void
   onStartGroup: () => void
+  onPauseGroup: () => void
+  onContinueGroup: () => void
   onStopGroup: () => void
   onResume: () => void
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
@@ -271,40 +313,69 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
         canStart={canStart}
         onStart={onStartGroup}
         onStop={onStopGroup}
+        onPause={onPauseGroup}
+        onContinue={onContinueGroup}
         onResume={onResume}
         onManage={onManage}
         onDragStart={onDragStart}
       />
       {members.length === 0 && <p className={css.groupEmpty}>{t('group.emptyMembers')}</p>}
-      {members.map(task => (
-        <div key={task.id} className={css.groupMember}>
-          <MemoTaskCard task={task} pending={pendingIds.includes(task.id)} timeZone={timeZone} onOpen={onOpen} onDragStart={onDragStart} />
-          {task.status === 'running' && (
-            <button
-              type="button"
-              className={css.stopButton}
-              aria-label={t('group.stopMember')}
-              title={t('group.stopMember')}
-              onClick={() => { onStopMember(task.id) }}
-            >
-              ⏹
-            </button>
-          )}
-          {task.approved === false ? (
-            <button
-              type="button"
-              className={css.approveButton}
-              aria-label={t('card.approve')}
-              title={t('card.approve')}
-              onClick={() => { onApproveMember(task.id) }}
-            >
-              ✓
-            </button>
-          ) : canStartTask(task) ? (
-            <RunTaskButton task={task} onRun={onRunMember} />
-          ) : null}
-        </div>
-      ))}
+      {members.map(task => {
+        const open = task.executions.find(execution => execution.endedAt === undefined)
+        const memberPaused = task.status === 'running' && open?.pausedAt !== undefined
+        return (
+          <div key={task.id} className={css.groupMember}>
+            <MemoTaskCard task={task} pending={pendingIds.includes(task.id)} timeZone={timeZone} onOpen={onOpen} onDragStart={onDragStart} />
+            {task.status === 'running' && (
+              <>
+                {memberPaused ? (
+                  <button
+                    type="button"
+                    className={css.continueButton}
+                    aria-label={t('group.continueMember')}
+                    title={t('group.continueMember')}
+                    onClick={() => { onContinueMember(task.id) }}
+                  >
+                    ▶
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={css.pauseButton}
+                    aria-label={t('group.pauseMember')}
+                    title={t('group.pauseMember')}
+                    onClick={() => { onPauseMember(task.id) }}
+                  >
+                    ⏸
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={css.stopButton}
+                  aria-label={t('group.stopMember')}
+                  title={t('group.stopMember')}
+                  onClick={() => { onStopMember(task.id) }}
+                >
+                  ⏹
+                </button>
+              </>
+            )}
+            {task.approved === false ? (
+              <button
+                type="button"
+                className={css.approveButton}
+                aria-label={t('card.approve')}
+                title={t('card.approve')}
+                onClick={() => { onApproveMember(task.id) }}
+              >
+                ✓
+              </button>
+            ) : canStartTask(task) ? (
+              <RunTaskButton task={task} onRun={onRunMember} />
+            ) : null}
+          </div>
+        )
+      })}
       {overGroup && dropTarget?.groupId === group.id && (
         <div className={css.dropIndicator} style={{ top: Math.max(2, dropTarget.y) }} aria-hidden="true" />
       )}
@@ -660,9 +731,13 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onOpen={openTask}
                 onManage={() => { setGroupEditor({ group }) }}
                 onRunMember={id => { void controller.runTask(id) }}
+                onPauseMember={id => { void controller.pauseTask(id) }}
+                onContinueMember={id => { void controller.continueTask(id) }}
                 onStopMember={id => { void controller.stopTask(id) }}
                 onApproveMember={id => { controller.setApproved(id, true) }}
                 onStartGroup={() => { void controller.runGroup(group.id) }}
+                onPauseGroup={() => { void controller.pauseGroup(group.id) }}
+                onContinueGroup={() => { void controller.continueGroup(group.id) }}
                 onStopGroup={() => { void controller.stopGroup(group.id) }}
                 onResume={() => { void controller.resumeGroup(group.id) }}
                 onDragStart={startDrag}
@@ -690,7 +765,9 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                   onDrop={handleCardsDrop(column.status)}
                 >
                   {ungrouped.map(task => {
-                    const showAction = task.approved === false || canStartTask(task)
+                    const showAction = task.approved === false || canStartTask(task) || task.status === 'running'
+                    const open = task.executions.find(execution => execution.endedAt === undefined)
+                    const paused = task.status === 'running' && open?.pausedAt !== undefined
                     return (
                       <div key={task.id} className={showAction ? css.cardWrap : undefined}>
                         <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} />
@@ -706,6 +783,28 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                           </button>
                         ) : canStartTask(task) ? (
                           <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
+                        ) : task.status === 'running' ? (
+                          paused ? (
+                            <button
+                              type="button"
+                              className={css.continueButton}
+                              aria-label={t('card.continue')}
+                              title={t('card.continue')}
+                              onClick={() => { void controller.continueTask(task.id) }}
+                            >
+                              ▶
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className={css.pauseButton}
+                              aria-label={t('card.pause')}
+                              title={t('card.pause')}
+                              onClick={() => { void controller.pauseTask(task.id) }}
+                            >
+                              ⏸
+                            </button>
+                          )
                         ) : null}
                       </div>
                     )
@@ -722,7 +821,9 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       </header>
                       {unassignedGrouped.map(({ group, members }) => renderGroupSection(group, members))}
                       {unassignedFlat.map(task => {
-                        const showAction = task.approved === false || canStartTask(task)
+                        const showAction = task.approved === false || canStartTask(task) || task.status === 'running'
+                        const open = task.executions.find(execution => execution.endedAt === undefined)
+                        const paused = task.status === 'running' && open?.pausedAt !== undefined
                         return (
                           <div key={task.id} className={showAction ? css.cardWrap : undefined}>
                             <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} />
@@ -738,6 +839,28 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                               </button>
                             ) : canStartTask(task) ? (
                               <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
+                            ) : task.status === 'running' ? (
+                              paused ? (
+                                <button
+                                  type="button"
+                                  className={css.continueButton}
+                                  aria-label={t('card.continue')}
+                                  title={t('card.continue')}
+                                  onClick={() => { void controller.continueTask(task.id) }}
+                                >
+                                  ▶
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={css.pauseButton}
+                                  aria-label={t('card.pause')}
+                                  title={t('card.pause')}
+                                  onClick={() => { void controller.pauseTask(task.id) }}
+                                >
+                                  ⏸
+                                </button>
+                              )
                             ) : null}
                           </div>
                         )
@@ -882,13 +1005,16 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
             workspaces={snapshot.executionOptions.workspaces}
             groups={snapshot.groups}
             pendingTaskIds={snapshot.pendingTaskIds}
+            workspacePaused={snapshot.workspacePaused}
             onOpen={openWorkspace}
             onOpenAll={openAll}
             onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
             onOpenTask={openTask}
             onRun={workspaceId => { void controller.runWorkspace(workspaceId) }}
-            onPause={workspaceId => { void controller.pauseWorkspace(workspaceId) }}
+            onPause={workspaceId => { void controller.pauseWorkspaceGroups(workspaceId) }}
             onStop={workspaceId => { void controller.stopWorkspace(workspaceId) }}
+            onPauseWorkspace={workspaceId => { void controller.pauseWorkspace(workspaceId) }}
+            onContinueWorkspace={workspaceId => { void controller.continueWorkspace(workspaceId) }}
           />
         </>
       )}

@@ -784,6 +784,17 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   animation: dshTbSpin 800ms linear infinite;
 }
 
+/* A paused group: members' sessions are halted but kept alive and resumable. */
+.groupPaused {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 .groupEmpty {
   margin: 0 8px 8px;
   font-size: 12px;
@@ -820,6 +831,44 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   background: var(--dsw-specific-input-major);
 }
 
+/* Per-card pause button (halts the session; the run stays open and resumable). */
+.pauseButton {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pauseButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
+/* Per-card continue button (re-prompts the paused session). */
+.continueButton {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-state-success-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.continueButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
 /* Approval-state pills on the card meta row: unapproved pops (warning tint),
    approved stays quiet (success-tinted outline) so waiting tasks stand out. */
 .cardUnapproved {
@@ -839,6 +888,18 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-state-success-primary);
   background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* A paused running card: the session is halted but kept alive and resumable. */
+.cardPaused {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -1091,6 +1152,18 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 120ms ease;
+}
+
+/* A paused workspace pill beside the row title. */
+.workspacePaused {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 /* Aligned count cells: right-aligned tabular numerals, tinted by status, and
@@ -1418,6 +1491,12 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .statusBadge[data-status='running'] {
   color: var(--dsw-alias-state-warn-primary);
   border-color: var(--dsw-alias-state-warn-primary);
+}
+
+.statusBadge[data-status='paused'] {
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
 }
 
 .statusBadge[data-status='done'] {

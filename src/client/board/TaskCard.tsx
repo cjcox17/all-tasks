@@ -62,6 +62,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
   const archived = task.archivedAt !== undefined
+  const paused = !archived && task.status === 'running' && latest?.pausedAt !== undefined
   const isDraggable = !archived && task.status !== 'running' && !pending
 
   return (
@@ -69,6 +70,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
       type="button"
       className={css.card}
       data-status={archived ? 'archived' : task.status}
+      data-paused={paused || undefined}
       data-dsh-part="card"
       data-task-id={task.id}
       data-pending={pending || undefined}
@@ -124,15 +126,24 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
         {latest?.sessionId !== undefined && (
           <span className={css.cardSession} title={latest.sessionId}>⌁</span>
         )}
-        {!archived && (task.status === 'running' || pending) && <span className={css.cardSpinner} aria-hidden="true" />}
+        {paused && (
+          <span className={css.cardPaused} title={t('detail.pause')}>
+            ⏸ {t('card.paused')}
+          </span>
+        )}
+        {!archived && !paused && (task.status === 'running' || pending) && <span className={css.cardSpinner} aria-hidden="true" />}
       </span>
       {!archived && pending && <span className={css.cardRunningLabel}>{t('board.pending')}…</span>}
       {!archived && latest !== undefined && executionLabel(latest) === 'running' && (
-        latest.queuedAt !== undefined && latest.sessionId === undefined
-          ? <span className={css.cardRunningLabel}>{t(latest.queuedReason === 'group'
-            ? 'detail.result.waitingGroup'
-            : latest.queuedReason === 'window' ? 'detail.result.waitingWindow' : 'detail.result.waiting')}</span>
-          : <span className={css.cardRunningLabel}>{t('detail.result.running')}…</span>
+        latest.pausedAt !== undefined
+          ? <span className={css.cardRunningLabel} data-paused="">{t('detail.result.paused')}</span>
+          : latest.queuedAt !== undefined && latest.sessionId === undefined
+            ? <span className={css.cardRunningLabel}>{t(latest.queuedReason === 'group'
+              ? 'detail.result.waitingGroup'
+              : latest.queuedReason === 'window' ? 'detail.result.waitingWindow'
+                : latest.queuedReason === 'workspace' ? 'detail.result.waitingWorkspace'
+                  : 'detail.result.waiting')}</span>
+            : <span className={css.cardRunningLabel}>{t('detail.result.running')}…</span>
       )}
     </button>
   )

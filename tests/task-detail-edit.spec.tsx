@@ -43,6 +43,7 @@ function controllerFake(
     selectedTaskId: taskRecord.id,
     executionOptions: { workspaces: [], presets: [], models: [], endpoints: [] },
     workspaceDefaults: {},
+    workspacePaused: {},
     groups: [],
     pendingTaskIds: [],
   }

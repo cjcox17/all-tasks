@@ -9,7 +9,7 @@ import {
   InMemoryTaskStore, LocalStorageTaskStore, isTaskRecord, parseLedger,
   type StorageChangeEvent, type StorageEvents,
 } from '../src/core/store.ts'
-import { createTask, withSchedule } from '../src/core/tasks.ts'
+import { createTask, withSchedule, type TaskRecord } from '../src/core/tasks.ts'
 
 /** A tiny in-memory Storage stand-in (localStorage shape). */
 class FakeStorage implements Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
@@ -352,5 +352,30 @@ describe('task groupId', () => {
     expect(repaired).toHaveLength(0)
     expect(isTaskRecord(grouped)).toBe(true)
     expect(isTaskRecord({ ...grouped, groupId: 5 })).toBe(false)
+  })
+})
+
+describe('paused execution persistence', () => {
+  it('round-trips pausedAt and watchFromAt on a running execution', () => {
+    const row = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
+    const paused: TaskRecord = {
+      ...row,
+      status: 'running',
+      executions: [{
+        id: 'exec-1',
+        sessionId: 'session-a',
+        startedAt: 1,
+        endedAt: undefined,
+        result: undefined,
+        error: undefined,
+        pausedAt: 500,
+        watchFromAt: 600,
+      }],
+    }
+    const [parsed] = parseLedger(JSON.stringify([paused]))
+    expect(parsed?.executions[0].pausedAt).toBe(500)
+    expect(parsed?.executions[0].watchFromAt).toBe(600)
+    expect(isTaskRecord({ ...paused, executions: [{ ...paused.executions[0], pausedAt: 'later' }] })).toBe(false)
+    expect(isTaskRecord({ ...paused, executions: [{ ...paused.executions[0], watchFromAt: null }] })).toBe(false)
   })
 })

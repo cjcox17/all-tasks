@@ -365,3 +365,48 @@ describe('HostExecutionRunner model pin', () => {
     expect(prompt).not.toHaveBeenCalled()
   })
 })
+
+describe('pause / continue runner behavior', () => {
+  it('continue re-queues the task prompt in the SAME session', async () => {
+    const prompt = vi.fn(async (request: { rpcId: unknown; payload?: unknown }) => ok(request, { accepted: true }))
+    const runner = new HostExecutionRunner({ sessions: { prompt } } as unknown as ApiProxy)
+    await expect(runner.continue(configuredTask(), 'session-a')).resolves.toBeUndefined()
+    expect(prompt).toHaveBeenCalledOnce()
+    expect(prompt.mock.calls[0][0].payload).toEqual({
+      sessionId: 'session-a',
+      mode: 'queue',
+      content: [{ type: 'text', text: 'do work' }],
+    })
+  })
+
+  it('continue fails closed when the re-prompt is rejected', async () => {
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ({
+      rpcId: request.rpcId,
+      result: { ok: false as const, error: { code: 'rejected', message: 'no' } },
+    }))
+    const runner = new HostExecutionRunner({ sessions: { prompt } } as unknown as ApiProxy)
+    await expect(runner.continue(configuredTask(), 'session-a')).rejects.toThrow('rejected: no')
+  })
+
+  it('inspect ignores a turn/end before the watch boundary (the pause cancels it)', async () => {
+    const events = [
+      // The pause's aborted turn (before the boundary — must be ignored).
+      { event: { type: 'turn/end', seq: 100, time: 1_100, data: { reason: { kind: 'aborted' } } } },
+      // The resumed turn's completion (after the boundary).
+      { event: { type: 'turn/end', seq: 200, time: 2_100, data: { reason: { kind: 'complete' } } } },
+    ]
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }),
+        history: async (request: { rpcId: unknown }) => ok(request, { events, hasMore: false }),
+      },
+    }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy)
+    // Boundary after the aborted turn: the run settles as succeeded from the
+    // resumed turn, never as cancelled from the pause.
+    await expect(runner.inspect('session-a', 1_500)).resolves.toEqual({ outcome: 'succeeded' })
+    // A boundary before the pause's aborted turn still settles cancelled
+    // (the run was stopped while unpaused at that point).
+    await expect(runner.inspect('session-a', 1_000)).resolves.toEqual({ outcome: 'cancelled', error: 'execution was stopped' })
+  })
+})

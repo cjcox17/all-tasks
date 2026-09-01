@@ -77,8 +77,10 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
     if (entry.result !== undefined && entry.result !== 'succeeded' && entry.result !== 'failed' && entry.result !== 'cancelled') return false
     if (entry.error !== undefined && typeof entry.error !== 'string') return false
     if (entry.queuedAt !== undefined && typeof entry.queuedAt !== 'number') return false
-    if (entry.queuedReason !== undefined && entry.queuedReason !== 'endpoint' && entry.queuedReason !== 'group' && entry.queuedReason !== 'window') return false
+    if (entry.queuedReason !== undefined && entry.queuedReason !== 'endpoint' && entry.queuedReason !== 'group' && entry.queuedReason !== 'window' && entry.queuedReason !== 'workspace') return false
     if (entry.endpointId !== undefined && typeof entry.endpointId !== 'string') return false
+    if (entry.pausedAt !== undefined && typeof entry.pausedAt !== 'number') return false
+    if (entry.watchFromAt !== undefined && typeof entry.watchFromAt !== 'number') return false
   }
   return true
 }
