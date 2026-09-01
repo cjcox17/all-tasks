@@ -76,7 +76,7 @@ function canStartTask(task: TaskRecord): boolean {
   return !task.executions.some(execution => execution.endedAt === undefined)
 }
 
-/** The per-card start button (sits beside the card, like stop/approve). */
+/** The per-card start button for standalone (ungrouped) cards: sits beside the card, like approve. */
 function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) => void }) {
   return (
     <button
@@ -97,15 +97,16 @@ function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) 
  * re-renders only when its own task changes — not when a sibling card status,
  * the filter, or the selection moves.
  */
-const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart }: {
+const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
   onOpen: (id: string) => void
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  hideSpinner?: boolean
 }) {
   const onClick = useCallback(() => { onOpen(task.id) }, [task.id, onOpen])
-  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} />
+  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} hideSpinner={hideSpinner} />
 })
 
 /**
@@ -203,8 +204,11 @@ function GroupBanner({ group, count, running, canStart, onStart, onStop, onResum
 
 /**
  * One group's section inside a column: the banner plus its member cards.
- * Every running/queued member gets a per-card stop button (so a group can be
- * stopped member-by-member from the board, without opening a session).
+ * Every member card carries one contextual action circle on its right edge,
+ * inside the card: stop for a running/queued member (so a group can be stopped
+ * member-by-member from the board, without opening a session), approve for an
+ * unapproved member, or run for a runnable one. The circle's ring doubles as
+ * the running/pending indicator while the task is open or an action is in flight.
  */
 function GroupSection({ group, members, hasRunning, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
   group: TaskGroupRecord
@@ -242,35 +246,46 @@ function GroupSection({ group, members, hasRunning, canStart, pendingIds, timeZo
         onDragStart={onDragStart}
       />
       {members.length === 0 && <p className={css.groupEmpty}>{t('group.emptyMembers')}</p>}
-      {members.map(task => (
-        <div key={task.id} className={css.groupMember}>
-          <MemoTaskCard task={task} pending={pendingIds.includes(task.id)} timeZone={timeZone} onOpen={onOpen} onDragStart={onDragStart} />
-          {task.status === 'running' && (
-            <button
-              type="button"
-              className={css.stopButton}
-              aria-label={t('group.stopMember')}
-              title={t('group.stopMember')}
-              onClick={() => { onStopMember(task.id) }}
-            >
-              ⏹
-            </button>
-          )}
-          {task.approved === false ? (
-            <button
-              type="button"
-              className={css.approveButton}
-              aria-label={t('card.approve')}
-              title={t('card.approve')}
-              onClick={() => { onApproveMember(task.id) }}
-            >
-              ✓
-            </button>
-          ) : canStartTask(task) ? (
-            <RunTaskButton task={task} onRun={onRunMember} />
-          ) : null}
-        </div>
-      ))}
+      {members.map(task => {
+        // One contextual action per member, shown as a circle on the card's
+        // right edge (inside the card — the card itself is a button, so the
+        // action stays a sibling in the DOM and is overlaid by the wrapper).
+        const action = task.status === 'running'
+          ? { kind: 'stop' as const, label: t('group.stopMember'), glyph: '⏹', onAct: () => { onStopMember(task.id) } }
+          : task.approved === false
+            ? { kind: 'approve' as const, label: t('card.approve'), glyph: '✓', onAct: () => { onApproveMember(task.id) } }
+            : canStartTask(task)
+              ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
+              : undefined
+        // While the task is running or an action is pending, the circle's ring
+        // spins — the pending indicator merged around the action icon.
+        const active = action !== undefined && (task.status === 'running' || pendingIds.includes(task.id))
+        return (
+          <div key={task.id} className={css.groupMember} data-action={action?.kind}>
+            <MemoTaskCard
+              task={task}
+              pending={pendingIds.includes(task.id)}
+              timeZone={timeZone}
+              onOpen={onOpen}
+              onDragStart={onDragStart}
+              hideSpinner={action !== undefined}
+            />
+            {action !== undefined && (
+              <button
+                type="button"
+                className={css.cardAction}
+                data-action={action.kind}
+                data-active={active || undefined}
+                aria-label={action.label}
+                title={action.label}
+                onClick={action.onAct}
+              >
+                {action.glyph}
+              </button>
+            )}
+          </div>
+        )
+      })}
       {overGroup && dropTarget?.groupId === group.id && (
         <div className={css.dropIndicator} style={{ top: Math.max(2, dropTarget.y) }} aria-hidden="true" />
       )}

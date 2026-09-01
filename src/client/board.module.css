@@ -747,8 +747,12 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* One member row: the card plus its inline stop button. */
+/* One member row: the card plus its inline action circle. The circle is
+   absolutely positioned inside the card's bounds — it is a sibling in the DOM
+   (the card itself is a <button>, so the action cannot be nested) but it sits
+   visually on the card's right edge. */
 .groupMember {
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 2px;
@@ -759,22 +763,54 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   min-width: 0;
 }
 
-.stopButton {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-state-danger-primary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
+/* Cards carrying the action circle keep their text clear of it. */
+.groupMember[data-action] .card {
+  padding-right: 38px;
 }
 
-.stopButton:hover {
+/* The per-card action circle: one contextual action (stop / approve / run) on
+   the card's right edge, inside the card. While the task is running or an
+   action is pending, a spinning ring wraps the icon — the pending circle
+   merged around the action. */
+.cardAction {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.cardAction[data-action='stop'] { color: var(--dsw-alias-state-danger-primary); }
+.cardAction[data-action='approve'] { color: var(--dsw-alias-state-success-primary); }
+.cardAction[data-action='run'] { color: var(--dsw-alias-state-business-primary); }
+
+.cardAction:hover {
   background: var(--dsw-specific-input-major);
+}
+
+/* The merged pending ring: spins while the task is running or the action is in
+   flight, exactly like the old meta-row spinner — now around the icon. */
+.cardAction[data-active]::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid var(--dsw-alias-state-warn-primary);
+  border-top-color: transparent;
+  animation: dshTbSpin 800ms linear infinite;
+  pointer-events: none;
 }
 
 /* Approval-state pills on the card meta row: unapproved pops (warning tint),
@@ -1813,7 +1849,8 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     transition: none;
   }
 
-  .cardSpinner {
+  .cardSpinner,
+  .cardAction[data-active]::before {
     animation: none;
   }
 }
