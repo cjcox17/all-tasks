@@ -156,7 +156,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
             value={mode}
             onChange={event => { setMode(event.target.value) }}
           >
-            <option value="">{t('exec.mode.default')}</option>
+            <option value="">{t('exec.mode.workspaceDefault')}</option>
             {options.presets.map(preset => (
               <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
                 {preset.name ?? preset.id}
@@ -169,7 +169,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.model')}</span>
-          <ModelPicker models={options.models} value={modelKey} onChange={setModelKey} />
+          <ModelPicker models={options.models} value={modelKey} onChange={setModelKey} blankLabel={t('exec.model.workspaceDefault')} />
         </label>
 
         {modelKey !== '' && (
