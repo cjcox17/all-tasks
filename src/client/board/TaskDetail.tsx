@@ -207,7 +207,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           disabled={pending}
           onChange={event => { controller.updateTask(task.id, { mode: event.target.value }) }}
         >
-          <option value="">{t('exec.mode.default')}</option>
+          <option value="">{t('exec.mode.workspaceDefault')}</option>
           {!modeKnown && <option value={mode}>{mode}{t('exec.mode.removed')}</option>}
           {options.presets.map(preset => (
             <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
@@ -230,7 +230,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             controller.updateTask(task.id, { model: key === '' ? null : parseModelSelectionKey(key) })
           }}
         >
-          <option value="">{t('exec.model.default')}</option>
+          <option value="">{t('exec.model.workspaceDefault')}</option>
           {model !== undefined && !modelKnown && (
             <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.removed')}</option>
           )}
