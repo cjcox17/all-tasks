@@ -26,7 +26,8 @@ import {
   type DailyWindow,
 } from './endpoints.ts'
 import { isValidCron, nextRunAtMs } from './schedule.ts'
-import type { TaskRecord } from './tasks.ts'
+import type { ExecutionQueuedReason, TaskRecord } from './tasks.ts'
+export type { ExecutionQueuedReason } from './tasks.ts'
 
 /** Bound on group name / task-id string length (defense-in-depth). */
 export const GROUP_FIELD_BOUND = 256
@@ -548,4 +549,46 @@ export function orderedGroupMembers(group: TaskGroupRecord, tasks: readonly Task
     if (task.groupId === group.id && !seen.has(task.id)) ordered.push(task)
   }
   return ordered
+}
+
+/**
+ * Open-execution status of one group, derived from its member tasks: how many
+ * members have a launched run (a session is executing) and how many are held
+ * before launch (queued for a group slot, the allowed window, or an endpoint —
+ * or still in the brief pre-route window). The board banner renders these as
+ * the group's Running / Pending badges, so a group that is mid-sequence or
+ * waiting never looks idle from any column.
+ */
+export interface GroupRuntimeStatus {
+  /** Members with an open launched execution (a session is executing). */
+  running: number
+  /** Members with an open held execution (no session yet; queued or in flight). */
+  pending: number
+  /**
+   * Why held members wait, in first-seen order and deduplicated ('group' |
+   * 'window' | 'endpoint'); empty when nothing is pending.
+   */
+  pendingReasons: readonly ExecutionQueuedReason[]
+}
+
+/** Derive one group's runtime status from its member tasks (see the interface). */
+export function groupRuntimeStatus(group: TaskGroupRecord, tasks: readonly TaskRecord[]): GroupRuntimeStatus {
+  let running = 0
+  let pending = 0
+  const pendingReasons: ExecutionQueuedReason[] = []
+  for (const task of tasks) {
+    if (task.groupId !== group.id) continue
+    for (const execution of task.executions) {
+      if (execution.endedAt !== undefined) continue
+      if (execution.sessionId !== undefined) {
+        running += 1
+      } else {
+        pending += 1
+        if (execution.queuedReason !== undefined && !pendingReasons.includes(execution.queuedReason)) {
+          pendingReasons.push(execution.queuedReason)
+        }
+      }
+    }
+  }
+  return { running, pending, pendingReasons }
 }

@@ -50,6 +50,13 @@ export function normalizeExecutionUsage(value: unknown): ExecutionUsage | undefi
 }
 
 /**
+ * Why the router holds a run before launch: no eligible endpoint, a group
+ * capacity slot (sequential/parallel) is occupied, or the group's allowed
+ * window is closed. Absent on launched runs.
+ */
+export type ExecutionQueuedReason = 'endpoint' | 'group' | 'window'
+
+/**
  * One real execution attempt: the run's own id, the dsh session that ran it
  * (filled once the session is created), and the settled outcome once the
  * session's turn ended.
@@ -88,7 +95,7 @@ export interface ExecutionRecord {
    * candidate, a group slot (sequential/parallel capacity) is occupied, or the
    * group's allowed window is closed. Absent on launched runs.
    */
-  queuedReason?: 'endpoint' | 'group' | 'window'
+  queuedReason?: ExecutionQueuedReason
   /**
    * The endpoint this run is routed through: the preferred candidate while
    * queued, the actually chosen endpoint once launched.
