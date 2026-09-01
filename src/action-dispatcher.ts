@@ -4,14 +4,17 @@
  * the settled execution context. Errors are isolated per action so one failing
  * action never blocks the others or the settlement itself.
  */
+import { randomUUID } from 'node:crypto'
 import type { ActionContext, ActionRegistry } from './core/actions.ts'
-import type { TaskRecord } from './core/tasks.ts'
+import type { NewTaskInput, TaskRecord } from './core/tasks.ts'
 import type { SettlementEvent } from './host-ledger.ts'
+import type { TaskBoardAction } from './protocol.ts'
 
 /** The ledger surface the dispatcher needs (satisfied by `HostTaskLedger`). */
 export interface SettlementLedger {
   onSettled(listener: (event: SettlementEvent) => void): () => void
   taskById(id: string): TaskRecord | undefined
+  applyRequest(requestId: string, action: TaskBoardAction): unknown
 }
 
 /** Resolves an action's config by id; `undefined` disables that action. */
@@ -44,11 +47,17 @@ export class ActionDispatcher {
     if (task === undefined) return
     const execution = task.executions.find(entry => entry.id === event.executionId)
     if (execution === undefined) return
+    const spawn = (input: NewTaskInput, opts?: { autoRun?: boolean }): string => {
+      const taskId = randomUUID()
+      this.ledger.applyRequest(`action-spawn-create-${taskId}`, { kind: 'create', id: taskId, input })
+      if (opts?.autoRun === true) this.ledger.applyRequest(`action-spawn-run-${taskId}`, { kind: 'run', taskId })
+      return taskId
+    }
     for (const action of this.registry.all()) {
       if (!action.when.includes(event.outcome) && !action.when.includes('always')) continue
       const config = this.config.get(action.id)
       if (config === undefined) continue
-      const context: ActionContext = { task, execution, sessionId: event.sessionId, config }
+      const context: ActionContext = { task, execution, sessionId: event.sessionId, config, spawn }
       try {
         await action.run(context)
       } catch (error) {

@@ -22,6 +22,12 @@ export interface EventMapping {
   dedupeKey?: string
 }
 
+/** A direct, non-task response an event source may produce (e.g. a Slack URL-verification challenge). */
+export interface EventSourceResponse {
+  status: number
+  body: unknown
+}
+
 /** One inbound event source (a webhook plugin). */
 export interface EventSource {
   /** Stable plugin id (e.g. `github`, `http`). */
@@ -33,6 +39,8 @@ export interface EventSource {
   verify(request: EventRequest, rawBody: string): boolean | Promise<boolean>
   /** Map the verified body into task creation input. */
   map(request: EventRequest, body: unknown): EventMapping | Promise<EventMapping>
+  /** Optional direct response that short-circuits task creation. */
+  respond?(body: unknown): EventSourceResponse | undefined
 }
 
 export class EventSourceRegistry {

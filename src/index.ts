@@ -16,11 +16,15 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { ActionDispatcher } from './action-dispatcher.ts'
+import { createGithubAction, type GithubActionConfig } from './action-github.ts'
 import { createHttpAction, type HttpActionConfig } from './action-http.ts'
+import { createSpawnAction } from './action-spawn.ts'
 import { ActionRegistry } from './core/actions.ts'
 import { normalizeEndpointsConfig, type EndpointRouterConfig } from './core/endpoints.ts'
 import { EventSourceRegistry } from './core/events.ts'
+import { createGithubEventSource, type GithubEventConfig } from './event-github.ts'
 import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
+import { createSlackEventSource, type SlackEventConfig } from './event-slack.ts'
 import { TaskBoardHostService } from './host-service.ts'
 import { makeEventRoutes, makeTaskBoardRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
@@ -71,9 +75,9 @@ export interface Config {
   /** Named compute endpoints the router routes tasks through. */
   endpoints?: EndpointSettingsConfig[]
   /** Inbound event source plugins (webhook → task). */
-  events?: { http?: HttpEventConfig }
+  events?: { http?: HttpEventConfig; github?: GithubEventConfig; slack?: SlackEventConfig }
   /** Result-side action plugins (settle → side effect). */
-  actions?: { http?: HttpActionConfig }
+  actions?: { http?: HttpActionConfig; github?: GithubActionConfig; spawn?: Record<never, never> }
 }
 
 /** One named compute endpoint (a backend serving one DSH provider route). */
@@ -104,10 +108,32 @@ const httpEventSettings = z.object({
   autoRun: z.boolean().default(false),
 })
 
+const githubEventSettings = z.object({
+  secretEnv: z.string().default(''),
+  repoWorkspaces: z.dict(z.string()).default({}),
+  defaultWorkspaceId: z.string().default(''),
+  autoRun: z.boolean().default(false),
+})
+
+const slackEventSettings = z.object({
+  signingSecretEnv: z.string().default(''),
+  workspaceId: z.string().default(''),
+  autoRun: z.boolean().default(false),
+})
+
 const httpActionSettings = z.object({
   url: z.string().default(''),
   tokenEnv: z.string().default(''),
 })
+
+const githubActionSettings = z.object({
+  tokenEnv: z.string().default(''),
+  apiBase: z.string().default(''),
+  repo: z.string().default(''),
+  issueNumber: z.number().min(0).default(0),
+})
+
+const spawnActionSettings = z.object({}).default({})
 
 export const Config: z<Config> = z.object({
   announceToAgent: z.boolean().default(false),
@@ -120,8 +146,8 @@ export const Config: z<Config> = z.object({
   costPerMillionOutputTokens: z.number().min(0).default(0),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
-  events: z.object({ http: httpEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false } }),
-  actions: z.object({ http: httpActionSettings }).default({ http: { url: '', tokenEnv: '' } }),
+  events: z.object({ http: httpEventSettings, github: githubEventSettings, slack: slackEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false }, github: { secretEnv: '', repoWorkspaces: {}, defaultWorkspaceId: '', autoRun: false }, slack: { signingSecretEnv: '', workspaceId: '', autoRun: false } }),
+  actions: z.object({ http: httpActionSettings, github: githubActionSettings, spawn: spawnActionSettings }).default({ http: { url: '', tokenEnv: '' }, github: { tokenEnv: '', apiBase: '', repo: '', issueNumber: 0 }, spawn: {} }),
 })
 
 /** Build the normalized Host router config from the resolved plugin settings. */
@@ -187,8 +213,12 @@ function applyImpl(ctx: Context, config?: Config): void {
   host.start()
   const eventSources = new EventSourceRegistry()
   eventSources.register(createHttpEventSource(config?.events?.http))
+  eventSources.register(createGithubEventSource(config?.events?.github))
+  eventSources.register(createSlackEventSource(config?.events?.slack))
   const actions = new ActionRegistry()
   actions.register(createHttpAction())
+  actions.register(createGithubAction())
+  actions.register(createSpawnAction())
   const dispatcher = new ActionDispatcher(host.ledger, actions, {
     get: (id) => (config?.actions as Record<string, unknown> | undefined)?.[id],
   })
