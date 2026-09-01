@@ -29,7 +29,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     let now = new Date(2026, 7, 16, 10, 0, 30).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 'scheduled', input: {
+      kind: 'create', id: 'scheduled', input: { source: 'user',
         title: 'Scheduled', description: '', prompt: 'work', schedule: { enabled: true, cron: '* * * * *' },
       },
     })
@@ -87,7 +87,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     let now = new Date(2026, 7, 16, 10, 0, 30).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 'scheduled', input: {
+      kind: 'create', id: 'scheduled', input: { source: 'user',
         title: 'Scheduled', description: '', prompt: '', schedule: { enabled: true, cron: '* * * * *' },
       },
     })
@@ -123,18 +123,18 @@ describe('TaskBoardHostService scheduling without a browser', () => {
       power: new PowerInhibitor({ platform: 'linux' }),
     })
     const first = service.apply('request-a', {
-      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' },
+      kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' },
     })
     service.apply('request-b', {
-      kind: 'create', id: 'task-b', input: { title: 'B', description: '', prompt: '' },
+      kind: 'create', id: 'task-b', input: { source: 'user', title: 'B', description: '', prompt: '' },
     })
     const duplicate = service.apply('request-a', {
-      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' },
+      kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' },
     })
     expect(duplicate.revision).toBeGreaterThan(first.revision)
     expect(duplicate.tasks.map(task => task.id)).toEqual(['task-a', 'task-b'])
     expect(() => service.apply('request-a', {
-      kind: 'create', id: 'ignored', input: { title: 'ignored', description: '', prompt: '' },
+      kind: 'create', id: 'ignored', input: { source: 'user', title: 'ignored', description: '', prompt: '' },
     })).toThrow('different action')
     service.dispose()
   })
@@ -184,7 +184,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
 
   it('fires the session cancel RPC for a stop action with a running session', async () => {
     const ledger = new HostTaskLedger(root(), () => 0)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     const executionId = opened.state.tasks[0].executions[0].id
     ledger.attachSession('task-a', executionId, 'session-a')
@@ -204,7 +204,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
 
   it('does not fire the session cancel RPC for a queued-only stop (no session yet)', async () => {
     const ledger = new HostTaskLedger(root(), () => 0)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
     const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
@@ -221,7 +221,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
 
   it('cancels a queued run whose task is unapproved while it waits', async () => {
     const ledger = new HostTaskLedger(root(), () => 0)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
     const service = new TaskBoardHostService({} as unknown as ApiProxy, {
@@ -244,8 +244,8 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
-    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { source: 'user', title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
     const create = vi.fn(async (request: { rpcId: unknown }) => ok(request, { sessionId: `session-${String(request.rpcId)}` }))
     const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'x', seq: 1 }))
     const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
@@ -342,7 +342,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
 
   it('eventPayload carries revision/scheduler/power and never the task list', () => {
     const ledger = new HostTaskLedger(root())
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const service = new TaskBoardHostService(sessionsList([]), {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),

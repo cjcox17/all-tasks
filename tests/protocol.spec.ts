@@ -351,6 +351,33 @@ describe('group action gate', () => {
     })).toBeUndefined()
   })
 
+  it('defaults an absent create origin to the programmatic api source and rejects unknown origins', () => {
+    const programmatic = parseActionEnvelope({
+      requestId: 'create-unsourced',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } },
+    })
+    expect(programmatic?.action.kind).toBe('create')
+    if (programmatic?.action.kind !== 'create') throw new Error('expected create')
+    expect(programmatic.action.input.source).toBe('api')
+    for (const source of ['user', 'event'] as const) {
+      const parsed = parseActionEnvelope({
+        requestId: `create-${source}`,
+        action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source } },
+      })
+      expect(parsed?.action.kind).toBe('create')
+      if (parsed?.action.kind !== 'create') throw new Error('expected create')
+      expect(parsed.action.input.source).toBe(source)
+    }
+    expect(parseActionEnvelope({
+      requestId: 'create-source-bad',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source: 'cron' } },
+    })).toBeUndefined()
+    expect(parseActionEnvelope({
+      requestId: 'create-source-bad2',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source: 5 } },
+    })).toBeUndefined()
+  })
+
   it('accepts setting and clearing the groupId on update', () => {
     const set = parseActionEnvelope({ requestId: 'set-group', action: { kind: 'update', taskId: 'task-a', patch: { groupId: 'g1' } } })
     expect(set?.action.kind).toBe('update')

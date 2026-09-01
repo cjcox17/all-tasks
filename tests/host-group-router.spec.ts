@@ -97,7 +97,7 @@ function seedGroup(h: ServiceHarness, groupId: string, name: string, taskIds: st
   })
   for (const taskId of taskIds) {
     h.ledger.applyRequest('create-' + taskId, {
-      kind: 'create', id: taskId, input: { title: taskId, description: '', prompt: 'work', groupId },
+      kind: 'create', id: taskId, input: { source: 'user', title: taskId, description: '', prompt: 'work', groupId },
     })
   }
 }
@@ -278,7 +278,7 @@ describe('TaskBoardHostService group routing', () => {
     const h = harness(dir, routerConfig([]), () => now)
     const next = nextRunAtMs('0 9 * * *', now)!
     h.ledger.applyRequest('create-a', {
-      kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', schedule: { enabled: true, cron: '0 9 * * *' } },
+      kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: 'work', schedule: { enabled: true, cron: '0 9 * * *' } },
     })
     // Ungrouped: the task's own cron opens a run.
     expect(h.ledger.openScheduled('a', next, now)).toBeDefined()
@@ -452,9 +452,9 @@ describe('TaskBoardHostService group routing', () => {
     const dir = root()
     const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
     h.ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Approval', mode: 'sequential' } })
-    h.ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
+    h.ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
     h.ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1', approved: false } })
-    h.ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: 'work', groupId: 'g1' } })
+    h.ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { source: 'user', title: 'C', description: '', prompt: 'work', groupId: 'g1' } })
 
     // A runs; when it settles, the sequence skips the unapproved B and starts C.
     h.service.apply('run-a', { kind: 'run', taskId: 'a' })

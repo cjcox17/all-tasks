@@ -56,6 +56,15 @@ function TaskRow({ task, pending, onOpen }: { task: TaskRecord; pending: boolean
       <span className={css.taskStatus} data-status={task.status}>{t(STATUS_KEY[task.status])}</span>
       <span className={css.taskBadges}>
         {task.schedule?.enabled === true && <span className={css.taskBadge} data-kind="scheduled">{t('card.scheduled')}</span>}
+        {task.source !== undefined && task.source !== 'user' && (
+          <span
+            className={css.taskBadge}
+            data-kind="source"
+            title={t(task.source === 'event' ? 'card.source.eventHint' : 'card.source.apiHint')}
+          >
+            {t(task.source === 'event' ? 'card.source.event' : 'card.source.api')}
+          </span>
+        )}
         {task.approved === false && <span className={css.taskBadge} data-kind="unapproved">{t('card.unapproved')}</span>}
       </span>
     </button>

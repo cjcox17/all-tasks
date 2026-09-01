@@ -10,7 +10,7 @@ import {
   type GroupUpdatePatch,
   type TaskGroupRecord,
 } from './core/groups.ts'
-import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
+import { isTaskPermission, isTaskSource, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
 import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
 
@@ -199,10 +199,14 @@ function importedTask(value: unknown): TaskRecord | undefined {
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved', 'source'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
   if (input.approved !== undefined && typeof input.approved !== 'boolean') return false
+  // An unknown origin is rejected rather than defaulted here: the sanitizer
+  // below defaults only an *absent* origin to `api` (programmatic), so a
+  // typo'd source cannot silently reclassify a user-created task.
+  if (input.source !== undefined && !isTaskSource(input.source)) return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
   // A malformed endpoint list (non-array, oversized, or non-string entries)
   // rejects the whole create instead of silently dropping the pin; an empty
@@ -332,9 +336,13 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         const model = input.model === undefined ? undefined : modelPayload(input.model)
         const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
         const groupId = input.groupId === undefined ? undefined : input.groupId.trim()
-        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId
+        // An absent origin means the caller did not claim the board's own
+        // dialog, so the task is programmatic (`api`): it mints unapproved
+        // unless `approved: true` is passed explicitly.
+        const source = input.source === undefined ? 'api' : input.source
+        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId && source === input.source
           ? input
-          : { ...input, model, endpoints, groupId }
+          : { ...input, model, endpoints, groupId, source }
         return { requestId: envelope.requestId, action: { kind: 'create', id: action.id, input: sanitized } }
       }
     case 'update':

@@ -217,7 +217,7 @@ function makeController() {
 describe('BoardController routes use-cases (external contract)', () => {
   it('createTask/updateTask/deleteTask/setSchedule keep the public behavior', () => {
     const { controller, store } = makeController()
-    const task = controller.createTask({ title: ' 新任务 ', description: '', prompt: '' })!
+    const task = controller.createTask({ title: ' 新任务 ', description: '', prompt: '', source: 'user' })!
     expect(selectedTaskOf(controller.getSnapshot())).toBeUndefined()
     controller.openTask(task.id)
     expect(selectedTaskOf(controller.getSnapshot())!.id).toBe(task.id)
@@ -234,7 +234,7 @@ describe('BoardController routes use-cases (external contract)', () => {
 
   it('setApproved gates and ungates a task without removing it from the board', () => {
     const { controller } = makeController()
-    const task = controller.createTask({ title: 'T', description: '', prompt: '' })!
+    const task = controller.createTask({ title: 'T', description: '', prompt: '', source: 'user' })!
     expect(controller.getSnapshot().tasks[0].approved).toBeUndefined()
     controller.setApproved(task.id, false)
     expect(controller.getSnapshot().tasks[0].approved).toBe(false)

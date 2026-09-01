@@ -150,6 +150,31 @@ describe('TaskBoard L2 semantic attributes (#506)', () => {
     expect(archive).not.toBeNull()
     expect(archive!.getAttribute('data-dsh-part')).toBe('column')
   })
+
+  it('badges programmatic (api/event) tasks and leaves user-created tasks unbadged', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const controller = fakeController({
+      tasks: [
+        task({ id: 't-user', source: 'user' }),
+        task({ id: 't-api', source: 'api', title: 'Script task' }),
+        task({ id: 't-event', source: 'event', title: 'Alert task' }),
+      ],
+    })
+    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await openAllTasks(container)
+
+    const cards = container.querySelectorAll('button[data-dsh-part="card"]')
+    const userCard = Array.from(cards).find(card => card.getAttribute('data-task-id') === 't-user')!
+    const apiCard = Array.from(cards).find(card => card.getAttribute('data-task-id') === 't-api')!
+    const eventCard = Array.from(cards).find(card => card.getAttribute('data-task-id') === 't-event')!
+    expect(userCard.textContent).not.toContain('API')
+    expect(userCard.textContent).not.toContain('Webhook')
+    expect(apiCard.textContent).toContain(t('card.source.api'))
+    expect(eventCard.textContent).toContain(t('card.source.event'))
+  })
 })
 
 describe('TaskBoard card drag-and-drop status changes (#1195)', () => {

@@ -549,6 +549,17 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
           </button>
           <span className={css.detailMeta}>
             {t('board.created')} {formatTime(current.createdAt, timeZone)}
+            {current.source !== undefined && current.source !== 'user' && (
+              <>
+                {' · '}
+                <span
+                  className={css.cardSource}
+                  title={t(current.source === 'event' ? 'card.source.eventHint' : 'card.source.apiHint')}
+                >
+                  {t(current.source === 'event' ? 'card.source.event' : 'card.source.api')}
+                </span>
+              </>
+            )}
             {archived && ` · ${t('detail.archivedAt', { time: formatTime(current.archivedAt!, timeZone) })}`}
           </span>
         </footer>
