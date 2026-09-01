@@ -14,3 +14,19 @@
   font-variant-numeric: tabular-nums;
   margin-right: 8px;
 }
+
+/**
+ * Turn-tail token chip (see session-times.tsx). Appended after the official
+ * end-time/speed labels inside the turn tail's actions row, so it sits inline
+ * with the same tertiary-label tokens as the other chips.
+ */
+.tokenChip {
+  flex: none;
+  align-self: center;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 24px;
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}

@@ -21,7 +21,7 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
-  /** Show what time each message and tool call ran at in the session view. */
+  /** Show message/tool times and per-turn token counts in the session view. */
   sessionTimestamps?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
@@ -45,7 +45,7 @@ export interface TaskBoardSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
-  /** Session-view timestamp flag. */
+  /** Session-view timestamp/token flag. */
   sessionTimestamps: CardFieldState
 }
 

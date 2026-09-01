@@ -112,10 +112,11 @@ export function apply(ctx: ClientContext): void {
     }
   })
 
-  // Session-view timestamps (see session-times.tsx): show what time each
-  // message and tool call ran at in the main session view. Independent of the
-  // board UI (it decorates the official chat flow), so it mounts with the
-  // plugin, gated by its own `sessionTimestamps` setting (default on).
+  // Session-view timestamps and token counts (see session-times.tsx): show
+  // what time each message and tool call ran at and how many tokens each
+  // turn used, in the main session view. Independent of the board UI (it
+  // decorates the official chat flow), so it mounts with the plugin, gated by
+  // its own `sessionTimestamps` setting (default on).
   const sessionTimestampsEnabled = (): boolean => {
     const snapshot = settingsScope.getSnapshot()
     return snapshot.status === 'ready' ? (snapshot.value?.sessionTimestamps ?? true) : true

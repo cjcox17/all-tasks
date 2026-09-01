@@ -8,20 +8,30 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import {
+  billedInputTokens,
   findToolBlock,
   formatSessionClock,
   formatSessionDuration,
+  formatTokens,
   hideMessageClocks,
   injectToolTimeChips,
+  injectTurnTokenChip,
   makeAssistantTimeShadow,
   showMessageClocks,
   toolCallDurationMs,
   toolCallStartTime,
+  turnTailUsage,
   type AssistantTimeOwner,
+  type TokenUsageLike,
   type ToolNodeStoreLike,
+  type ToolTimeNodeLike,
 } from '../src/client/session-times.tsx'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// The all-tasks dictionary selects by document language; pin English so chip
+// copy is deterministic in jsdom.
+document.documentElement.lang = 'en'
 
 const roots: Root[] = []
 
@@ -70,9 +80,15 @@ function runningTool(callId: string, startMs: number): ToolCallBlock {
   }
 }
 
-function nodeStore(blocks: readonly ToolCallBlock[]): ToolNodeStoreLike {
-  const nodes = new Map(blocks.map(block => [`1:tool-call${block.callId}`, { kind: 'tool-call', data: { root: block } }]))
-  return { values: () => [...nodes.values()] }
+function nodeStore(entries: readonly (ToolCallBlock | ToolTimeNodeLike)[]): ToolNodeStoreLike {
+  const values: ToolTimeNodeLike[] = entries.map((entry) => {
+    const block = entry as ToolCallBlock
+    if (('callId' in block) && (!('kind' in block) || block.kind === 'tool-result')) {
+      return { kind: 'tool-call', data: { root: block } }
+    }
+    return entry as ToolTimeNodeLike
+  })
+  return { values: () => values }
 }
 
 /** A timestamp at the given wall-clock time on the current day (same-day clock). */
@@ -161,6 +177,70 @@ describe('findToolBlock', () => {
   })
 })
 
+describe('token helpers', () => {
+  it('formats token counts compactly', () => {
+    expect(formatTokens(999)).toBe('999')
+    expect(formatTokens(1000)).toBe('1K')
+    expect(formatTokens(15_400)).toBe('15.4K')
+    expect(formatTokens(1_200_000)).toBe('1.2M')
+  })
+
+  it('bills input as fresh input plus cache reads and writes', () => {
+    expect(billedInputTokens(undefined)).toBe(0)
+    expect(billedInputTokens({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 900 })).toBe(1000)
+    expect(billedInputTokens({ inputTokens: 100, cacheWriteTokens: 300 })).toBe(400)
+  })
+
+  it('reads the closing usage of a turn from the node store', () => {
+    const nodes: ToolNodeStoreLike = {
+      values: () => [
+        { kind: 'tool-call', data: { root: settledTool('c1', 0, 1) } },
+        { kind: 'turn-tail', data: { turn: 3, closing: { usage: { inputTokens: 100, outputTokens: 25 } } } },
+      ],
+    }
+    expect(turnTailUsage(nodes, 3)).toEqual({ inputTokens: 100, outputTokens: 25 })
+    expect(turnTailUsage(nodes, 7)).toBeUndefined()
+    expect(turnTailUsage(undefined, 3)).toBeUndefined()
+  })
+})
+
+describe('injectTurnTokenChip', () => {
+  const USAGE: TokenUsageLike = { inputTokens: 100, outputTokens: 25, cacheReadTokens: 900 }
+
+  function turnTailInDocument(turn: number): HTMLElement {
+    const tail = document.createElement('div')
+    tail.setAttribute('data-turn-tail', String(turn))
+    const actions = document.createElement('div')
+    actions.setAttribute('data-dsh-part', 'tail-actions')
+    actions.textContent = '22:59 · 174 tok/s'
+    tail.appendChild(actions)
+    document.body.appendChild(tail)
+    return tail
+  }
+
+  it('appends an input/output token chip to the turn tail actions row', () => {
+    const tail = turnTailInDocument(3)
+    expect(injectTurnTokenChip(document.body, 3, USAGE)).toBe(true)
+    const chip = tail.querySelector('[data-dsh-part="session-tokens"]')
+    expect(chip?.textContent).toBe('Input 1K tok · Output 25 tok')
+    expect(chip?.parentElement?.getAttribute('data-dsh-part')).toBe('tail-actions')
+  })
+
+  it('is idempotent and skips turns without usage', () => {
+    const tail = turnTailInDocument(3)
+    injectTurnTokenChip(document.body, 3, USAGE)
+    expect(injectTurnTokenChip(document.body, 3, USAGE)).toBe(false)
+    expect(tail.querySelectorAll('[data-dsh-part="session-tokens"]').length).toBe(1)
+    expect(injectTurnTokenChip(document.body, 9, USAGE)).toBe(false)
+    expect(injectTurnTokenChip(document.body, 3, undefined)).toBe(false)
+  })
+
+  it('skips a zero-usage turn', () => {
+    turnTailInDocument(5)
+    expect(injectTurnTokenChip(document.body, 5, {})).toBe(false)
+  })
+})
+
 describe('injectToolTimeChips', () => {
   it('prepends a start-time and duration chip to each tool row', () => {
     const flow = document.createElement('div')
@@ -211,14 +291,25 @@ describe('makeAssistantTimeShadow', () => {
     return row
   }
 
-  it('injects tool chips for a settled step and renders the official message', () => {
-    const nodes = nodeStore([settledTool('c1', todayAt(9, 0, 0), todayAt(9, 0, 3))])
+  it('injects tool chips and a turn token chip for a settled step and renders the official message', () => {
+    const nodes = nodeStore([
+      settledTool('c1', todayAt(9, 0, 0), todayAt(9, 0, 3)),
+      { kind: 'turn-tail', data: { turn: 7, closing: { usage: { inputTokens: 100, outputTokens: 25, cacheReadTokens: 900 } } } } as unknown as ToolTimeNodeLike,
+    ])
     const snapshot = { chat: { nodes } }
     const row = toolRowInDocument('c1')
+    const tail = document.createElement('div')
+    tail.setAttribute('data-turn-tail', '7')
+    const actions = document.createElement('div')
+    actions.setAttribute('data-dsh-part', 'tail-actions')
+    tail.appendChild(actions)
+    document.body.appendChild(tail)
     const Shadow = makeAssistantTimeShadow(officialStub, () => true)
-    render(<Shadow node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'settled' } }} useSession={(selector) => selector(snapshot)} />)
+    render(<Shadow node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'settled', turn: 7 } }} useSession={(selector) => selector(snapshot)} />)
     expect(document.querySelector('[data-official="assistant"]')?.textContent).toBe('7:assistant-step')
     expect(row.querySelector('[data-dsh-part="session-time"]')?.textContent).toBe('09:00:00 · 3.0s')
+    const tokenChip = tail.querySelector('[data-dsh-part="session-tokens"]')
+    expect(tokenChip?.textContent).toBe('Input 1K tok · Output 25 tok')
   })
 
   it('skips injection while a step is still running', () => {
@@ -226,8 +317,9 @@ describe('makeAssistantTimeShadow', () => {
     const snapshot = { chat: { nodes } }
     const row = toolRowInDocument('c1')
     const Shadow = makeAssistantTimeShadow(officialStub, () => true)
-    render(<Shadow node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'running' } }} useSession={(selector) => selector(snapshot)} />)
+    render(<Shadow node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'running', turn: 7 } }} useSession={(selector) => selector(snapshot)} />)
     expect(row.querySelectorAll('[data-dsh-part="session-time"]').length).toBe(0)
+    expect(document.querySelectorAll('[data-dsh-part="session-tokens"]').length).toBe(0)
   })
 
   it('forwards to the official renderer with no injection when disabled', () => {

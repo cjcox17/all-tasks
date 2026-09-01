@@ -2,8 +2,8 @@
  * Session-view timestamps: show what time each message and tool call ran at
  * in the DSH main session view.
  *
- * Two additive mechanisms (no DSH core changes; everything degrades back to
- * the official look when disabled):
+ * Three additive mechanisms (no DSH core changes; everything degrades back
+ * to the official look when disabled):
  *
  * 1. Message clocks. The official conversation UI already renders a start
  *    clock on user messages and an end clock with the turn duration on
@@ -25,9 +25,16 @@
  *    located through the official `data-chat-flow-key` / `data-chat-call-id`
  *    anchors, so the mechanism survives class-hash renames and needs no
  *    hashed-class selectors.
+ * 3. Turn token counts. Each turn tail (the official `[data-turn-tail]` row
+ *    that already carries the turn's end time and speed) gets an appended
+ *    "Input X tok · Output Y tok" chip read from the closing assistant step's
+ *    usage event (`inputTokens` + `cacheReadTokens` = billed input,
+ *    `outputTokens` = output), matched by turn number from the conversation
+ *    snapshot's `turn-tail` node.
  */
 import { createElement, memo, useEffect, useRef, type ComponentType } from 'react'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import { t } from './locales.ts'
 import css from './session-times.module.css'
 
 /**
@@ -123,6 +130,15 @@ export interface ToolNodeStoreLike {
   values(): readonly ToolTimeNodeLike[]
 }
 
+/** The per-request usage object carried by the assistant usage event. */
+export interface TokenUsageLike {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
 /** Minimal conversation snapshot face used by the injection lookup. */
 export interface ConversationSnapshotLike {
   chat?: { nodes?: ToolNodeStoreLike }
@@ -141,6 +157,78 @@ export function findToolBlock(
     if (node?.kind === 'tool-call' && node.data?.root?.callId === callId) return node.data.root
   }
   return undefined
+}
+
+/**
+ * Compact token count: `999`, `1K`, `15.4K`, `1.2M` (same algorithm the
+ * official stats line uses).
+ * @param n - token count.
+ * @returns the compact label.
+ */
+export function formatTokens(n: number): string {
+  const scaled = (v: number): string => v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${scaled(n / 1000)}K`
+  return `${scaled(n / 1_000_000)}M`
+}
+
+/**
+ * Billed input tokens: fresh input plus cache reads and writes (the same
+ * aggregation the official session stats line uses).
+ * @param usage - the usage object.
+ * @returns the billed input count.
+ */
+export function billedInputTokens(usage: TokenUsageLike | undefined): number {
+  if (usage === undefined) return 0
+  return (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+}
+
+/**
+ * Find the closing assistant step's usage for one turn in the chat node
+ * store, or undefined when the turn tail is out of window or the store is
+ * absent.
+ */
+export function turnTailUsage(
+  nodes: ToolNodeStoreLike | undefined,
+  turn: number,
+): TokenUsageLike | undefined {
+  if (nodes === undefined) return undefined
+  for (const node of nodes.values()) {
+    const data = node?.data as { turn?: unknown; closing?: { usage?: unknown } } | undefined
+    if (node?.kind === 'turn-tail' && data?.turn === turn) {
+      const usage = data.closing?.usage
+      if (typeof usage === 'object' && usage !== null) return usage as TokenUsageLike
+    }
+  }
+  return undefined
+}
+
+/**
+ * Inject a "Input X tok · Output Y tok" chip into one turn tail row if it
+ * lacks one. The chip is appended to the tail's actions row (the official
+ * row that already carries the end time and speed labels).
+ * @param root - the DOM subtree to scan (the conversation flow).
+ * @param turn - the turn number (matches the official `data-turn-tail` value).
+ * @param usage - the turn's closing usage, or undefined to skip.
+ * @returns whether a chip was injected.
+ */
+export function injectTurnTokenChip(
+  root: ParentNode,
+  turn: number,
+  usage: TokenUsageLike | undefined,
+): boolean {
+  const tail = root.querySelector(`[data-turn-tail="${turn}"]`)
+  if (tail === null || tail.querySelector('[data-dsh-part="session-tokens"]') !== null) return false
+  const input = billedInputTokens(usage)
+  const output = usage?.outputTokens ?? 0
+  if (input <= 0 && output <= 0) return false
+  const chip = document.createElement('span')
+  chip.setAttribute('data-dsh-part', 'session-tokens')
+  chip.className = css.tokenChip
+  chip.textContent = t('session.tokens', { input: formatTokens(input), output: formatTokens(output) })
+  const actions = tail.lastElementChild
+  ;(actions ?? tail).appendChild(chip)
+  return true
 }
 
 /**
@@ -186,7 +274,11 @@ export interface AssistantTimeOwner {
   node?: {
     key?: string
     kind?: string
-    data?: { status?: string }
+    data?: {
+      status?: string
+      turn?: number
+      usage?: TokenUsageLike
+    }
   }
   /** Session-scope standard-kit selector hook bound by the slot dispatcher. */
   useSession?: <T>(selector: (snapshot: unknown) => T) => T
@@ -227,6 +319,11 @@ export function makeAssistantTimeShadow(
       if (props.node?.data?.status !== 'settled') return
       const root = document.querySelector('[data-conversation-scroll]') ?? document
       injectToolTimeChips(root, nodes)
+      const turn = props.node?.data?.turn
+      if (turn !== undefined) {
+        const usage = turnTailUsage(nodes, turn) ?? props.node?.data?.usage
+        injectTurnTokenChip(root, turn, usage)
+      }
     })
     if (officialRef.current === undefined) return null
     return createElement(officialRef.current, props)
