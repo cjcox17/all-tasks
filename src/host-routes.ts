@@ -262,6 +262,10 @@ export function makeEventRoutes(
         if (!await source.verify(requestView, body.raw)) {
           return writeJson(res, 401, { ok: false, error: 'unauthorized' }, { 'cache-control': 'no-store' })
         }
+        const direct = source.respond?.(body.value)
+        if (direct !== undefined) {
+          return writeJson(res, direct.status, direct.body, { 'cache-control': 'no-store' })
+        }
         const mapping = await source.map(requestView, body.value)
         if (mapping.dedupeKey !== undefined) {
           const last = cooldown.get(mapping.dedupeKey)

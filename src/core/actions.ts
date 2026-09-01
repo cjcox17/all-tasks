@@ -3,7 +3,7 @@
  * action runs when an execution settles with a matching outcome. Pure and
  * framework-free; the Host dispatcher supplies the ledger-backed context.
  */
-import type { ExecutionRecord, TaskRecord } from './tasks.ts'
+import type { ExecutionRecord, NewTaskInput, TaskRecord } from './tasks.ts'
 
 export type ActionWhen = 'succeeded' | 'failed' | 'cancelled' | 'always'
 
@@ -14,6 +14,11 @@ export interface ActionContext {
   sessionId: string | undefined
   /** The action's own validated config (shape owned by the plugin). */
   config: unknown
+  /**
+   * Create a new task (and optionally run it), returning its id. Provided by
+   * the Host dispatcher so an action can chain work (e.g. triage → work task).
+   */
+  spawn?: (input: NewTaskInput, opts?: { autoRun?: boolean }) => string
 }
 
 /** One result-side action (a plugin). */
