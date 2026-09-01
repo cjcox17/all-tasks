@@ -99,6 +99,12 @@ export interface ExecutionEndpointOption {
   id: string
   /** Display name. */
   name: string
+  /** DSH provider route id the endpoint serves (absent when the settings row is incomplete). */
+  provider?: string
+  /** Model ids the endpoint serves; empty/absent means every model of the provider. */
+  models?: readonly string[]
+  /** Fallback model id the router uses when the task's pin cannot be served by this endpoint. */
+  defaultModel?: string
 }
 
 /** Per-token pricing for the dashboard cost estimate (USD per 1M tokens). */

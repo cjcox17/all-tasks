@@ -12,7 +12,7 @@ import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { WorkspaceDefaultsRecord } from '../src/core/workspace-defaults.ts'
-import { createTask, type TaskRecord } from '../src/core/tasks.ts'
+import { createTask, modelSelectionKey, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -28,6 +28,7 @@ afterEach(() => {
 
 const MODEL_CATALOG: readonly ExecutionModelOption[] = [
   { provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-chat' },
+  { provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-reasoner' },
 ]
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -93,6 +94,13 @@ async function renderDetail(
 
 function effortSelectOf(container: HTMLElement): HTMLSelectElement | null {
   return container.querySelector(`select[aria-label="${t('new.model.effort')}"]`)
+}
+
+function selectOf(container: HTMLElement, optionValue: string): HTMLSelectElement {
+  const select = [...container.querySelectorAll('select')].find(candidate =>
+    [...candidate.querySelectorAll('option')].some(option => option.value === optionValue))
+  expect(select, `select with option ${optionValue}`).toBeDefined()
+  return select as HTMLSelectElement
 }
 
 describe('TaskDetail model reasoning-effort pin', () => {
@@ -269,13 +277,6 @@ describe('TaskDetail queued-run display', () => {
 describe('task detail group membership', () => {
   const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }
 
-  function selectOf(container: HTMLElement, optionValue: string): HTMLSelectElement {
-    const select = [...container.querySelectorAll('select')].find(candidate =>
-      [...candidate.querySelectorAll('option')].some(option => option.value === optionValue))
-    expect(select, `select with option ${optionValue}`).toBeDefined()
-    return select as HTMLSelectElement
-  }
-
   it('assigns and clears the group through the controller', async () => {
     const updateTask = vi.fn(async () => true)
     const container = document.createElement('div')
@@ -307,5 +308,46 @@ describe('task detail group membership', () => {
       root.render(<TaskDetail controller={controllerFake(groupedTask, MODEL_CATALOG, async () => true, [], [scheduled])} task={groupedTask} />)
     })
     expect(container.textContent).toContain(t('group.scheduleInherits'))
+  })
+})
+
+describe('TaskDetail endpoint-constrained model picker', () => {
+  const SERVING_ENDPOINTS: readonly ExecutionEndpointOption[] = [
+    { id: 'deepseek-official', name: 'DeepSeek Official', provider: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+    { id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'], defaultModel: 'qwen/qwen3.8-27b' },
+  ]
+
+  it('offers the full catalog when the task pins no endpoints', async () => {
+    const container = await renderDetail(task(), MODEL_CATALOG, async () => true, SERVING_ENDPOINTS)
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    expect(selectOf(container, chatKey)).toBeDefined()
+  })
+
+  it('offers only models the pinned endpoints serve once endpoints are pinned', async () => {
+    const container = await renderDetail(
+      task({ endpoints: ['deepseek-official'] }),
+      MODEL_CATALOG,
+      async () => true,
+      SERVING_ENDPOINTS,
+    )
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    expect(selectOf(container, chatKey)).toBeDefined()
+    expect([...container.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
+  })
+
+  it('keeps a pinned model outside the endpoint list as a stale row with a hint', async () => {
+    const container = await renderDetail(
+      task({ endpoints: ['deepseek-official'], model: { provider: 'deepseek', model: 'deepseek-reasoner' } }),
+      MODEL_CATALOG,
+      async () => true,
+      SERVING_ENDPOINTS,
+    )
+    const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    const select = selectOf(container, reasonerKey)
+    expect(select).toBeDefined()
+    const staleOption = [...select.querySelectorAll('option')].find(option => option.value === reasonerKey)
+    expect(staleOption?.textContent).toContain(t('exec.model.notServed'))
+    expect(container.textContent).toContain(t('exec.model.endpointHint'))
   })
 })

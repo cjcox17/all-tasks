@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { BoardController } from '../../core/controller.ts'
 import { groupExecutionModelOptions } from '../../core/controller.ts'
+import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type ExecutionRecord, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
@@ -150,7 +151,17 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
   const modelKnown = model === undefined || options.models.some(item => item.provider === model.provider && item.model === model.model)
-  const modelGroups = groupExecutionModelOptions(options.models)
+  // The model dropdown is constrained by the task's pinned endpoints: only
+  // models at least one pinned endpoint serves are offered. A pinned model
+  // outside that set stays selectable as a stale row ("not served by pinned
+  // endpoints" when the catalog still knows it), so the effective selection
+  // the router will make is never hidden.
+  const taskEndpoints = task.endpoints ?? []
+  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, taskEndpoints)
+  const modelServable = model === undefined || taskEndpoints.length === 0 || servableModels.some(item =>
+    item.provider === model.provider && item.model === model.model)
+  const modelGroups = groupExecutionModelOptions(servableModels)
+  const modelStale = model !== undefined && !modelServable
 
   /** Change the task's workspace, clearing a group that cannot follow it. */
   const changeWorkspace = (next: string): void => {
@@ -164,7 +175,6 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
     }
     void controller.updateTask(task.id, { workspaceId: next })
   }
-
   return (
     <section className={css.detailSection}>
       <h4>{t('detail.executionSettings')}</h4>
@@ -234,6 +244,9 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           {model !== undefined && !modelKnown && (
             <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.removed')}</option>
           )}
+          {modelStale && modelKnown && (
+            <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.notServed')}</option>
+          )}
           {modelGroups.map(group => (
             <optgroup key={group.provider} label={group.providerName}>
               {group.models.map(option => (
@@ -244,6 +257,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             </optgroup>
           ))}
         </select>
+        {modelStale && modelKnown && <span className={css.settingsHint}>{t('exec.model.endpointHint')}</span>}
         {model === undefined && workspaceDefaultHint(defaultModel)}
       </label>
       {model !== undefined && (

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clockMinutesInTimeZone,
   DEEPSEEK_OFF_PEAK,
+  filterModelsByEndpoints,
   inDailyWindow,
   isOffPeakNow,
   normalizeEndpoint,
@@ -218,5 +219,69 @@ describe('pickEndpoint routing', () => {
     const endpoints = [endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-reasoner' })]
     const decision = pickEndpoint({ endpoints: ['cloud'], model: { provider: 'deepseek', model: 'deepseek-chat' } }, config(endpoints))
     expect(decision).toMatchObject({ mode: 'routed', selection: { provider: 'deepseek', model: 'deepseek-chat' } })
+  })
+})
+
+describe('model-servability filter (picker-side)', () => {
+  const CATALOG = [
+    { provider: 'deepseek', model: 'deepseek-chat' },
+    { provider: 'deepseek', model: 'deepseek-reasoner' },
+    { provider: 'lm-studio', model: 'qwen/qwen3.8-27b' },
+  ] as const
+
+  it('returns the catalog unchanged when no endpoints are pinned', () => {
+    expect(filterModelsByEndpoints(CATALOG, [], [])).toEqual(CATALOG)
+  })
+
+  it('returns the catalog unchanged when every pinned id is unknown', () => {
+    expect(filterModelsByEndpoints(CATALOG, [endpoint({ id: 'cloud', provider: 'deepseek' })], ['ghost'])).toEqual(CATALOG)
+  })
+
+  it('returns the catalog unchanged when the pinned row has no provider (router drops it)', () => {
+    expect(filterModelsByEndpoints(CATALOG, [{ id: 'partial' }], ['partial'])).toEqual(CATALOG)
+  })
+
+  it('keeps every model of the provider when the endpoint serves all of them', () => {
+    const filtered = filterModelsByEndpoints(CATALOG, [endpoint({ id: 'cloud', provider: 'deepseek' })], ['cloud'])
+    expect(filtered.map(model => model.model)).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+  })
+
+  it('keeps only the endpoint\'s narrowed models', () => {
+    const filtered = filterModelsByEndpoints(
+      CATALOG,
+      [endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-chat'] })],
+      ['cloud'],
+    )
+    expect(filtered.map(model => model.model)).toEqual(['deepseek-chat'])
+  })
+
+  it('keeps the endpoint default model even when it is outside the narrowed list', () => {
+    const filtered = filterModelsByEndpoints(
+      CATALOG,
+      [endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-reasoner' })],
+      ['cloud'],
+    )
+    expect(filtered.map(model => model.model).sort()).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+  })
+
+  it('unions models across several pinned endpoints', () => {
+    const filtered = filterModelsByEndpoints(
+      CATALOG,
+      [
+        endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-chat'] }),
+        endpoint({ id: 'local', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'] }),
+      ],
+      ['cloud', 'local'],
+    )
+    expect(filtered.map(model => model.model).sort()).toEqual(['deepseek-chat', 'qwen/qwen3.8-27b'])
+  })
+
+  it('drops the whole provider when the pinned endpoint cannot serve it', () => {
+    const filtered = filterModelsByEndpoints(
+      CATALOG,
+      [endpoint({ id: 'local', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'] })],
+      ['local'],
+    )
+    expect(filtered.map(model => model.provider)).toEqual(['lm-studio'])
   })
 })

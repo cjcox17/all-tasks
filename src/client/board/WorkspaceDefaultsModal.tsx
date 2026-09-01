@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import type { BoardController, ExecutionOptionsSnapshot } from '../../core/controller.ts'
+import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsPatch } from '../../core/workspace-defaults.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
@@ -75,6 +76,21 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
     onClose()
   }
 
+  // The model dropdown is constrained by the pinned endpoints, exactly like
+  // the new-task modal: only models at least one pinned endpoint serves are
+  // offered; a current value outside that set stays selectable as a stale row
+  // so the saved default is never a silent surprise.
+  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, endpoints)
+  const modelInCatalog = modelKey === '' || options.models.some(model =>
+    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
+  const modelServable = modelKey === '' || servableModels.some(model =>
+    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
+  const modelStale = modelKey !== '' && !modelServable
+  const modelStaleLabel = modelStale
+    ? (modelInCatalog ? t('exec.model.notServed') : t('exec.model.removed'))
+    : undefined
+  const modelStaleHint = modelStale && modelInCatalog ? t('exec.model.endpointHint') : undefined
+
   return (
     <ModalShell
       ariaLabel={t('grid.settingsTitle')}
@@ -107,7 +123,13 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
 
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.model')}</span>
-        <ModelPicker models={options.models} value={modelKey} onChange={setModelKey} />
+        <ModelPicker
+          models={servableModels}
+          value={modelKey}
+          onChange={setModelKey}
+          staleLabel={modelStaleLabel}
+          staleHint={modelStaleHint}
+        />
       </label>
 
       {modelKey !== '' && (

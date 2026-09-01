@@ -177,6 +177,8 @@ export function apply(ctx: ClientContext): void {
     }
     // Endpoint options come from the plugin's own settings (the `task-board`
     // namespace the Host validates and the router enforces), not the runtime.
+    // The provider/model facts ride along so the model picker can constrain
+    // itself to models the pinned endpoints actually serve.
     const pushEndpointOptions = (): void => {
       const settings = settingsScope.getSnapshot()
       controller.setExecutionOptions({
@@ -184,6 +186,9 @@ export function apply(ctx: ClientContext): void {
           ? (settings.value?.endpoints ?? []).map(endpoint => ({
               id: endpoint.id,
               name: endpoint.name ?? endpoint.id,
+              provider: endpoint.provider,
+              models: endpoint.models,
+              defaultModel: endpoint.defaultModel,
             }))
           : [],
       })
