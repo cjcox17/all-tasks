@@ -1,7 +1,15 @@
 /**
- * Board view: the multi-column kanban that replaces the middle column while
- * active. Cards open the task detail (never execute directly); the header
- * offers filter, new-task, and a back-to-chat escape.
+ * Board view: the two-level task board.
+ *
+ * Landing: a workspace overview grid (one card per workspace with live task
+ * counts) is the first view. Opening a card switches to that workspace's
+ * kanban — the multi-column board is always workspace-scoped now; the back
+ * button in the header returns to the workspace grid and the old workspace
+ * dropdown is gone. An "All tasks" card opens the unscoped kanban (the
+ * general overview, including unassigned tasks).
+ *
+ * Cards open the task detail (never execute directly); the kanban header
+ * offers filter, unapproved-only, archive, new-task, and new-group controls.
  */
 import { memo, useCallback, useEffect, useState } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
@@ -14,6 +22,8 @@ import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
+import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
+import { WorkspaceGrid } from './WorkspaceGrid.tsx'
 import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
 
 /** Case-insensitive title/description match. */
@@ -161,18 +171,19 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
   )
 }
 
-/** Board component; subscribes to the controller snapshot. */
-export function TaskBoard({ controller }: { controller: BoardController }) {
-  const [snapshot, setSnapshot] = useState(controller.getSnapshot())
-  useEffect(
-    () => controller.subscribe(() => setSnapshot(controller.getSnapshot())),
-    [controller],
-  )
+/** The kanban view (always scoped to one workspace, or the All overview). */
+function KanbanView({ controller, snapshot, workspaceId, onBack }: {
+  controller: BoardController
+  snapshot: ReturnType<BoardController['getSnapshot']>
+  /** The active workspace id; undefined = the All-tasks overview. */
+  workspaceId: string | undefined
+  onBack: () => void
+}) {
   const [filter, setFilter] = useState('')
-  const [workspaceFilter, setWorkspaceFilter] = useState<string | undefined>(undefined)
   const [unapprovedOnly, setUnapprovedOnly] = useState(false)
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
+  const [showDefaults, setShowDefaults] = useState(false)
   const selected = selectedTaskOf(snapshot)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
@@ -183,26 +194,31 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
   const visible = snapshot.tasks.filter(task =>
     (archiveView ? task.archivedAt !== undefined : task.archivedAt === undefined)
     && matchesFilter(task, filter)
-    && matchesWorkspace(task, workspaceFilter)
+    && matchesWorkspace(task, workspaceId)
     && (!unapprovedOnly || task.approved === false),
   )
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
 
+  const workspaceTitle = workspaceId === undefined
+    ? t('board.title')
+    : snapshot.executionOptions.workspaces.find(workspace => workspace.workspaceId === workspaceId)?.title ?? workspaceId
+  const defaults = workspaceId === undefined ? undefined : snapshot.workspaceDefaults[workspaceId]
+
   return (
-    <div className={css.board} data-dsh-taskboard-board="" data-dsh-plugin="task-board">
+    <>
       <header className={css.boardHeader}>
         {/* Shared hook: dsh-web-all offsets center-view back controls beside the collapsed mobile sidebar. */}
         <button
           type="button"
           className={`${css.ghostButton} ${css.backButton}`}
           data-dsh-center-view-back=""
-          aria-label={t('board.close')}
-          onClick={() => { controller.closeBoard() }}
+          aria-label={t('board.backToWorkspaces')}
+          onClick={onBack}
         >
           <span aria-hidden="true">‹</span>
-          <span>{t('board.close')}</span>
+          <span>{t('board.backToWorkspaces')}</span>
         </button>
-        <h2 className={css.boardTitle}>{t('board.title')}</h2>
+        <h2 className={css.boardTitle} title={workspaceTitle}>{workspaceTitle}</h2>
         {snapshot.host !== undefined && (
           <span className={css.detailMeta}>
             {t('board.hostMeta', {
@@ -219,21 +235,6 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
           onChange={event => { setFilter(event.target.value) }}
           aria-label={t('board.search')}
         />
-        <select
-          className={css.workspaceSelect}
-          aria-label={t('board.workspaceFilter')}
-          value={workspaceFilter ?? ''}
-          onChange={event => { setWorkspaceFilter(event.target.value === '' ? undefined : event.target.value) }}
-        >
-          <option value="">{t('board.allWorkspaces')}</option>
-          {snapshot.executionOptions.workspaces.map(workspace => (
-            <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.title}</option>
-          ))}
-          {/* A pinned workspace may be gone from the live list (deleted); keep the filter selectable. */}
-          {workspaceFilter !== undefined && !snapshot.executionOptions.workspaces.some(workspace => workspace.workspaceId === workspaceFilter) && (
-            <option value={workspaceFilter}>{workspaceFilter}</option>
-          )}
-        </select>
         <button
           type="button"
           className={unapprovedOnly ? css.primaryButton : css.ghostButton}
@@ -252,6 +253,17 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
             ? t('board.backToBoard')
             : t('board.archiveView', { count: String(snapshot.tasks.filter(task => task.archivedAt !== undefined).length) })}
         </button>
+        {workspaceId !== undefined && (
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('grid.workspaceSettings')}
+            title={t('grid.workspaceSettings')}
+            onClick={() => { setShowDefaults(true) }}
+          >
+            ⚙
+          </button>
+        )}
         <button
           type="button"
           className={css.ghostButton}
@@ -267,15 +279,6 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
           + {t('board.new')}
         </button>
       </header>
-
-      {snapshot.transportError !== undefined && (
-        <div className={css.formError}>
-          {t('board.hostError', { error: snapshot.transportError })}{' '}
-          <button type="button" className={css.linkButton} onClick={() => { void controller.retryHostSync() }}>
-            {t('board.retryHost')}
-          </button>
-        </div>
-      )}
 
       <div className={css.columns}>
         {archiveView ? (
@@ -294,7 +297,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         ) : (
           COLUMNS.map(column => {
             const tasks = visible.filter(task => task.status === column.status)
-            const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceFilter)
+            const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceId)
             const ungrouped = pinned.filter(task => task.groupId === undefined)
             const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
             const grouped = snapshot.groups
@@ -326,7 +329,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                     if (droppedGroup && droppedGroup.stopped !== true) {
                       const members = snapshot.tasks.filter(t => t.groupId === groupId && t.archivedAt === undefined)
                       if (members.every(m => m.status !== 'running')) {
-                        controller.moveGroup(groupId, column.status)
+                        void controller.moveGroup(groupId, column.status)
                       }
                     }
                     return
@@ -359,7 +362,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                       )}
                     </div>
                   ))}
-                  {workspaceFilter !== undefined && unassignedFlat.length > 0 && (
+                  {workspaceId !== undefined && unassignedFlat.length > 0 && (
                     <div className={css.unassignedSection} data-dsh-part="unassigned">
                       <header className={css.unassignedHeader}>
                         <span className={css.unassignedName}>{t('board.unassigned')}</span>
@@ -430,6 +433,16 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         <NewTaskModal
           controller={controller}
           onClose={() => { setShowNew(false) }}
+          defaultWorkspaceId={workspaceId}
+          defaults={defaults}
+        />
+      )}
+      {showDefaults && workspaceId !== undefined && (
+        <WorkspaceDefaultsModal
+          controller={controller}
+          workspaceId={workspaceId}
+          title={workspaceTitle}
+          onClose={() => { setShowDefaults(false) }}
         />
       )}
       {groupEditor !== undefined && (
@@ -437,6 +450,111 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
           controller={controller}
           group={groupEditor.group}
           onClose={() => { setGroupEditor(undefined) }}
+        />
+      )}
+    </>
+  )
+}
+
+/** Board component; subscribes to the controller snapshot. */
+export function TaskBoard({ controller }: { controller: BoardController }) {
+  const [snapshot, setSnapshot] = useState(controller.getSnapshot())
+  useEffect(
+    () => controller.subscribe(() => setSnapshot(controller.getSnapshot())),
+    [controller],
+  )
+  /** undefined = the workspace landing grid; otherwise the open kanban. */
+  const [view, setView] = useState<{ workspaceId: string | undefined } | undefined>(undefined)
+  const [showNew, setShowNew] = useState(false)
+  const [defaultsEditor, setDefaultsEditor] = useState<{ workspaceId: string } | undefined>(undefined)
+
+  const openWorkspace = useCallback((workspaceId: string): void => {
+    // A leftover selection from a previous kanban must not pop open over the
+    // newly opened workspace's board.
+    controller.closeTask()
+    setView({ workspaceId })
+  }, [controller])
+  const openAll = useCallback((): void => {
+    controller.closeTask()
+    setView({ workspaceId: undefined })
+  }, [controller])
+  const backToWorkspaces = useCallback((): void => {
+    controller.closeTask()
+    setView(undefined)
+  }, [controller])
+
+  return (
+    <div className={css.board} data-dsh-taskboard-board="" data-dsh-plugin="task-board">
+      {view === undefined ? (
+        <header className={css.boardHeader}>
+          {/* Shared hook: dsh-web-all offsets center-view back controls beside the collapsed mobile sidebar. */}
+          <button
+            type="button"
+            className={`${css.ghostButton} ${css.backButton}`}
+            data-dsh-center-view-back=""
+            aria-label={t('board.close')}
+            onClick={() => { controller.closeBoard() }}
+          >
+            <span aria-hidden="true">‹</span>
+            <span>{t('board.close')}</span>
+          </button>
+          <h2 className={css.boardTitle}>{t('board.title')}</h2>
+          {snapshot.host !== undefined && (
+            <span className={css.detailMeta}>
+              {t('board.hostMeta', {
+                revision: String(snapshot.host.revision),
+                timeZone: snapshot.host.scheduler.timeZone,
+              })}
+            </span>
+          )}
+          <button
+            type="button"
+            className={css.primaryButton}
+            onClick={() => { setShowNew(true) }}
+          >
+            + {t('board.new')}
+          </button>
+        </header>
+      ) : (
+        <KanbanView
+          controller={controller}
+          snapshot={snapshot}
+          workspaceId={view.workspaceId}
+          onBack={backToWorkspaces}
+        />
+      )}
+
+      {snapshot.transportError !== undefined && (
+        <div className={css.formError}>
+          {t('board.hostError', { error: snapshot.transportError })}{' '}
+          <button type="button" className={css.linkButton} onClick={() => { void controller.retryHostSync() }}>
+            {t('board.retryHost')}
+          </button>
+        </div>
+      )}
+
+      {view === undefined && (
+        <WorkspaceGrid
+          tasks={snapshot.tasks}
+          workspaces={snapshot.executionOptions.workspaces}
+          onOpen={openWorkspace}
+          onOpenAll={openAll}
+          onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
+        />
+      )}
+
+      {view === undefined && showNew && (
+        <NewTaskModal
+          controller={controller}
+          onClose={() => { setShowNew(false) }}
+        />
+      )}
+      {defaultsEditor !== undefined && (
+        <WorkspaceDefaultsModal
+          controller={controller}
+          workspaceId={defaultsEditor.workspaceId}
+          title={snapshot.executionOptions.workspaces.find(workspace => workspace.workspaceId === defaultsEditor.workspaceId)?.title ?? defaultsEditor.workspaceId}
+          onClose={() => { setDefaultsEditor(undefined) }}
         />
       )}
     </div>

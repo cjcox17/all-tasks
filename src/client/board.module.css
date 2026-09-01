@@ -759,19 +759,122 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   margin: 0 4px;
 }
 
-/* --- workspace scoping ------------------------------------------------------ */
+/* --- workspace overview grid (landing view) --------------------------------- */
 
-.workspaceSelect {
-  flex: 0 1 180px;
-  min-width: 120px;
-  max-width: 220px;
-  padding: 6px 8px;
-  font-size: 13px;
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+/* One card row: the clickable card plus its trailing settings button. */
+.gridCardWrap {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gridCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+  font-family: inherit;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  cursor: pointer;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2);
+  transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.gridCard:hover {
+  box-shadow: var(--dsw-shadow-lv2);
+  border-color: var(--dsw-alias-border-l3);
+  transform: translateY(-1px);
+}
+
+.gridCard:active {
+  box-shadow: var(--dsw-shadow-lv1);
+  transform: translateY(0);
+}
+
+.gridCardTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+.gridCardTitle > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gridCardTotal {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.gridCardCounts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.gridCount {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
-  outline: none;
+  min-width: 0;
+}
+
+.gridCountValue {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--dsw-alias-label-primary);
+}
+
+.gridCountValue[data-count='nonzero'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.gridCountLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The workspace-defaults modal's lead paragraph. */
+.settingsHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
 }
 
 /* The Unassigned section only appears while a workspace filter is active. */
@@ -1091,12 +1194,6 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     order: 4;
   }
 
-  .workspaceSelect {
-    flex: 1 0 100%;
-    min-width: 0;
-    order: 5;
-  }
-
   .boardHeader > button:not(.backButton) {
     flex: 1 1 0;
     min-width: 0;
@@ -1153,7 +1250,6 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .iconButton,
   .linkButton,
   .search,
-  .workspaceSelect,
   .input,
   .select,
   .schedulePreset,
@@ -1162,7 +1258,6 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .search,
-  .workspaceSelect,
   .input,
   .select,
   .schedulePreset {

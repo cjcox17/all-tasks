@@ -131,6 +131,7 @@ export class TaskBoardHostService {
       revision: state.revision,
       tasks: state.tasks,
       groups: state.groups,
+      workspaceDefaults: state.workspaceDefaults,
       scheduler: state.scheduler,
       power: this.power.snapshot(),
     }
@@ -166,6 +167,7 @@ export class TaskBoardHostService {
       revision: result.state.revision,
       tasks: result.state.tasks,
       groups: result.state.groups,
+      workspaceDefaults: result.state.workspaceDefaults,
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }

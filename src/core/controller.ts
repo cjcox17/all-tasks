@@ -29,6 +29,7 @@ import { applyCreateTask } from './use-cases/task-create.ts'
 import { applyDeleteTask } from './use-cases/task-delete.ts'
 import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } from './use-cases/task-schedule.ts'
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
+import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
 import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '../protocol.ts'
 
 export interface TaskBoardTransport {
@@ -130,6 +131,11 @@ export interface ControllerSnapshot {
   tasks: readonly TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: readonly TaskGroupRecord[]
+  /**
+   * Per-workspace execution defaults for new tasks, keyed by workspace id
+   * (Host-authoritative; the legacy seam keeps them in memory).
+   */
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   boardOpen: boolean
   /** True when the board shows the archive view instead of the columns. */
   archiveView: boolean
@@ -174,6 +180,7 @@ function messageOf(error: unknown): string {
 export class BoardController {
   private tasks: TaskRecord[] = []
   private groups: TaskGroupRecord[] = []
+  private workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {}
   private boardOpen = false
   private archiveView = false
   private selectedTaskId: string | undefined
@@ -228,6 +235,7 @@ export class BoardController {
     return {
       tasks: this.tasks,
       groups: this.groups,
+      workspaceDefaults: this.workspaceDefaults,
       boardOpen: this.boardOpen,
       archiveView: this.archiveView,
       selectedTaskId: this.selectedTaskId,
@@ -588,6 +596,30 @@ export class BoardController {
     this.persistAndNotify()
   }
 
+  /**
+   * Set one workspace's new-task execution defaults (Host-authoritative).
+   * A patch field set to `null` clears it; an all-blank result removes the
+   * workspace's entry (new tasks then use the runtime defaults).
+   * @param workspaceId - the workspace-list id the defaults key on.
+   * @param patch - the fields to set or clear.
+   * @returns true when the authority accepted the edit.
+   */
+  async setWorkspaceDefaults(workspaceId: string, patch: WorkspaceDefaultsPatch): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'set-workspace-defaults', workspaceId, patch }, workspaceId)
+    }
+    const next = applyWorkspaceDefaultsPatch(this.workspaceDefaults[workspaceId], patch)
+    if (next === undefined) {
+      if (this.workspaceDefaults[workspaceId] === undefined) return true
+      const { [workspaceId]: _removed, ...rest } = this.workspaceDefaults
+      this.workspaceDefaults = rest
+    } else {
+      this.workspaceDefaults = { ...this.workspaceDefaults, [workspaceId]: next }
+    }
+    this.notify()
+    return true
+  }
+
   /** Stop a whole group: cancel every open member execution and mark it stopped. */
   async stopGroup(groupId: string): Promise<boolean> {
     if (this.deps.transport === undefined) return false
@@ -737,6 +769,8 @@ export class BoardController {
     if (sameGeneration && this.hostState !== undefined && snapshot.revision < this.hostState.revision) return false
     this.tasks = [...snapshot.tasks]
     this.groups = [...snapshot.groups]
+    // Tolerant of pre-feature snapshots (an older Host without the field).
+    this.workspaceDefaults = snapshot.workspaceDefaults ?? {}
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }
     this.transportError = undefined
     if (this.selectedTaskId !== undefined && !this.tasks.some(task => task.id === this.selectedTaskId)) {

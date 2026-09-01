@@ -30,7 +30,7 @@ export const DEFAULT_PROXY_TOKEN_ENV = 'DSH_TASK_BOARD_PROXY_TOKEN'
 export const inject = ['systemPrompt', 'apiProxy', 'webServer', 'agents', 'commands']
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
-export const TASK_BOARD_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。用户提到「全部任务 / 看板 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
+export const TASK_BOARD_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；打开看板先见工作区总览网格（每个工作区的实时任务计数，点击进入该工作区看板，头部返回按钮回到总览）；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；每个工作区可设置新建任务的默认执行参数（agent 预设、模型、端点、权限、是否默认未批准），在该工作区新建任务时自动预填；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。用户提到「全部任务 / 看板 / 工作区 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
 
 /**
  * Settings namespace of the board's announcement capability — the section the

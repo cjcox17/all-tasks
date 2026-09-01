@@ -698,4 +698,64 @@ describe('HostTaskLedger', () => {
     expect(ledger.openExecution('b', NOW)).toBeUndefined()
     expect(ledger.openExecution('a', NOW)).toBeDefined()
   })
+
+  it('stores, updates, clears, and drops per-workspace defaults', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    expect(ledger.state().workspaceDefaults).toEqual({})
+
+    const set = ledger.applyRequest('set-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: { mode: 'planner', model: { provider: 'deepseek', model: 'chat' }, permission: 'read-only', approved: false },
+    })
+    expect(set.state.workspaceDefaults['ws-a']).toEqual({
+      mode: 'planner',
+      model: { provider: 'deepseek', model: 'chat' },
+      permission: 'read-only',
+      approved: false,
+    })
+
+    // A second edit merges onto the record: new field set, old field cleared.
+    const updated = ledger.applyRequest('update-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: { mode: null, endpoints: ['deepseek-official'] },
+    })
+    expect(updated.state.workspaceDefaults['ws-a']).toEqual({
+      model: { provider: 'deepseek', model: 'chat' },
+      endpoints: ['deepseek-official'],
+      permission: 'read-only',
+      approved: false,
+    })
+
+    // Clearing every remaining field drops the entry entirely.
+    const cleared = ledger.applyRequest('clear-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: { model: null, endpoints: null, permission: null, approved: null },
+    })
+    expect(cleared.state.workspaceDefaults).toEqual({})
+
+    // Other workspaces are untouched; an all-null edit on a missing entry is a no-op.
+    ledger.applyRequest('set-b', { kind: 'set-workspace-defaults', workspaceId: 'ws-b', patch: { mode: 'coder' } })
+    ledger.applyRequest('clear-missing', { kind: 'set-workspace-defaults', workspaceId: 'ws-c', patch: { mode: null } })
+    expect(ledger.state().workspaceDefaults).toEqual({ 'ws-b': { mode: 'coder' } })
+  })
+
+  it('persists per-workspace defaults across a reload and drops invalid entries on load', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('set', { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { mode: 'planner', approved: false } })
+    ledger.dispose()
+
+    // Corrupt the persisted file: add an invalid entry the loader must drop.
+    const file = join(root, 'ledger-v2.json')
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    raw.workspaceDefaults = { 'ws-a': { mode: 'planner', approved: false }, 'ws-bad': { mode: 42, permission: 'sudo' } }
+    writeFileSync(file, JSON.stringify(raw))
+
+    const reloaded = new HostTaskLedger(root, () => NOW)
+    expect(reloaded.state().workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
+  })
 })

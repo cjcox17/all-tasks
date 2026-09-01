@@ -239,6 +239,24 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     expect(task.status).toBe('failed')
     service.dispose()
   })
+
+  it('carries per-workspace defaults in every snapshot, including after an apply', () => {
+    const ledger = new HostTaskLedger(root(), () => 0)
+    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => 0,
+    })
+    expect(service.snapshot().workspaceDefaults).toEqual({})
+    const after = service.apply('set-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: { mode: 'planner', approved: false },
+    })
+    expect(after.workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
+    expect(service.snapshot().workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
+    service.dispose()
+  })
 })
 
 describe('TaskBoardHostService poll heartbeat', () => {

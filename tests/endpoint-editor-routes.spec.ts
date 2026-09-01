@@ -17,6 +17,7 @@ const snapshot: TaskBoardSnapshot = {
   revision: 0,
   tasks: [],
   groups: [],
+  workspaceDefaults: {},
   scheduler: { timeZone: 'UTC' },
   power: {
     platform: 'linux', phase: 'unsupported', enabled: false,

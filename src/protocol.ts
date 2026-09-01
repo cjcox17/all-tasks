@@ -12,6 +12,7 @@ import {
 } from './core/groups.ts'
 import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
+import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
 
 export const TASK_BOARD_SCHEMA_VERSION = 2 as const
 export const TASK_BOARD_API_PREFIX = '/api/task-board'
@@ -42,6 +43,11 @@ export interface TaskBoardSnapshot {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /**
+   * Per-workspace execution defaults the new-task dialog applies when a task
+   * is created in that workspace, keyed by workspace-list id.
+   */
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   scheduler: TaskBoardSchedulerSnapshot
   power: TaskBoardPowerSnapshot
 }
@@ -66,6 +72,7 @@ export type TaskBoardAction =
   | { kind: 'rerun'; taskId: string }
   | { kind: 'stop'; taskId: string }
   | { kind: 'set-approved'; taskId: string; approved: boolean }
+  | { kind: 'set-workspace-defaults'; workspaceId: string; patch: WorkspaceDefaultsPatch }
   | { kind: 'create-group'; id: string; input: GroupCreateInput }
   | { kind: 'update-group'; groupId: string; patch: GroupUpdatePatch }
   | { kind: 'delete-group'; groupId: string }
@@ -361,6 +368,14 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       return taskId !== undefined && typeof action.approved === 'boolean'
         ? { requestId: envelope.requestId, action: { kind: 'set-approved', taskId, approved: action.approved } }
         : undefined
+    case 'set-workspace-defaults':
+      if (!exactKeys(action, ['kind', 'workspaceId', 'patch'])) return undefined
+      if (!boundedId(action.workspaceId)) return undefined
+      {
+        const patch = normalizeWorkspaceDefaultsPatch(action.patch)
+        if (patch === undefined) return undefined
+        return { requestId: envelope.requestId, action: { kind: 'set-workspace-defaults', workspaceId: action.workspaceId, patch } }
+      }
     case 'stop-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== ''

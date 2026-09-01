@@ -10,6 +10,7 @@ function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger
     revision,
     tasks,
     groups: [],
+    workspaceDefaults: {},
     scheduler: { timeZone: 'UTC', ledgerId },
     power: {
       platform: 'linux', phase: 'unsupported', enabled: false,
@@ -219,6 +220,29 @@ describe('Host-backed BoardController', () => {
     await controller.retryHostSync()
     onEvent?.()
     await vi.waitFor(() => { expect(state).toHaveBeenCalledOnce() })
+    controller.dispose()
+  })
+
+  it('submits set-workspace-defaults through the transport and applies the confirmed snapshot', async () => {
+    const action = vi.fn(async (received: { kind: string }) => {
+      if (received.kind !== 'set-workspace-defaults') return snapshot(0)
+      return {
+        ...snapshot(1),
+        workspaceDefaults: { 'ws-a': { mode: 'planner', approved: false } },
+      }
+    })
+    const transport: TaskBoardTransport = {
+      bootstrap: async () => snapshot(0),
+      state: async () => snapshot(0),
+      action,
+      subscribe: () => () => undefined,
+    }
+    const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: sessions(), transport })
+    controller.start()
+    await controller.retryHostSync()
+    expect(await controller.setWorkspaceDefaults('ws-a', { mode: 'planner', approved: false })).toBe(true)
+    expect(action).toHaveBeenCalledOnce()
+    expect(controller.getSnapshot().workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
     controller.dispose()
   })
 })

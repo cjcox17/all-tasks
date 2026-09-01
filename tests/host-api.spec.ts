@@ -8,6 +8,7 @@ const snapshot: TaskBoardSnapshot = {
   revision: 1,
   tasks: [],
     groups: [],
+  workspaceDefaults: {},
   scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
   power: {
     platform: 'linux', phase: 'unsupported', enabled: false,

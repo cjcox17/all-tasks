@@ -23,6 +23,7 @@ import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleNextRun } from './core/use-cases/task-schedule.ts'
 import { applyUpdateTask, canEditTaskContent, hasContentPatch } from './core/use-cases/task-update.ts'
+import { applyWorkspaceDefaultsPatch, normalizeWorkspaceDefaults, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
 import { TASK_BOARD_SCHEMA_VERSION, type TaskBoardAction, type TaskBoardSchedulerSnapshot } from './protocol.ts'
 
 interface PersistedScheduler extends TaskBoardSchedulerSnapshot {
@@ -40,6 +41,12 @@ interface LedgerDocument {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /**
+   * Per-workspace execution defaults for new tasks, keyed by workspace-list
+   * id. Only non-empty records are stored (an all-blank edit removes the
+   * entry); absent records mean the runtime defaults apply.
+   */
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   scheduler: PersistedScheduler
   recentRequests: PersistedRequest[]
 }
@@ -48,6 +55,7 @@ export interface LedgerState {
   revision: number
   tasks: TaskRecord[]
   groups: TaskGroupRecord[]
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   scheduler: TaskBoardSchedulerSnapshot
 }
 
@@ -154,6 +162,10 @@ function cloneTasks(tasks: readonly TaskRecord[]): TaskRecord[] {
 
 function cloneGroups(groups: readonly TaskGroupRecord[]): TaskGroupRecord[] {
   return JSON.parse(JSON.stringify(groups)) as TaskGroupRecord[]
+}
+
+function cloneWorkspaceDefaults(defaults: Record<string, WorkspaceDefaultsRecord>): Record<string, WorkspaceDefaultsRecord> {
+  return JSON.parse(JSON.stringify(defaults)) as Record<string, WorkspaceDefaultsRecord>
 }
 
 function hasOpenExecution(task: TaskRecord): boolean {
@@ -342,6 +354,21 @@ function parseHostTasks(values: readonly unknown[]): TaskRecord[] {
   })
 }
 
+/**
+ * Load and normalize the persisted per-workspace defaults map: invalid
+ * entries are dropped, never stored; a non-object payload collapses to empty.
+ */
+function normalizeWorkspaceDefaultsMap(value: unknown): Record<string, WorkspaceDefaultsRecord> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const result: Record<string, WorkspaceDefaultsRecord> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const record = normalizeWorkspaceDefaults(raw)
+    if (record === undefined) continue
+    result[key] = record
+  }
+  return result
+}
+
 export class HostTaskLedger {
   private document: LedgerDocument
   private readonly listeners = new Set<() => void>()
@@ -383,7 +410,13 @@ export class HostTaskLedger {
 
   state(): LedgerState {
     const { revision, scheduler } = this.summary()
-    return { revision, tasks: cloneTasks(this.document.tasks), groups: cloneGroups(this.document.groups), scheduler }
+    return {
+      revision,
+      tasks: cloneTasks(this.document.tasks),
+      groups: cloneGroups(this.document.groups),
+      workspaceDefaults: cloneWorkspaceDefaults(this.document.workspaceDefaults),
+      scheduler,
+    }
   }
 
   /** Deep copy of one group (read-only view; never the authoritative object). */
@@ -887,6 +920,20 @@ export class HostTaskLedger {
         })
         break
       }
+      case 'set-workspace-defaults': {
+        // The protocol already normalized the patch; apply it onto the current
+        // record (null clears a field) and drop the entry when nothing remains.
+        const next = applyWorkspaceDefaultsPatch(this.document.workspaceDefaults[action.workspaceId], action.patch)
+        if (next === undefined) {
+          if (this.document.workspaceDefaults[action.workspaceId] !== undefined) {
+            const { [action.workspaceId]: _removed, ...rest } = this.document.workspaceDefaults
+            this.document.workspaceDefaults = rest
+          }
+          break
+        }
+        this.document.workspaceDefaults = { ...this.document.workspaceDefaults, [action.workspaceId]: next }
+        break
+      }
       case 'move-group': {
         const group = this.document.groups.find(candidate => candidate.id === action.groupId)
         if (group === undefined) throw new Error('group not found')
@@ -1043,6 +1090,7 @@ export class HostTaskLedger {
         revision: Number.isSafeInteger(parsed.revision) && (parsed.revision as number) >= 0 ? parsed.revision as number : 0,
         tasks,
         groups,
+        workspaceDefaults: normalizeWorkspaceDefaultsMap(parsed.workspaceDefaults),
         scheduler: {
           timeZone: timeZone(),
           ledgerId: typeof parsed.scheduler?.ledgerId === 'string' && parsed.scheduler.ledgerId !== '' ? parsed.scheduler.ledgerId : crypto.randomUUID(),
@@ -1069,6 +1117,7 @@ export class HostTaskLedger {
         revision: 0,
         tasks: [],
         groups: [],
+        workspaceDefaults: {},
         scheduler: { timeZone: timeZone(), ledgerId: crypto.randomUUID(), ...(existed ? { error: `corrupt ledger was quarantined: ${error instanceof Error ? error.message : String(error)}` } : {}) },
         recentRequests: [],
       }

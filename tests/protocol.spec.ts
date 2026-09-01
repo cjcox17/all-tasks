@@ -299,6 +299,33 @@ describe('group action gate', () => {
     expect(parsed.action.tasks[0]?.approved).toBe(false)
   })
 
+  it('gates set-workspace-defaults: bounded workspace id and normalized patch', () => {
+    const set = parseActionEnvelope({
+      requestId: 'ws-defaults',
+      action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { mode: ' planner ', approved: false } },
+    })
+    expect(set?.action.kind).toBe('set-workspace-defaults')
+    if (set?.action.kind !== 'set-workspace-defaults') throw new Error('expected set-workspace-defaults')
+    expect(set.action.workspaceId).toBe('ws-a')
+    expect(set.action.patch).toEqual({ mode: 'planner', approved: false })
+
+    // Nulls clear fields and are accepted (the editor sends the full state).
+    const clear = parseActionEnvelope({
+      requestId: 'ws-defaults-clear',
+      action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { mode: null, model: null, endpoints: null, permission: null, approved: null } },
+    })
+    expect(clear?.action.kind).toBe('set-workspace-defaults')
+
+    // Rejections: blank/oversized workspace id, empty or malformed patches.
+    expect(parseActionEnvelope({ requestId: 'ws-bad', action: { kind: 'set-workspace-defaults', workspaceId: ' ', patch: { mode: 'x' } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad2', action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: {} } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad3', action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { mode: 5 } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad4', action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { permission: 'sudo' } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad5', action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { approved: 'yes' } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad6', action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'ws-bad7', action: { kind: 'set-workspace-defaults', patch: { mode: 'x' } } })).toBeUndefined()
+  })
+
   it('accepts the stopped flag on a group update patch', () => {
     const stop = parseActionEnvelope({ requestId: 'stop-g', action: { kind: 'update-group', groupId: 'g1', patch: { stopped: true } } })
     expect(stop?.action.kind).toBe('update-group')

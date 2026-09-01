@@ -9,9 +9,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NewTaskModal } from '../src/client/board/NewTaskModal.tsx'
 import { t } from '../src/client/locales.ts'
-import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
+import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption, ExecutionPresetOption, ExecutionWorkspaceOption } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 import { createTask, modelSelectionKey, type NewTaskInput, type TaskRecord } from '../src/core/tasks.ts'
+import type { WorkspaceDefaultsRecord } from '../src/core/workspace-defaults.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -38,13 +39,16 @@ function fakeController(
   createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
   endpoints: readonly ExecutionEndpointOption[] = [],
   groups: readonly TaskGroupRecord[] = [],
+  workspaces: readonly ExecutionWorkspaceOption[] = [],
+  presets: readonly ExecutionPresetOption[] = [],
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [],
     boardOpen: true,
     archiveView: false,
     selectedTaskId: undefined,
-    executionOptions: { workspaces: [], presets: [], models: MODELS, endpoints },
+    executionOptions: { workspaces, presets, models: MODELS, endpoints },
+    workspaceDefaults: {},
     groups,
     pendingTaskIds: [],
   }
@@ -59,6 +63,9 @@ async function renderModal(
   createTaskConfirmed: (input: NewTaskInput) => Promise<TaskRecord | undefined>,
   endpoints: readonly ExecutionEndpointOption[] = [],
   groups: readonly TaskGroupRecord[] = [],
+  workspaces: readonly ExecutionWorkspaceOption[] = [],
+  presets: readonly ExecutionPresetOption[] = [],
+  modalProps: { defaultWorkspaceId?: string; defaults?: WorkspaceDefaultsRecord } = {},
 ): Promise<{
   container: HTMLElement
   onClose: ReturnType<typeof vi.fn>
@@ -69,7 +76,7 @@ async function renderModal(
   roots.push(root)
   const onClose = vi.fn()
   await act(async () => {
-    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints, groups)} onClose={onClose} />)
+    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints, groups, workspaces, presets)} onClose={onClose} {...modalProps} />)
   })
   return { container, onClose }
 }
@@ -200,5 +207,85 @@ describe('NewTaskModal group picker', () => {
     const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
     await act(async () => { submit.click() })
     expect(createTaskConfirmed.mock.calls[0][0].groupId).toBeUndefined()
+  })
+})
+
+describe('NewTaskModal workspace defaults', () => {
+  const WORKSPACES: readonly ExecutionWorkspaceOption[] = [
+    { workspaceId: 'ws-a', title: 'Alpha' },
+    { workspaceId: 'ws-b', title: 'Beta' },
+  ]
+  const DEFAULTS: WorkspaceDefaultsRecord = {
+    mode: 'planner',
+    model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+    endpoints: ['deepseek-official'],
+    permission: 'read-only',
+    approved: false,
+  }
+
+  it('pre-selects the workspace and pre-fills the execution targets from the workspace defaults', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, ENDPOINTS, [], WORKSPACES, [{ id: 'planner', isDefault: false }], {
+      defaultWorkspaceId: 'ws-a',
+      defaults: DEFAULTS,
+    })
+
+    const workspaceSelect = selectOf(container, 'ws-a')
+    expect(workspaceSelect.value).toBe('ws-a')
+    const modeSelect = selectOf(container, 'planner')
+    expect(modeSelect.value).toBe('planner')
+    const modelKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const modelSelect = selectOf(container, modelKey)
+    expect(modelSelect.value).toBe(modelKey)
+    // The effort picker follows the pinned model with the defaulted effort.
+    const effortSelect = selectOf(container, 'high')
+    expect(effortSelect.value).toBe('high')
+    // The endpoint order editor lists the defaulted endpoint.
+    const endpointRow = Array.from(container.querySelectorAll('li')).find(li => li.textContent?.includes('DeepSeek Official'))
+    expect(endpointRow).not.toBeNull()
+    // The unapproved default is on.
+    const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
+
+    setFieldValue(container.querySelector('input') as HTMLInputElement, 'Pinned task')
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    const input = createTaskConfirmed.mock.calls[0][0]
+    expect(input.workspaceId).toBe('ws-a')
+    expect(input.mode).toBe('planner')
+    expect(input.model).toEqual({ provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' })
+    expect(input.endpoints).toEqual(['deepseek-official'])
+    expect(input.permission).toBe('read-only')
+    // The workspace default mints the task unapproved; the manual dialog keeps it.
+    expect(input.approved).toBe(false)
+  })
+
+  it('manual creation stays approved unless the unapproved toggle is turned on', async () => {
+    // Without the toggle: the create input carries no approval flag.
+    {
+      const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+      const { container } = await renderModal(createTaskConfirmed)
+      setFieldValue(container.querySelector('input') as HTMLInputElement, 'Plain task')
+      const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
+      expect(checkbox.checked).toBe(false)
+      const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+      await act(async () => { submit.click() })
+      expect(createTaskConfirmed).toHaveBeenCalledOnce()
+      expect(createTaskConfirmed.mock.calls[0][0].approved).toBeUndefined()
+    }
+    // With the toggle: the task is minted unapproved.
+    {
+      const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+      const { container } = await renderModal(createTaskConfirmed)
+      setFieldValue(container.querySelector('input') as HTMLInputElement, 'Gated task')
+      const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
+      await act(async () => { checkbox.click() })
+      const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+      await act(async () => { submit.click() })
+      expect(createTaskConfirmed).toHaveBeenCalledOnce()
+      expect(createTaskConfirmed.mock.calls[0][0].approved).toBe(false)
+    }
   })
 })

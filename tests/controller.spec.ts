@@ -45,6 +45,7 @@ function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger
     revision,
     tasks,
     groups: [],
+    workspaceDefaults: {},
     scheduler: { timeZone: 'UTC', ledgerId },
     power: {
       platform: 'linux', phase: 'unsupported', enabled: false,
@@ -533,5 +534,35 @@ describe('BoardController legacy group transitions', () => {
     expect(await controller.deleteGroup(group!.id)).toBe(true)
     expect(controller.getSnapshot().groups).toHaveLength(0)
     expect(controller.getSnapshot().tasks.find(t => t.title === 'B')?.groupId).toBeUndefined()
+  })
+})
+
+describe('BoardController workspace defaults', () => {
+  it('sets, merges, and clears per-workspace defaults in the legacy (non-Host) path', async () => {
+    const { controller } = makeController()
+    expect(controller.getSnapshot().workspaceDefaults).toEqual({})
+
+    expect(await controller.setWorkspaceDefaults('ws-a', { mode: 'planner', approved: false })).toBe(true)
+    expect(controller.getSnapshot().workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
+
+    // A second edit merges: mode cleared, model set.
+    expect(await controller.setWorkspaceDefaults('ws-a', { mode: null, model: { provider: 'deepseek', model: 'chat' } })).toBe(true)
+    expect(controller.getSnapshot().workspaceDefaults).toEqual({
+      'ws-a': { model: { provider: 'deepseek', model: 'chat' }, approved: false },
+    })
+
+    // Clearing every field drops the entry.
+    expect(await controller.setWorkspaceDefaults('ws-a', { model: null, approved: null })).toBe(true)
+    expect(controller.getSnapshot().workspaceDefaults).toEqual({})
+    // An all-clear edit on a missing entry is a no-op success.
+    expect(await controller.setWorkspaceDefaults('ws-a', { mode: null })).toBe(true)
+  })
+
+  it('notifies subscribers on a workspace-defaults change', async () => {
+    const { controller } = makeController()
+    let notified = 0
+    controller.subscribe(() => { notified += 1 })
+    await controller.setWorkspaceDefaults('ws-a', { mode: 'planner' })
+    expect(notified).toBe(1)
   })
 })
