@@ -42,8 +42,8 @@ export const zh = {
   'grid.total': '共 {count} 个任务',
   'grid.settingsTitle': '工作区默认设置',
   'grid.settingsHint': '在此工作区新建任务时自动填入以下默认值；留空表示使用运行时默认。',
-  'grid.approvedDefault': '新任务默认未批准',
-  'grid.approvedDefaultHint': '勾选后，在此工作区新建的任务默认未批准，批准前不能以任何方式运行。',
+  'grid.approvedDefault': '新任务默认已批准',
+  'grid.approvedDefaultHint': '勾选后，在此工作区新建的任务默认已批准，可直接运行；关闭后默认未批准，批准前不能以任何方式运行。',
   'grid.saveFailed': '保存失败：{error}',
   // 工作区总览目录（展开后显示分组与任务）。
   'list.expand': '展开分组与任务',
@@ -301,8 +301,8 @@ export const en: Record<keyof typeof zh, string> = {
   'grid.total': '{count} tasks',
   'grid.settingsTitle': 'Workspace default settings',
   'grid.settingsHint': 'New tasks created in this workspace are pre-filled with these defaults; blank means the runtime default.',
-  'grid.approvedDefault': 'New tasks start unapproved',
-  'grid.approvedDefaultHint': 'When checked, new tasks in this workspace start unapproved and cannot be run by any means until approved.',
+  'grid.approvedDefault': 'New tasks start approved',
+  'grid.approvedDefaultHint': 'When on, new tasks in this workspace start approved and can run. Turn the switch off to make new tasks start unapproved — they cannot be run by any means until approved.',
   'grid.saveFailed': 'Save failed: {error}',
   // Workspace overview directory (expand to reveal groups and tasks).
   'list.expand': 'Expand groups & tasks',

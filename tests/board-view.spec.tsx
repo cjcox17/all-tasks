@@ -757,9 +757,11 @@ describe('TaskBoard workspace landing list', () => {
     expect(dialog!.textContent).toContain(t('grid.settingsTitle'))
     expect(dialog!.textContent).toContain(t('grid.settingsHint'))
 
-    // Default unapproved for this workspace, then save: the editor sends the
-    // full desired state (blank fields as explicit null clears).
+    // The approval toggle starts on (new tasks start approved); turn it off so
+    // new tasks default unapproved, then save: the editor sends the full
+    // desired state (blank fields as explicit null clears).
     const checkbox = dialog!.querySelector('input[type="checkbox"]') as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
     await act(async () => { checkbox.click() })
     const submit = dialog!.querySelector('button[type="submit"]') as HTMLButtonElement
     await act(async () => { submit.click() })
