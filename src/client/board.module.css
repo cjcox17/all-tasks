@@ -1136,22 +1136,20 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 2px 0 10px;
 }
 
-/* The Monday.com-style board table: one surface card, a column-header row, and
-   workspace rows whose counts line up in aligned columns. The first column
-   holds the leading expand/collapse chevron; the width is capped so the table
-   reads as columns rather than a full-bleed wall; it scrolls horizontally only
-   if a very narrow view forces it to. */
+/* The Monday.com-style board table: a column-header row and workspace rows
+   whose counts line up in aligned columns. The table sits directly on the
+   board surface — no wrapping card — so each workspace reads as its own row
+   instead of items crammed inside one box. The first column holds the leading
+   expand/collapse chevron; the width is capped so the table reads as columns
+   rather than a full-bleed wall; it scrolls horizontally only if a very narrow
+   view forces it to. */
 .directory {
   --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
   overflow-x: auto;
-  padding: 8px 16px 12px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
-  box-shadow: var(--dsw-shadow-lv1);
+  padding: 4px 0 12px;
 }
 
 /* The header row and every workspace row share one grid, so each count sits in
@@ -1870,7 +1868,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
   .directory {
     --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
-    padding: 8px 10px 12px;
+    padding: 4px 0 12px;
   }
 
   .dashboard {
