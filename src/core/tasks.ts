@@ -28,6 +28,11 @@ export interface ExecutionRecord {
   /** Human failure text when the run failed (prompt rejection or agent error). */
   error: string | undefined
   /**
+   * Bounded excerpt of the agent's final answer, captured at settlement for
+   * actions and downstream steps. Absent when the run produced no visible text.
+   */
+  summary?: string
+  /**
    * When the router queued this run waiting for an eligible endpoint. A queued
    * run has no session yet (nothing billed), keeps the task in 'running', and
    * survives Host restarts (it is not treated as an interrupted start).
@@ -431,12 +436,13 @@ export function settleExecution(
   outcome: 'succeeded' | 'failed' | 'cancelled',
   now: number,
   error: string | undefined,
+  summary?: string,
 ): TaskRecord {
   const index = task.executions.findIndex(execution => execution.id === executionId)
   if (index === -1) return task
   const execution = task.executions[index]
   if (execution.endedAt !== undefined) return task
-  const settled: ExecutionRecord = { ...execution, endedAt: now, result: outcome, error }
+  const settled: ExecutionRecord = { ...execution, endedAt: now, result: outcome, error, ...(summary === undefined ? {} : { summary }) }
   const executions = [...task.executions]
   executions[index] = settled
   const status: TaskStatus = outcome === 'succeeded' ? 'done' : 'failed'

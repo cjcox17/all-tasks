@@ -1,5 +1,6 @@
 import type { ApiProxy, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { CommandResult } from '@deepseek-ai/dsh-commands/types'
+import { extractSummary } from './core/result-summary.ts'
 import type { TaskRecord } from './core/tasks.ts'
 
 function request<T>(payload: T) {
@@ -31,8 +32,8 @@ export interface SessionCommandDispatcher {
 
 export type ExecutionInspection =
   | { outcome: 'pending' }
-  | { outcome: 'succeeded' }
-  | { outcome: 'failed'; error: string }
+  | { outcome: 'succeeded'; summary?: string }
+  | { outcome: 'failed'; error: string; summary?: string }
   | { outcome: 'cancelled'; error: string }
 
 /** A post-create launch failure that still identifies the session to the ledger. */
@@ -230,8 +231,9 @@ export class HostExecutionRunner {
     }
     this.scanMemos.delete(sessionId)
     const outcome = turnEndOutcome(turnEnd.event.data)
-    if (outcome === 'failed') return { outcome: 'failed', error: 'agent turn ended with an error' }
+    const answer = extractSummary(events, startedAt)
+    if (outcome === 'failed') return { outcome: 'failed', error: 'agent turn ended with an error', ...(answer === undefined ? {} : { summary: answer }) }
     if (outcome === 'cancelled') return { outcome: 'cancelled', error: 'execution was stopped' }
-    return { outcome: 'succeeded' }
+    return { outcome: 'succeeded', ...(answer === undefined ? {} : { summary: answer }) }
   }
 }

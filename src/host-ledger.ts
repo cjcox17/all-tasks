@@ -60,6 +60,16 @@ export interface LedgerState {
   scheduler: TaskBoardSchedulerSnapshot
 }
 
+/** One execution settlement, emitted once the outcome is durably recorded. */
+export interface SettlementEvent {
+  taskId: string
+  executionId: string
+  outcome: 'succeeded' | 'failed' | 'cancelled'
+  error?: string
+  summary?: string
+  sessionId?: string
+}
+
 export interface OpenedRun {
   task: TaskRecord
   execution: ExecutionRecord
@@ -373,6 +383,7 @@ function normalizeWorkspaceDefaultsMap(value: unknown): Record<string, Workspace
 export class HostTaskLedger {
   private document: LedgerDocument
   private readonly listeners = new Set<() => void>()
+  private readonly settledListeners = new Set<(event: SettlementEvent) => void>()
   private readonly requestCache = new Map<string, CachedRequest>()
   private readonly lockToken = crypto.randomUUID()
   private lockFd: number | undefined
@@ -661,6 +672,16 @@ export class HostTaskLedger {
     return () => { this.listeners.delete(listener) }
   }
 
+  /** Subscribe to executions that actually settle (distinct from every mutation). */
+  onSettled(listener: (event: SettlementEvent) => void): () => void {
+    this.settledListeners.add(listener)
+    return () => { this.settledListeners.delete(listener) }
+  }
+
+  private notifySettled(event: SettlementEvent): void {
+    for (const listener of [...this.settledListeners]) listener(event)
+  }
+
   dispose(): void {
     const fd = this.lockFd
     if (fd === undefined) return
@@ -759,11 +780,25 @@ export class HostTaskLedger {
     this.commit()
   }
 
-  settle(taskId: string, executionId: string, outcome: 'succeeded' | 'failed' | 'cancelled', error?: string): void {
+  settle(taskId: string, executionId: string, outcome: 'succeeded' | 'failed' | 'cancelled', error?: string, summary?: string): void {
+    const open = this.document.tasks
+      .find(task => task.id === taskId)
+      ?.executions.find(execution => execution.id === executionId)
+    const wasOpen = open !== undefined && open.endedAt === undefined
     this.document.tasks = this.document.tasks.map(task => task.id === taskId
-      ? settleExecution(task, executionId, outcome, this.now(), error)
+      ? settleExecution(task, executionId, outcome, this.now(), error, summary)
       : task)
     this.commit()
+    if (wasOpen) {
+      this.notifySettled({
+        taskId,
+        executionId,
+        outcome,
+        ...(error === undefined ? {} : { error }),
+        ...(summary === undefined ? {} : { summary }),
+        ...(open?.sessionId === undefined ? {} : { sessionId: open.sessionId }),
+      })
+    }
   }
 
   private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; runs?: OpenedRun[]; stopSessions?: string[] } {

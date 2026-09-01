@@ -1,6 +1,7 @@
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { EventRequest, EventSourceRegistry } from './core/events.ts'
 import { parseEndpointEditorPatch } from './endpoint-editor.ts'
 import type { TaskBoardHostService } from './host-service.ts'
 import { writeJson } from './http.ts'
@@ -224,4 +225,61 @@ export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskB
     },
   }
   return [state, action, events, endpoints]
+}
+
+const EVENT_COOLDOWN_MS = 60_000
+
+/**
+ * Mount one HTTP route per registered event source under the same loopback /
+ * authenticated-proxy fence as the browser routes, plus the source's own
+ * verification. A verified event is mapped to task creation and — when the
+ * source opts in — an immediate run, with a short dedupe/cooldown window so a
+ * retried webhook does not create duplicate tasks.
+ */
+export function makeEventRoutes(
+  registry: EventSourceRegistry,
+  service: TaskBoardHostService,
+  access: TaskBoardRouteAccess = {},
+): WebRoute[] {
+  const resolvedAccess = resolveAccess(access)
+  const cooldown = new Map<string, number>()
+  return registry.all().map(source => ({
+    kind: 'exact' as const,
+    path: source.path,
+    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      if (req.method !== source.method) {
+        return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
+      }
+      if (!isTrustedTaskBoardRequest(req, resolvedAccess)) {
+        return writeJson(res, 403, { ok: false, error: 'forbidden' }, { 'cache-control': 'no-store' })
+      }
+      if (!(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+        return writeJson(res, 415, { ok: false, error: 'json-required' }, { 'cache-control': 'no-store' })
+      }
+      try {
+        const body = await readBody(req)
+        const requestView: EventRequest = { method: req.method ?? '', url: req.url ?? '', headers: req.headers }
+        if (!await source.verify(requestView, body.raw)) {
+          return writeJson(res, 401, { ok: false, error: 'unauthorized' }, { 'cache-control': 'no-store' })
+        }
+        const mapping = await source.map(requestView, body.value)
+        if (mapping.dedupeKey !== undefined) {
+          const last = cooldown.get(mapping.dedupeKey)
+          const nowMs = Date.now()
+          if (last !== undefined && nowMs - last < EVENT_COOLDOWN_MS) {
+            return writeJson(res, 200, { ok: true, deduped: true }, { 'cache-control': 'no-store' })
+          }
+          cooldown.set(mapping.dedupeKey, nowMs)
+        }
+        const taskId = randomUUID()
+        service.apply(`event-create-${taskId}`, { kind: 'create', id: taskId, input: mapping.input })
+        if (mapping.autoRun) service.apply(`event-run-${taskId}`, { kind: 'run', taskId })
+        writeJson(res, 200, { ok: true, taskId, autoRun: mapping.autoRun }, { 'cache-control': 'no-store' })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const status = message === 'body-too-large' ? 413 : 400
+        writeJson(res, status, { ok: false, error: message }, { 'cache-control': 'no-store' })
+      }
+    },
+  }))
 }

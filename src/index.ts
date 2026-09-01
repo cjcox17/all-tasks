@@ -15,9 +15,14 @@ import z from 'schemastery'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { ActionDispatcher } from './action-dispatcher.ts'
+import { createHttpAction, type HttpActionConfig } from './action-http.ts'
+import { ActionRegistry } from './core/actions.ts'
 import { normalizeEndpointsConfig, type EndpointRouterConfig } from './core/endpoints.ts'
+import { EventSourceRegistry } from './core/events.ts'
+import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
 import { TaskBoardHostService } from './host-service.ts'
-import { makeTaskBoardRoutes } from './host-routes.ts'
+import { makeEventRoutes, makeTaskBoardRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
 
@@ -61,6 +66,10 @@ export interface Config {
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
   endpoints?: EndpointSettingsConfig[]
+  /** Inbound event source plugins (webhook → task). */
+  events?: { http?: HttpEventConfig }
+  /** Result-side action plugins (settle → side effect). */
+  actions?: { http?: HttpActionConfig }
 }
 
 /** One named compute endpoint (a backend serving one DSH provider route). */
@@ -85,6 +94,17 @@ const endpointSettings = z.object({
   defaultModel: z.string().default(''),
 })
 
+const httpEventSettings = z.object({
+  tokenEnv: z.string().default(''),
+  workspaceId: z.string().default(''),
+  autoRun: z.boolean().default(false),
+})
+
+const httpActionSettings = z.object({
+  url: z.string().default(''),
+  tokenEnv: z.string().default(''),
+})
+
 export const Config: z<Config> = z.object({
   announceToAgent: z.boolean().default(false),
   enabled: z.boolean().default(true),
@@ -94,6 +114,8 @@ export const Config: z<Config> = z.object({
   endpointMaxWaitHours: z.number().min(0).default(24),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
+  events: z.object({ http: httpEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false } }),
+  actions: z.object({ http: httpActionSettings }).default({ http: { url: '', tokenEnv: '' } }),
 })
 
 /** Build the normalized Host router config from the resolved plugin settings. */
@@ -157,16 +179,27 @@ function applyImpl(ctx: Context, config?: Config): void {
   })
   host.setConfiguration(config?.enabled ?? true, config?.preventIdleSleep ?? false)
   host.start()
+  const eventSources = new EventSourceRegistry()
+  eventSources.register(createHttpEventSource(config?.events?.http))
+  const actions = new ActionRegistry()
+  actions.register(createHttpAction())
+  const dispatcher = new ActionDispatcher(host.ledger, actions, {
+    get: (id) => (config?.actions as Record<string, unknown> | undefined)?.[id],
+  })
   ctx.effect(() => {
     const disposers: Array<() => void> = []
     try {
       for (const route of makeTaskBoardRoutes(host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
+      for (const route of makeEventRoutes(eventSources, host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
+      dispatcher.start()
     } catch (error) {
       for (const dispose of disposers) dispose()
+      dispatcher.stop()
       host.dispose()
       throw error
     }
     return () => {
+      dispatcher.stop()
       for (const dispose of disposers) dispose()
       host.dispose()
     }

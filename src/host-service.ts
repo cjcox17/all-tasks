@@ -518,7 +518,13 @@ export class TaskBoardHostService {
       try {
         const result = await this.runner.inspect(execution.sessionId, execution.startedAt, sessions)
         if (result.outcome === 'pending') continue
-        this.ledger.settle(execution.taskId, execution.executionId, result.outcome, 'error' in result ? result.error : undefined)
+        this.ledger.settle(
+          execution.taskId,
+          execution.executionId,
+          result.outcome,
+          'error' in result ? result.error : undefined,
+          'summary' in result ? result.summary : undefined,
+        )
       } catch {
         // A transient inspection failure never settles a running execution.
       }
