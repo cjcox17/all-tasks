@@ -57,7 +57,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
   timeZone?: string
   onClick: () => void
   /** Board-level drag hook: payload + the source rect (for the custom ghost). */
-  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: { x: number; y: number }) => void
   /** The parent overlays its own action circle on this card, so the card's
    *  meta-row spinner is suppressed (the circle's ring shows the same state). */
   hideSpinner?: boolean
@@ -91,7 +91,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
           y: rect.y,
           width: rect.width,
           height: rect.height,
-        }, event.currentTarget.outerHTML)
+        }, event.currentTarget.outerHTML, { x: event.clientX, y: event.clientY })
       } : undefined}
       onClick={onClick}
       title={task.description !== '' ? task.description : task.title}

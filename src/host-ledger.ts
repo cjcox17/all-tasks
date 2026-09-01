@@ -1052,7 +1052,12 @@ export class HostTaskLedger {
         if (action.beforeTaskId !== null && !this.document.tasks.some(task => task.id === action.beforeTaskId)) {
           throw new Error('target task not found')
         }
-        this.document.tasks = [...moveTaskBefore(this.document.tasks, action.taskId, action.beforeTaskId ?? undefined)]
+        const reordered = moveTaskBefore(this.document.tasks, action.taskId, action.beforeTaskId ?? undefined)
+        // A drop that lands back where the card came from changes nothing:
+        // leave the array untouched so the commit rewrites an identical ledger.
+        if (reordered !== this.document.tasks) {
+          this.document.tasks = [...reordered]
+        }
         break
       }
       case 'archive': {
@@ -1284,6 +1289,10 @@ export class HostTaskLedger {
         if (members.some(member => member.status === 'running' || hasOpenExecution(member))) {
           throw new Error('group has running tasks')
         }
+        // Dropping the group back onto its own column changes nothing: skip
+        // the status rewrite so no member's updatedAt (its "edited" stamp)
+        // gets bumped for a no-op move.
+        if (members.length > 0 && members.every(member => member.status === action.status)) break
         this.document.tasks = this.document.tasks.map(task =>
           task.groupId === action.groupId && task.archivedAt === undefined
             ? withStatus(task, action.status, now)

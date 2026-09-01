@@ -447,7 +447,12 @@ export class BoardController {
       void this.commitRemote({ kind: 'reorder', taskId: id, beforeTaskId: beforeTaskId ?? null }, id)
       return
     }
-    this.tasks = [...moveTaskBefore(this.tasks, id, beforeTaskId)]
+    // A drop that leaves the order unchanged (e.g. landing back where the
+    // card came from) must not rewrite/persist anything — no revision bump,
+    // no updatedAt churn, no spurious "edited" look.
+    const next = moveTaskBefore(this.tasks, id, beforeTaskId)
+    if (next === this.tasks) return
+    this.tasks = [...next]
     this.persistAndNotify()
   }
 
@@ -783,6 +788,9 @@ export class BoardController {
     }
     const members = this.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
     if (members.some(member => member.status === 'running')) return false
+    // Same-column drop: nothing changes, so do not bump every member's
+    // updatedAt (their "edited" stamp) for a no-op move.
+    if (members.length === 0 || members.every(member => member.status === status)) return true
     this.tasks = this.tasks.map(task =>
       task.groupId === groupId && task.archivedAt === undefined ? withStatus(task, status, this.now()) : task)
     this.persistAndNotify()

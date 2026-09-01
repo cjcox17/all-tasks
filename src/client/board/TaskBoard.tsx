@@ -11,7 +11,7 @@
  * Cards open the task detail (never execute directly); the kanban header
  * offers filter, unapproved-only, archive, new-task, and new-group controls.
  */
-import { memo, useCallback, useEffect, useState, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
 import { computeDashboard } from '../../core/dashboard.ts'
 import {
@@ -43,6 +43,12 @@ function groupDragPayload(groupId: string): string {
   return `group:${groupId}`
 }
 
+/** Pointer position at drag start (viewport coordinates). */
+interface DragPointer {
+  x: number
+  y: number
+}
+
 /** A drag in flight: what is being dragged plus the ghost position/snapshot. */
 interface DragState {
   kind: 'task' | 'group'
@@ -50,6 +56,15 @@ interface DragState {
   /** Pointer position of the floating ghost (viewport coordinates). */
   x: number
   y: number
+  /**
+   * Grab offset: where the pointer sat inside the source element when the
+   * drag started. The ghost is drawn at `(x - dx, y - dy)` so the grabbed
+   * point stays under the cursor instead of snapping the ghost's top-left
+   * corner to it — the drag feels like a native one for cards and group
+   * headers alike.
+   */
+  dx: number
+  dy: number
   width: number
   height: number
   /** OuterHTML snapshot of the dragged element (rendered as the ghost). */
@@ -110,7 +125,7 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
   pending: boolean
   timeZone?: string
   onOpen: (id: string) => void
-  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer) => void
   hideSpinner?: boolean
 }) {
   const onClick = useCallback(() => { onOpen(task.id) }, [task.id, onOpen])
@@ -144,7 +159,7 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
   onContinue: () => void
   onResume: () => void
   onManage: () => void
-  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer) => void
 }) {
   const stopped = group.stopped === true
   // Any open execution — running or queued — holds the group's attention: the
@@ -153,6 +168,12 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
   const paused = group.paused === true
   const hasOpen = status.running > 0 || status.pending > 0
   const draggable = !hasOpen && !stopped && !paused
+  // A drag gesture may start on one of the header's action buttons (▶ ⏹ ⚙);
+  // once a real drag begins, the browser must not also fire that button's
+  // click when the pointer is released. Record the release instant at
+  // dragend and swallow a click that lands right after it, so "anywhere in
+  // the header" moves the group and never triggers start/stop/manage.
+  const lastDragRelease = useRef(0)
   return (
     <header
       className={css.groupHeader}
@@ -171,7 +192,14 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
           y: rect.y,
           width: rect.width,
           height: rect.height,
-        }, event.currentTarget.outerHTML)
+        }, event.currentTarget.outerHTML, { x: event.clientX, y: event.clientY })
+      } : undefined}
+      onDragEnd={draggable ? () => { lastDragRelease.current = Date.now() } : undefined}
+      onClickCapture={draggable ? (event) => {
+        if (Date.now() - lastDragRelease.current < 250) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
       } : undefined}
       title={draggable ? t('group.dragHint') : undefined}
     >
@@ -302,7 +330,7 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   onContinueGroup: () => void
   onStopGroup: () => void
   onResume: () => void
-  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer) => void
   /** Whether a task drag is hovering this group's section (highlight + line). */
   dropTarget?: DropTarget
 }) {
@@ -421,10 +449,22 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
   const [dropTarget, setDropTarget] = useState<DropTarget | undefined>(undefined)
   const dragging = drag !== undefined
 
-  const startDrag = useCallback((payload: string, rect: { x: number; y: number; width: number; height: number }, html: string): void => {
+  const startDrag = useCallback((payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer): void => {
     const kind = payload.startsWith('group:') ? 'group' : 'task'
     const id = kind === 'group' ? payload.slice('group:'.length) : payload.slice('task:'.length)
-    setDrag({ kind, id, x: rect.x, y: rect.y, width: rect.width, height: rect.height, html })
+    // Seed the ghost at the pointer so it opens exactly over the grabbed
+    // element (`pointer - grabOffset` = the source rect origin).
+    setDrag({
+      kind,
+      id,
+      x: pointer.x,
+      y: pointer.y,
+      dx: pointer.x - rect.x,
+      dy: pointer.y - rect.y,
+      width: rect.width,
+      height: rect.height,
+      html,
+    })
   }, [])
 
   // Follow the pointer with the ghost and stop the drag on release. `drag`
@@ -516,6 +556,24 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     return undefined
   }, [visible])
 
+  /**
+   * The first card inside the drop column's Unassigned section whose vertical
+   * midpoint lies below the pointer — where a drop in that section lands.
+   * Undefined means the end of the section's stack.
+   */
+  const unassignedCardBeforePointer = useCallback((column: TaskStatus, taskId: string, pointerY: number): string | undefined => {
+    const candidates = visible.filter(task =>
+      task.status === column && task.groupId === undefined && task.workspaceId === undefined && task.id !== taskId)
+    for (const candidate of candidates) {
+      const element = document.querySelector<HTMLElement>(`[data-task-id="${candidate.id}"]`)
+      if (element === null) continue
+      if (element.closest('[data-dsh-part="unassigned"]') === null) continue
+      const rect = element.getBoundingClientRect()
+      if (pointerY < rect.top + rect.height / 2) return candidate.id
+    }
+    return undefined
+  }, [visible])
+
   /** Drop on a column's card stack: group move, group join/reorder, ungroup, status move, reorder. */
   const handleCardsDrop = useCallback((column: TaskStatus) => (event: ReactDragEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -529,6 +587,10 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       if (droppedGroup !== undefined && droppedGroup.stopped !== true) {
         const members = snapshot.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
         if (members.every(member => member.status !== 'running')) {
+          // Dropping the group back onto its own column is a no-op: a status
+          // rewrite would bump every member's updatedAt and make the cards
+          // look freshly edited even though nothing changed.
+          if (members.length === 0 || members.every(member => member.status === column)) return
           void controller.moveGroup(groupId, column)
         }
       }
@@ -579,6 +641,12 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (target.closest('[data-dsh-part="unassigned"]') !== null) {
       if (dragged.groupId !== undefined) void controller.updateTask(taskId, { groupId: null })
       if (dragged.status !== column && canMoveManually(dragged.status, column)) controller.moveTask(taskId, column)
+      // Reorder among the Unassigned cards too: dragging above/below a
+      // sibling inside the section changes the order exactly like the
+      // pinned stack.
+      if (dragged.status === column || canMoveManually(dragged.status, column)) {
+        controller.reorderTask(taskId, unassignedCardBeforePointer(column, taskId, event.clientY))
+      }
       return
     }
     // Column background: leave any group, move status when allowed, and
@@ -588,7 +656,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (dragged.status === column || canMoveManually(dragged.status, column)) {
       controller.reorderTask(taskId, taskBeforePointer(column, taskId, event.clientY))
     }
-  }, [snapshot, controller, taskBeforePointer])
+  }, [snapshot, controller, taskBeforePointer, unassignedCardBeforePointer])
 
   return (
     <>
@@ -868,7 +936,15 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       {drag !== undefined && (
         <div
           className={css.dragGhost}
-          style={{ left: drag.x, top: drag.y, width: drag.width, height: drag.height }}
+          data-dsh-part="drag-ghost"
+          style={{
+            // Keep the grabbed point under the cursor (fluid ghost) instead
+            // of snapping the ghost's top-left corner to the pointer.
+            left: drag.x - drag.dx,
+            top: drag.y - drag.dy,
+            width: drag.width,
+            height: drag.height,
+          }}
           aria-hidden="true"
           dangerouslySetInnerHTML={{ __html: drag.html }}
         />
