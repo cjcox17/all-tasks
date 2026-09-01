@@ -18,6 +18,7 @@ import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EditTaskModal } from './EditTaskModal.tsx'
 import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
+import { effectiveDefaultNames } from './execution-default-labels.ts'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
 import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import { STATUS_KEY } from './status-key.ts'
@@ -125,10 +126,16 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const model = task.model
   const modelKey = model === undefined ? '' : modelSelectionKey(model)
   // The workspace's execution defaults fill any blank target at runtime, so
-  // show the effective value next to fields the task leaves unset.
+  // the blank "Workspace default" option names the effective default (the
+  // workspace default when one exists, else the deployment default), and
+  // unset endpoint/permission fields show it as a hint.
   const defaults = workspaceId === '' ? undefined : workspaceDefaults[workspaceId]
-  const defaultMode = defaults?.mode === undefined ? undefined : options.presets.find(preset => preset.id === defaults.mode)?.name ?? defaults.mode
-  const defaultModel = defaults?.model === undefined ? undefined : `${defaults.model.provider} · ${defaults.model.model}`
+  const { mode: defaultMode, model: defaultModel } = effectiveDefaultNames(
+    workspaceId === '' ? undefined : workspaceId,
+    workspaceDefaults,
+    options.presets,
+    options.models,
+  )
   const defaultEndpoints = defaults?.endpoints === undefined || defaults.endpoints.length === 0
     ? undefined
     : defaults.endpoints.map(id => options.endpoints.find(option => option.id === id)?.name ?? id).join('、')
@@ -217,7 +224,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           disabled={pending}
           onChange={event => { controller.updateTask(task.id, { mode: event.target.value }) }}
         >
-          <option value="">{t('exec.mode.workspaceDefault')}</option>
+          <option value="">{defaultMode === undefined ? t('exec.mode.workspaceDefault') : t('exec.mode.workspaceDefaultWithValue', { value: defaultMode })}</option>
           {!modeKnown && <option value={mode}>{mode}{t('exec.mode.removed')}</option>}
           {options.presets.map(preset => (
             <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
@@ -227,7 +234,6 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             </option>
           ))}
         </select>
-        {mode === '' && workspaceDefaultHint(defaultMode)}
       </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.model')}</span>
@@ -240,7 +246,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             controller.updateTask(task.id, { model: key === '' ? null : parseModelSelectionKey(key) })
           }}
         >
-          <option value="">{t('exec.model.workspaceDefault')}</option>
+          <option value="">{defaultModel === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultModel })}</option>
           {model !== undefined && !modelKnown && (
             <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.removed')}</option>
           )}
@@ -258,7 +264,6 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           ))}
         </select>
         {modelStale && modelKnown && <span className={css.settingsHint}>{t('exec.model.endpointHint')}</span>}
-        {model === undefined && workspaceDefaultHint(defaultModel)}
       </label>
       {model !== undefined && (
         <label className={css.field}>

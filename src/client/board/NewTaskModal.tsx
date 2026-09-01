@@ -15,6 +15,7 @@ import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
+import { effectiveDefaultNames } from './execution-default-labels.ts'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
 import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
@@ -49,6 +50,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   const [pending, setPending] = useState(false)
   const [options, setOptions] = useState(controller.getSnapshot().executionOptions)
   const [groups, setGroups] = useState(controller.getSnapshot().groups)
+  const [workspaceDefaults, setWorkspaceDefaults] = useState(controller.getSnapshot().workspaceDefaults)
 
   // The workspace list, preset roster, model catalog, and group roster arrive
   // from the runtime after mount; follow them so the pickers never freeze on
@@ -58,6 +60,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       const snapshot = controller.getSnapshot()
       setOptions(snapshot.executionOptions)
       setGroups(snapshot.groups)
+      setWorkspaceDefaults(snapshot.workspaceDefaults)
     }),
     [controller],
   )
@@ -114,6 +117,16 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       setGroupId('')
     }
   }
+
+  // A blank execution target resolves at run time to the workspace's default
+  // (the currently selected workspace) or the deployment default, so name the
+  // effective default in the pickers' blank options.
+  const defaultNames = effectiveDefaultNames(
+    workspaceId === '' ? undefined : workspaceId,
+    workspaceDefaults,
+    options.presets,
+    options.models,
+  )
 
   // The model dropdown is constrained by the pinned endpoints: only models at
   // least one pinned endpoint serves are offered (a blank pin = deployment
@@ -192,7 +205,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
             value={mode}
             onChange={event => { setMode(event.target.value) }}
           >
-            <option value="">{t('exec.mode.workspaceDefault')}</option>
+            <option value="">{defaultNames.mode === undefined ? t('exec.mode.workspaceDefault') : t('exec.mode.workspaceDefaultWithValue', { value: defaultNames.mode })}</option>
             {options.presets.map(preset => (
               <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
                 {preset.name ?? preset.id}
@@ -209,7 +222,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
             models={servableModels}
             value={modelKey}
             onChange={setModelKey}
-            blankLabel={t('exec.model.workspaceDefault')}
+            blankLabel={defaultNames.model === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultNames.model })}
             staleLabel={modelStaleLabel}
             staleHint={modelStaleHint}
           />
