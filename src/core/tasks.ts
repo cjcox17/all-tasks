@@ -159,6 +159,16 @@ export interface TaskRecord {
    * tasks remain fully manageable.
    */
   approved?: boolean
+  /**
+   * Auto-advance hold: a member that joined a group whose sequence already
+   * started (any current member has an execution, open or settled) is marked
+   * held — the group's auto-advance chain skips it until the user explicitly
+   * starts it (a manual run, a Start-group, or a group-cron fire all clear
+   * the hold). The member stays fully manually startable either way. Absent
+   * means the member participates in auto-advance (the default; only the
+   * explicit `true` is persisted, mirroring `approved`).
+   */
+  deferAutoStart?: boolean
 }
 
 /**
@@ -167,6 +177,15 @@ export interface TaskRecord {
  */
 export function isTaskApproved(task: Pick<TaskRecord, 'approved'>): boolean {
   return task.approved !== false
+}
+
+/**
+ * Whether a task's group auto-advance is deferred: only the explicit `true`
+ * hold (a member that joined a group whose sequence already started). Absent
+ * and `false` both mean the member may auto-advance.
+ */
+export function isTaskAutoStartDeferred(task: Pick<TaskRecord, 'deferAutoStart'>): boolean {
+  return task.deferAutoStart === true
 }
 
 /** Statuses a settled task may be archived from. */

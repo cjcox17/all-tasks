@@ -186,6 +186,21 @@ describe('parseLedger', () => {
     const malformed = parseLedger(JSON.stringify([{ ...base, approved: 'yes' }]))
     expect(malformed).toEqual([])
   })
+
+  it('keeps only the explicit auto-advance hold (deferAutoStart is the default)', () => {
+    const base = {
+      id: 't1', title: 'a', description: '', prompt: 'a',
+      createdAt: NOW, updatedAt: NOW, executions: [],
+    }
+    const held = parseLedger(JSON.stringify([{ ...base, deferAutoStart: true }]))
+    expect(held[0].deferAutoStart).toBe(true)
+    const unheld = parseLedger(JSON.stringify([{ ...base, deferAutoStart: false }]))
+    expect(unheld[0].deferAutoStart).toBeUndefined()
+    const legacy = parseLedger(JSON.stringify([{ ...base }]))
+    expect(legacy[0].deferAutoStart).toBeUndefined()
+    const malformed = parseLedger(JSON.stringify([{ ...base, deferAutoStart: 'yes' }]))
+    expect(malformed).toEqual([])
+  })
   it('round-trips execution targets and repairs broken ones', () => {
     const pinned = createTask(
       { title: 'pinned', description: '', prompt: '', workspaceId: 'ws-1', mode: 'anchored', permission: 'read-only' },

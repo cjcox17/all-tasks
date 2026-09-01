@@ -279,6 +279,44 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     service.dispose()
   })
 
+  it('does not auto-start a member added to a running group (settle does not launch it)', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
+    const create = vi.fn(async (request: { rpcId: unknown }) => ok(request, { sessionId: `session-${String(request.rpcId)}` }))
+    const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'x', seq: 1 }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = { sessions: { create, rename, prompt } } as unknown as ApiProxy
+    const service = new TaskBoardHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    const flush = (): Promise<void> => new Promise(resolve => { setTimeout(resolve, 0) })
+
+    service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(create).toHaveBeenCalledTimes(1)
+
+    // Add a member while the group is running: held, and nothing launches it.
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+    await flush()
+    expect(create).toHaveBeenCalledTimes(1)
+    const held = ledger.state().tasks.find(task => task.id === 'b')!
+    expect(held.deferAutoStart).toBe(true)
+    expect(held.status).toBe('todo')
+
+    // Settling the running member advances into nothing new: b stays put.
+    const a = ledger.state().tasks.find(task => task.id === 'a')!
+    ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    await flush()
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('todo')
+    expect(ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+    service.dispose()
+  })
+
   it('carries per-workspace defaults in every snapshot, including after an apply', () => {
     const ledger = new HostTaskLedger(root(), () => 0)
     const service = new TaskBoardHostService({} as unknown as ApiProxy, {

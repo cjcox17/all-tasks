@@ -16,6 +16,7 @@ import {
   applyCreateGroup,
   applyDeleteGroup,
   applyUpdateGroup,
+  groupSequenceStarted,
   orderedGroupMembers,
   withGroupMembershipChange,
   withGroupOrder,
@@ -316,6 +317,7 @@ export class BoardController {
     // Legacy path only: the Host ledger syncs the group order on its own.
     if (task.groupId !== undefined && this.groups.some(group => group.id === task.groupId)) {
       this.groups = withGroupMembershipChange(this.groups, id, undefined, task.groupId, this.now())
+      this.syncGroupAutoStartHold(id, task.groupId)
     }
     this.persistAndNotify()
     return task
@@ -360,6 +362,7 @@ export class BoardController {
     // Legacy path only: the Host ledger syncs the group order on its own.
     if (previous !== nextGroupId) {
       this.groups = withGroupMembershipChange(this.groups, id, previous, nextGroupId, this.now())
+      this.syncGroupAutoStartHold(id, nextGroupId)
     }
     this.persistAndNotify()
     return true
@@ -696,6 +699,30 @@ export class BoardController {
    */
   private onSessionsChanged(): void {
     // Intentionally empty: never close the board implicitly.
+  }
+
+  /**
+   * Legacy-seam mirror of the Host ledger's auto-advance hold: a member that
+   * joins a group whose sequence has started ({@link groupSequenceStarted})
+   * is held from the chain until an explicit start; leaving a group (or
+   * joining a fresh one) clears the hold. The Host ledger owns this logic in
+   * production; the mirror keeps the pure in-memory path consistent.
+   */
+  private syncGroupAutoStartHold(taskId: string, groupId: string | undefined): void {
+    this.tasks = this.tasks.map(task => {
+      if (task.id !== taskId) return task
+      if (groupId === undefined) {
+        const { deferAutoStart: _held, ...rest } = task
+        return { ...rest, updatedAt: this.now() }
+      }
+      const group = this.groups.find(candidate => candidate.id === groupId)
+      if (group === undefined) return task
+      if (groupSequenceStarted(group, this.tasks)) {
+        return task.deferAutoStart === true ? task : { ...task, deferAutoStart: true, updatedAt: this.now() }
+      }
+      const { deferAutoStart: _held, ...rest } = task
+      return { ...rest, updatedAt: this.now() }
+    })
   }
 
   private persistAndNotify(): void {

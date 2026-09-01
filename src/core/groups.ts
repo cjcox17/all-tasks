@@ -514,16 +514,31 @@ export function groupWindowOpen(
 }
 
 /**
+ * Whether a group's sequence has started: any current member carries an
+ * execution record (open or settled). Members joining a started group are
+ * held from auto-advance ({@link TaskRecord.deferAutoStart}) so the chain
+ * never picks up work that entered after the sequence began — the sequence
+ * advances only through members that were already in the group when it ran.
+ * A fresh, never-run group returns false and joins stay unheld.
+ */
+export function groupSequenceStarted(group: TaskGroupRecord, tasks: readonly TaskRecord[]): boolean {
+  return tasks.some(task => task.groupId === group.id && task.executions.length > 0)
+}
+
+/**
  * The next member that may auto-start: the first group-order member that is
- * on-board, in a pre-execution column (backlog/todo), and has no open
- * execution. Done/failed/archived/running members are skipped — auto-advance
- * never re-runs settled work or races a running one.
+ * on-board, in a pre-execution column (backlog/todo), has no open execution,
+ * and is not held from auto-advance ({@link TaskRecord.deferAutoStart}).
+ * Done/failed/archived/running/held members are skipped — auto-advance never
+ * re-runs settled work, races a running one, or starts a member that joined
+ * the group after its sequence began.
  */
 export function nextRunnableMember(group: TaskGroupRecord, tasks: readonly TaskRecord[]): TaskRecord | undefined {
   for (const id of group.order) {
     const task = tasks.find(candidate => candidate.id === id)
     if (task === undefined || task.archivedAt !== undefined) continue
     if (task.status !== 'backlog' && task.status !== 'todo') continue
+    if (task.deferAutoStart === true) continue
     if (task.executions.some(execution => execution.endedAt === undefined)) continue
     return task
   }
