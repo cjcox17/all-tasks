@@ -21,6 +21,15 @@ export interface ExecutionRecord {
   sessionId: string | undefined
   /** When the run started (ms epoch). */
   startedAt: number
+  /**
+   * When the session was actually attached (the real launch instant). For a
+   * run that queued for a group slot/endpoint/window, `startedAt` is the
+   * request time while `launchedAt` is when the session began — the host
+   * monitor scans the session from `launchedAt`, so a shared
+   * (maintain-session) sequence never settles a member on an earlier member's
+   * turn. Absent on runs that never launched (queued and cancelled).
+   */
+  launchedAt?: number
   /** When the run settled; absent while still running. */
   endedAt: number | undefined
   /** Outcome once settled. */

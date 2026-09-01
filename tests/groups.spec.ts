@@ -10,6 +10,8 @@ import {
   createGroup,
   effectiveEndpointIds,
   groupCapacityFull,
+  groupCompactsBetween,
+  groupSharesSession,
   groupWindowOpen,
   isGroupExecutionMode,
   nextRunnableMember,
@@ -167,6 +169,25 @@ describe('group update', () => {
     expect(resumed.groups[0]!.stopped).toBeUndefined()
   })
 
+  it('carries maintainSession and compactBetween through creation and the update patch', () => {
+    const group = createGroup({ name: 'Seq', mode: 'sequential', maintainSession: true, compactBetween: true }, NOW, 'g1')!
+    expect(group.maintainSession).toBe(true)
+    expect(group.compactBetween).toBe(true)
+    // Absent input keeps the flags off; false clears them again.
+    const plain = createGroup({ name: 'Plain' }, NOW, 'g2')!
+    expect(plain.maintainSession).toBeUndefined()
+    expect(plain.compactBetween).toBeUndefined()
+
+    const cleared = applyUpdateGroup([group], 'g1', { maintainSession: false, compactBetween: false }, NOW + 1)
+    expect(cleared.applied).toBe(true)
+    expect(cleared.groups[0]!.maintainSession).toBeUndefined()
+    expect(cleared.groups[0]!.compactBetween).toBeUndefined()
+
+    const rearmed = applyUpdateGroup(cleared.groups, 'g1', { maintainSession: true, compactBetween: true }, NOW + 2)
+    expect(rearmed.groups[0]!.maintainSession).toBe(true)
+    expect(rearmed.groups[0]!.compactBetween).toBe(true)
+  })
+
   it('rolls a group schedule forward and keeps lastTriggeredAt on later rolls', () => {
     const group = createGroup({ name: 'G' }, NOW, 'g1')!
     const armed = applyUpdateGroup([group], 'g1', { schedule: { enabled: true, cron: '0 9 * * *' } }, NOW)
@@ -191,7 +212,7 @@ describe('group deletion and persisted rows', () => {
   it('normalizes persisted rows (drops malformed, dedupes ids, repairs schedules, re-derives order)', () => {
     const tasks = [task('t1', { groupId: 'g1' }), task('t2', { groupId: 'g1' })]
     const rows = [
-      { id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true, order: ['t2'], schedule: { enabled: true, cron: '0 9 * * *' } },
+      { id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true, maintainSession: true, compactBetween: true, order: ['t2'], schedule: { enabled: true, cron: '0 9 * * *' } },
       { id: 'g1', name: 'Duplicate' },
       { id: '', name: 'No id' },
       { id: 'g3', name: '   ' },
@@ -200,7 +221,7 @@ describe('group deletion and persisted rows', () => {
     ]
     const groups = normalizeGroupRows(rows, tasks)
     expect(groups).toHaveLength(3)
-    expect(groups[0]).toMatchObject({ id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true })
+    expect(groups[0]).toMatchObject({ id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true, maintainSession: true, compactBetween: true })
     expect(groups[0]!.order).toEqual(['t2', 't1'])
     expect(groups[0]!.schedule).toMatchObject({ enabled: true, cron: '0 9 * * *' })
     // A malformed schedule is dropped with the group kept.
@@ -273,5 +294,17 @@ describe('execution policy helpers', () => {
 
     const archivedT4 = { ...t4, archivedAt: NOW }
     expect(nextRunnableMember(ordered, [t1, runningT2, t3, archivedT4])).toBeUndefined()
+  })
+
+  it('shares a session only for sequential groups with maintainSession, and compacts only when both flags are set', () => {
+    expect(groupSharesSession({ mode: 'sequential', maintainSession: true })).toBe(true)
+    expect(groupSharesSession({ mode: 'sequential', maintainSession: false })).toBe(false)
+    // Parallel groups never share a session (the flag is sequential-only).
+    expect(groupSharesSession({ mode: 'parallel', maintainSession: true })).toBe(false)
+    expect(groupCompactsBetween({ mode: 'sequential', maintainSession: true, compactBetween: true })).toBe(true)
+    // Compaction requires the shared session; the flag alone is inert.
+    expect(groupCompactsBetween({ mode: 'sequential', maintainSession: false, compactBetween: true })).toBe(false)
+    expect(groupCompactsBetween({ mode: 'sequential', maintainSession: true, compactBetween: false })).toBe(false)
+    expect(groupCompactsBetween({ mode: 'parallel', maintainSession: true, compactBetween: true })).toBe(false)
   })
 })

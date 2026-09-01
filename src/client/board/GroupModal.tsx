@@ -39,6 +39,8 @@ export function GroupModal({ controller, group, onClose }: {
   const [windowStart, setWindowStart] = useState(group?.allowedHours?.start ?? '')
   const [windowEnd, setWindowEnd] = useState(group?.allowedHours?.end ?? '')
   const [offPeakOnly, setOffPeakOnly] = useState(group?.offPeakOnly ?? false)
+  const [maintainSession, setMaintainSession] = useState(group?.maintainSession === true)
+  const [compactBetween, setCompactBetween] = useState(group?.compactBetween === true)
   const [scheduleEnabled, setScheduleEnabled] = useState(group?.schedule?.enabled ?? false)
   const [scheduleCron, setScheduleCron] = useState(group?.schedule?.cron ?? '')
   const [error, setError] = useState<string | undefined>(undefined)
@@ -87,6 +89,8 @@ export function GroupModal({ controller, group, onClose }: {
         endpoints: endpoints.length === 0 ? null : endpoints,
         allowedHours: !windowEnabled ? null : { start: windowStart, end: windowEnd },
         offPeakOnly,
+        maintainSession: mode === 'sequential' && maintainSession,
+        compactBetween: mode === 'sequential' && maintainSession && compactBetween,
         schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : null,
       })
       : (await controller.createGroupConfirmed({
@@ -96,6 +100,8 @@ export function GroupModal({ controller, group, onClose }: {
         ...(endpoints.length === 0 ? {} : { endpoints }),
         ...(!windowEnabled ? {} : { allowedHours: { start: windowStart, end: windowEnd } }),
         offPeakOnly,
+        ...(mode === 'sequential' && maintainSession ? { maintainSession: true } : {}),
+        ...(mode === 'sequential' && maintainSession && compactBetween ? { compactBetween: true } : {}),
         ...(scheduleEnabled ? { schedule: { enabled: true, cron: scheduleCron.trim() } } : {}),
       })) !== undefined
     if (!accepted) {
@@ -159,6 +165,36 @@ export function GroupModal({ controller, group, onClose }: {
             onChange={event => { setMaxParallel(event.target.value) }}
           />
         </label>
+      )}
+
+      {mode === 'sequential' && (
+        <>
+          <label className={css.scheduleToggle}>
+            <input
+              type="checkbox"
+              checked={maintainSession}
+              onChange={event => {
+                setMaintainSession(event.target.checked)
+                if (!event.target.checked) setCompactBetween(false)
+              }}
+            />
+            <span>{t('group.maintainSession')}</span>
+          </label>
+          <p className={css.detailText}>{t('group.maintainSessionHint')}</p>
+          {maintainSession && (
+            <>
+              <label className={css.scheduleToggle}>
+                <input
+                  type="checkbox"
+                  checked={compactBetween}
+                  onChange={event => { setCompactBetween(event.target.checked) }}
+                />
+                <span>{t('group.compactBetween')}</span>
+              </label>
+              <p className={css.detailText}>{t('group.compactBetweenHint')}</p>
+            </>
+          )}
+        </>
       )}
 
       <label className={css.field}>

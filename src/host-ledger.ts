@@ -81,6 +81,8 @@ export interface OpenExecutionReference {
   readonly executionId: string
   readonly sessionId: string | undefined
   readonly startedAt: number
+  /** When the session was attached (the real launch instant; see ExecutionRecord.launchedAt). */
+  readonly launchedAt: number | undefined
   /** Group the task belongs to (for capacity accounting). */
   readonly groupId?: string
   /** Endpoint this run is routed through (set while queued or once launched). */
@@ -466,6 +468,7 @@ export class HostTaskLedger {
           executionId: execution.id,
           sessionId: execution.sessionId,
           startedAt: execution.startedAt,
+          launchedAt: execution.launchedAt,
           ...(task.groupId === undefined ? {} : { groupId: task.groupId }),
           ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
           ...(execution.queuedAt === undefined ? {} : { queuedAt: execution.queuedAt }),
@@ -581,6 +584,29 @@ export class HostTaskLedger {
         members,
       }
     })
+  }
+
+  /**
+   * The shared session of a maintain-session group: the session of the group's
+   * newest settled member execution. A sequential group runs one member at a
+   * time, so when the next member launches, the previous member's execution is
+   * the newest settled one and its session is the conversation to continue.
+   * Absent when no member has settled yet (the first member then creates a
+   * fresh session) or the only settled executions have no session (queued runs
+   * that never launched).
+   */
+  groupSharedSession(groupId: string): { sessionId: string; taskId: string } | undefined {
+    let newest: { sessionId: string; taskId: string; endedAt: number } | undefined
+    for (const task of this.document.tasks) {
+      if (task.groupId !== groupId) continue
+      for (const execution of task.executions) {
+        if (execution.endedAt === undefined || execution.sessionId === undefined) continue
+        if (newest === undefined || execution.endedAt > newest.endedAt) {
+          newest = { sessionId: execution.sessionId, taskId: task.id, endedAt: execution.endedAt }
+        }
+      }
+    }
+    return newest === undefined ? undefined : { sessionId: newest.sessionId, taskId: newest.taskId }
   }
 
   /**
@@ -775,7 +801,7 @@ export class HostTaskLedger {
     this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
       ...task,
       updatedAt: now,
-      executions: task.executions.map(entry => entry.id === executionId ? { ...entry, sessionId } : entry),
+      executions: task.executions.map(entry => entry.id === executionId ? { ...entry, sessionId, launchedAt: now } : entry),
     })
     this.commit()
   }

@@ -151,7 +151,7 @@ function validImportedKnownFields(value: Record<string, unknown>): boolean {
       const execution = record(item)
       if (execution === undefined || typeof execution.id !== 'string' || !optionalString(execution.sessionId)) return false
       if (typeof execution.startedAt !== 'number' || !Number.isFinite(execution.startedAt)) return false
-      if (!optionalFiniteNumber(execution.endedAt) || !optionalString(execution.error)) return false
+      if (!optionalFiniteNumber(execution.launchedAt) || !optionalFiniteNumber(execution.endedAt) || !optionalString(execution.error)) return false
       if (execution.result !== undefined && !['succeeded', 'failed', 'cancelled'].includes(String(execution.result))) return false
     }
   }
@@ -175,6 +175,7 @@ function importedTask(value: unknown): TaskRecord | undefined {
       id: execution.id,
       sessionId: execution.sessionId,
       startedAt: execution.startedAt,
+      launchedAt: execution.launchedAt,
       endedAt: execution.endedAt,
       result: execution.result,
       error: execution.error,
@@ -260,13 +261,15 @@ function groupScheduleField(value: unknown): boolean {
 /** Gate a group create input. */
 function groupInput(value: unknown): value is GroupCreateInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'schedule'])) return false
   if (typeof input.name !== 'string' || input.name.trim() === '' || input.name.length > GROUP_FIELD_BOUND) return false
   if (input.mode !== undefined && !isGroupExecutionMode(input.mode)) return false
   if (input.maxParallel !== undefined && normalizeMaxParallel(input.maxParallel) === undefined) return false
   if (input.endpoints !== undefined && !Array.isArray(input.endpoints) && normalizeEndpointList(input.endpoints) === undefined) return false
   if (input.allowedHours !== undefined && normalizeDailyWindow(input.allowedHours) === undefined) return false
   if (input.offPeakOnly !== undefined && typeof input.offPeakOnly !== 'boolean') return false
+  if (input.maintainSession !== undefined && typeof input.maintainSession !== 'boolean') return false
+  if (input.compactBetween !== undefined && typeof input.compactBetween !== 'boolean') return false
   if (input.schedule !== undefined && !groupScheduleField(input.schedule)) return false
   return true
 }
@@ -274,13 +277,15 @@ function groupInput(value: unknown): value is GroupCreateInput {
 /** Gate a group update patch (every field optional; null clears a field). */
 function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'stopped', 'schedule'])) return false
+  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'stopped', 'schedule'])) return false
   if (patch.name !== undefined && (typeof patch.name !== 'string' || patch.name.trim() === '' || patch.name.length > GROUP_FIELD_BOUND)) return false
   if (patch.mode !== undefined && !isGroupExecutionMode(patch.mode)) return false
   if (patch.maxParallel !== undefined && patch.maxParallel !== null && normalizeMaxParallel(patch.maxParallel) === undefined) return false
   if (patch.endpoints !== undefined && patch.endpoints !== null && !Array.isArray(patch.endpoints) && normalizeEndpointList(patch.endpoints) === undefined) return false
   if (patch.allowedHours !== undefined && patch.allowedHours !== null && normalizeDailyWindow(patch.allowedHours) === undefined) return false
   if (patch.offPeakOnly !== undefined && typeof patch.offPeakOnly !== 'boolean') return false
+  if (patch.maintainSession !== undefined && typeof patch.maintainSession !== 'boolean') return false
+  if (patch.compactBetween !== undefined && typeof patch.compactBetween !== 'boolean') return false
   if (patch.stopped !== undefined && typeof patch.stopped !== 'boolean') return false
   if (patch.schedule !== undefined && patch.schedule !== null && !groupScheduleField(patch.schedule)) return false
   return true

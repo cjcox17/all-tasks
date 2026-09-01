@@ -73,6 +73,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
     if (typeof entry.id !== 'string') return false
     if (entry.sessionId !== undefined && typeof entry.sessionId !== 'string') return false
     if (typeof entry.startedAt !== 'number') return false
+    if (entry.launchedAt !== undefined && typeof entry.launchedAt !== 'number') return false
     if (entry.endedAt !== undefined && typeof entry.endedAt !== 'number') return false
     if (entry.result !== undefined && entry.result !== 'succeeded' && entry.result !== 'failed' && entry.result !== 'cancelled') return false
     if (entry.error !== undefined && typeof entry.error !== 'string') return false
