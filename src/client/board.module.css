@@ -1144,7 +1144,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
    rather than a full-bleed wall; it scrolls horizontally only if a very narrow
    view forces it to. */
 .directory {
-  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
+  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 70px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1325,6 +1325,16 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
+}
+
+/* The run / stop / pause / continue / settings icons on a workspace row are
+   the row's primary controls — bigger glyphs and hit areas than the base
+   icon button so they read as actions, not decoration. */
+.directoryControls .iconButton,
+.directoryActions .iconButton {
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
 }
 
 /* The leading chevron toggles the inline directory; rotates to point down when
@@ -1867,7 +1877,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
+    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 70px;
     padding: 4px 0 12px;
   }
 
