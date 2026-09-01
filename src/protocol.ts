@@ -260,8 +260,9 @@ function groupScheduleField(value: unknown): boolean {
 /** Gate a group create input. */
 function groupInput(value: unknown): value is GroupCreateInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['name', 'workspaceId', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
   if (typeof input.name !== 'string' || input.name.trim() === '' || input.name.length > GROUP_FIELD_BOUND) return false
+  if (!optionalString(input.workspaceId)) return false
   if (input.mode !== undefined && !isGroupExecutionMode(input.mode)) return false
   if (input.maxParallel !== undefined && normalizeMaxParallel(input.maxParallel) === undefined) return false
   if (input.endpoints !== undefined && !Array.isArray(input.endpoints) && normalizeEndpointList(input.endpoints) === undefined) return false
@@ -295,6 +296,12 @@ function groupOrderPayload(value: unknown): value is string[] {
 /** Sanitize the optional fields of a group create/update payload (mirror of the create/update task sanitizer). */
 function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUpdatePatch | GroupCreateInput {
   const sanitized: GroupUpdatePatch | GroupCreateInput = { ...patch }
+  if ('workspaceId' in sanitized) {
+    // A blank scope collapses to unassigned (absent); only create carries it.
+    const workspaceId = sanitized.workspaceId === undefined ? undefined : sanitized.workspaceId.trim()
+    if (workspaceId === undefined || workspaceId === '') delete sanitized.workspaceId
+    else sanitized.workspaceId = workspaceId
+  }
   if ('maxParallel' in sanitized && sanitized.maxParallel !== undefined && sanitized.maxParallel !== null) {
     sanitized.maxParallel = normalizeMaxParallel(sanitized.maxParallel)
   }

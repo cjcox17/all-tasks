@@ -6,6 +6,9 @@
  *
  * Groups are ledger entities (not plugin settings), so every change goes
  * through the Host actions; the modal closes only after the Host confirms.
+ * Groups are workspace-scoped: a new group belongs to the workspace the
+ * modal was opened from (`workspaceId`; absent = the unassigned scope), and
+ * that scope is fixed for the group's life.
  */
 import { useEffect, useState } from 'react'
 import type { BoardController } from '../../core/controller.ts'
@@ -19,10 +22,12 @@ import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
 import { ModalShell } from './TaskForm.tsx'
 
-export function GroupModal({ controller, group, onClose }: {
+export function GroupModal({ controller, group, workspaceId, onClose }: {
   controller: BoardController
   /** Present when editing an existing group; absent when creating. */
   group?: TaskGroupRecord
+  /** The workspace a NEW group is created in (the kanban's scope); absent = the unassigned scope. */
+  workspaceId?: string
   onClose: () => void
 }) {
   const [snapshot, setSnapshot] = useState(controller.getSnapshot())
@@ -46,6 +51,12 @@ export function GroupModal({ controller, group, onClose }: {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const editing = group !== undefined
+  // The group's scope is fixed at creation: an existing group shows its own,
+  // a new one is bound to the workspace the modal was opened from.
+  const scope = group?.workspaceId ?? workspaceId
+  const scopeLabel = scope === undefined
+    ? t('group.workspaceNone')
+    : snapshot.executionOptions.workspaces.find(workspace => workspace.workspaceId === scope)?.title ?? scope
   // Archived members cannot be ungrouped or reordered through update-task
   // (archived tasks are read-only), so keep them out of the order editor.
   const members = editing ? controller.groupMembers(group.id).filter(member => member.archivedAt === undefined) : []
@@ -91,6 +102,7 @@ export function GroupModal({ controller, group, onClose }: {
       })
       : (await controller.createGroupConfirmed({
         name: name.trim(),
+        ...(scope === undefined ? {} : { workspaceId: scope }),
         mode,
         ...(maxParallel.trim() === '' ? {} : { maxParallel: Number(maxParallel) }),
         ...(endpoints.length === 0 ? {} : { endpoints }),
@@ -133,6 +145,14 @@ export function GroupModal({ controller, group, onClose }: {
           autoFocus
           onChange={event => { setName(event.target.value); setError(undefined) }}
         />
+      </label>
+
+      <label className={css.field}>
+        <span className={css.fieldLabel}>{t('group.workspace')}</span>
+        <select className={css.select} value={scope ?? ''} disabled>
+          <option value={scope ?? ''}>{scopeLabel}</option>
+        </select>
+        <span className={css.detailText}>{t('group.workspaceHint')}</span>
       </label>
 
       <label className={css.field}>

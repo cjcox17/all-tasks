@@ -18,6 +18,7 @@ import {
   normalizeGroupRows,
   normalizeMaxParallel,
   orderedGroupMembers,
+  taskMatchesGroupScope,
   withGroupMembershipChange,
   withGroupOrder,
   withGroupScheduleRoll,
@@ -210,6 +211,72 @@ describe('group deletion and persisted rows', () => {
     // A malformed maxParallel is dropped with the group kept.
     expect(groups[2]!.id).toBe('g5')
     expect(groups[2]!.maxParallel).toBeUndefined()
+  })
+})
+
+describe('workspace-scoped groups', () => {
+  it('stores a normalized workspace scope at creation and drops a blank one', () => {
+    const scoped = createGroup({ name: 'G', workspaceId: ' ws-1 ' }, NOW, 'g1')
+    expect(scoped?.workspaceId).toBe('ws-1')
+    const unassigned = createGroup({ name: 'G', workspaceId: '   ' }, NOW, 'g1')
+    expect(unassigned?.workspaceId).toBeUndefined()
+    const absent = createGroup({ name: 'G' }, NOW, 'g1')
+    expect(absent?.workspaceId).toBeUndefined()
+  })
+
+  it('matches a task to a group only when the workspace pins agree (absent = unassigned)', () => {
+    expect(taskMatchesGroupScope({ workspaceId: 'ws-a' }, { workspaceId: 'ws-a' })).toBe(true)
+    expect(taskMatchesGroupScope({ workspaceId: 'ws-a' }, {})).toBe(false)
+    expect(taskMatchesGroupScope({ workspaceId: 'ws-a' }, { workspaceId: 'ws-b' })).toBe(false)
+    expect(taskMatchesGroupScope({}, {})).toBe(true)
+    expect(taskMatchesGroupScope({}, { workspaceId: 'ws-a' })).toBe(false)
+  })
+
+  it('orders members within the group scope only (foreign-workspace tasks never join the order)', () => {
+    const group = createGroup({ name: 'G', workspaceId: 'ws-a' }, NOW, 'g1')!
+    const tasks = [
+      task('t-a', { workspaceId: 'ws-a', groupId: 'g1' }),
+      task('t-u', { groupId: 'g1' }),
+      task('t-b', { workspaceId: 'ws-b', groupId: 'g1' }),
+    ]
+    expect(orderedGroupMembers(group, tasks).map(t => t.id)).toEqual(['t-a'])
+    const unassigned = createGroup({ name: 'U' }, NOW, 'g-u')!
+    const unassignedTasks = [task('t-u2', { groupId: 'g-u' }), task('t-a', { workspaceId: 'ws-a', groupId: 'g1' })]
+    expect(orderedGroupMembers(unassigned, unassignedTasks).map(t => t.id)).toEqual(['t-u2'])
+  })
+
+  it('keeps an explicit row scope and excludes foreign members from the order', () => {
+    const tasks = [
+      task('t-a', { workspaceId: 'ws-a', groupId: 'g1' }),
+      task('t-u', { groupId: 'g1' }),
+    ]
+    const rows = [{ id: 'g1', name: 'A', workspaceId: 'ws-a', order: ['t-a', 't-u'] }]
+    const groups = normalizeGroupRows(rows, tasks)
+    expect(groups[0]!.workspaceId).toBe('ws-a')
+    expect(groups[0]!.order).toEqual(['t-a'])
+  })
+
+  it('migrates a legacy row without a scope to its members\' single workspace', () => {
+    const tasks = [
+      task('t1', { workspaceId: 'ws-1', groupId: 'g1' }),
+      task('t2', { workspaceId: 'ws-1', groupId: 'g1' }),
+    ]
+    const rows = [{ id: 'g1', name: 'Legacy', order: ['t2'] }]
+    const groups = normalizeGroupRows(rows, tasks)
+    expect(groups[0]!.workspaceId).toBe('ws-1')
+    expect(groups[0]!.order).toEqual(['t2', 't1'])
+  })
+
+  it('flattens a mixed-workspace legacy row to the unassigned scope, keeping only unassigned members', () => {
+    const tasks = [
+      task('t1', { workspaceId: 'ws-1', groupId: 'g1' }),
+      task('t2', { workspaceId: 'ws-2', groupId: 'g1' }),
+      task('t3', { groupId: 'g1' }),
+    ]
+    const rows = [{ id: 'g1', name: 'Mixed', order: ['t1', 't2', 't3'] }]
+    const groups = normalizeGroupRows(rows, tasks)
+    expect(groups[0]!.workspaceId).toBeUndefined()
+    expect(groups[0]!.order).toEqual(['t3'])
   })
 })
 

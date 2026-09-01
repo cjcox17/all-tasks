@@ -10,6 +10,7 @@ import {
   applyUpdateGroup,
   normalizeGroupOrder,
   normalizeGroupRows,
+  taskMatchesGroupScope,
   withGroupMembershipChange,
   withGroupOrder,
   withGroupScheduleRoll,
@@ -819,6 +820,16 @@ export class HostTaskLedger {
         const merged = new Map(this.document.tasks.map(task => [task.id, task]))
         for (const task of incoming) merged.set(task.id, merged.has(task.id) ? mergeTask(merged.get(task.id)!, task) : task)
         this.document.tasks = [...merged.values()]
+        // Groups are workspace-scoped: an imported task referencing a vanished
+        // group or one of another workspace scope loses the reference (the
+        // same healing the loader applies), so it never renders invisibly.
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId === undefined) return task
+          const group = this.document.groups.find(candidate => candidate.id === task.groupId)
+          if (group !== undefined && taskMatchesGroupScope(task, group)) return task
+          const { groupId: _dangling, ...rest } = task
+          return rest
+        })
         this.document.scheduler.importedSources = [...sources, action.sourceId]
         this.document.scheduler.error = invalidScheduleIds.length === 0
           ? undefined
@@ -832,14 +843,19 @@ export class HostTaskLedger {
         if (action.input.schedule?.enabled === true && (!isValidCron(action.input.schedule.cron) || nextRunAtMs(action.input.schedule.cron, now) === undefined)) {
           throw new Error('invalid schedule')
         }
-        if (action.input.groupId !== undefined && !this.document.groups.some(group => group.id === action.input.groupId)) {
-          throw new Error('group not found')
-        }
         const result = applyCreateTask(this.document.tasks, action.input, now, action.id)
         if (result.task === undefined) throw new Error('invalid task')
+        const created = result.task
+        if (created.groupId !== undefined) {
+          // A group is workspace-scoped: the task may join only when its own
+          // workspace pin equals the group's scope (absent = unassigned).
+          const group = this.document.groups.find(candidate => candidate.id === created.groupId)
+          if (group === undefined) throw new Error('group not found')
+          if (!taskMatchesGroupScope(created, group)) throw new Error('group does not belong to the task workspace')
+        }
         this.document.tasks = [...result.tasks]
-        if (action.input.groupId !== undefined) {
-          this.document.groups = withGroupMembershipChange(this.document.groups, action.id, undefined, action.input.groupId, now)
+        if (created.groupId !== undefined) {
+          this.document.groups = withGroupMembershipChange(this.document.groups, action.id, undefined, created.groupId, now)
         }
         break
       }
@@ -856,17 +872,31 @@ export class HostTaskLedger {
         }
         if ('title' in action.patch && action.patch.title?.trim() === '') throw new Error('title is required')
         const previousGroupId = task.groupId
+        // The workspace the task lands in after this patch (mirror of the
+        // applyUpdateTask normalization: absent/blank = unassigned).
+        const nextWorkspaceId = 'workspaceId' in action.patch
+          ? (action.patch.workspaceId === undefined ? undefined : action.patch.workspaceId.trim() === '' ? undefined : action.patch.workspaceId.trim())
+          : task.workspaceId
         // A patch that does not mention groupId leaves membership untouched;
         // only an explicit null (or a blank/unknown id) ungroups the task.
         // Treating an absent field as "ungroup" would drop a grouped task from
         // its group's member order on every content/target edit.
-        const nextGroupId = 'groupId' in action.patch
+        const explicitGroupChange = 'groupId' in action.patch
+        let nextGroupId = explicitGroupChange
           ? (action.patch.groupId === null || action.patch.groupId === undefined
             ? undefined
             : action.patch.groupId.trim() === '' ? undefined : action.patch.groupId.trim())
           : previousGroupId
-        if (nextGroupId !== undefined && !this.document.groups.some(group => group.id === nextGroupId)) {
-          throw new Error('group not found')
+        if (nextGroupId !== undefined) {
+          const group = this.document.groups.find(candidate => candidate.id === nextGroupId)
+          if (group === undefined) throw new Error('group not found')
+          if (group.workspaceId !== nextWorkspaceId) {
+            // An explicit mismatched join is a user error (fail closed); an
+            // implicit keep-through (the patch only moved the workspace) means
+            // the task left its old workspace's scope, so it leaves the group.
+            if (explicitGroupChange) throw new Error('group does not belong to the task workspace')
+            nextGroupId = undefined
+          }
         }
         // A running member keeps its group's capacity slot until its execution
         // settles; moving it between groups (or out of the group) would leak
@@ -875,8 +905,14 @@ export class HostTaskLedger {
         if ((task.status === 'running' || hasOpenExecution(task)) && previousGroupId !== nextGroupId) {
           throw new Error('running task cannot be moved between groups')
         }
-        this.document.tasks = [...applyUpdateTask(this.document.tasks, action.taskId, action.patch, now)]
-        if (previousGroupId !== nextGroupId) {
+        const membershipChanged = previousGroupId !== nextGroupId
+        // When the workspace move implicitly ungrouped the task, the task's
+        // own groupId must clear too — not just the group's member order.
+        const effectivePatch = membershipChanged && nextGroupId === undefined && previousGroupId !== undefined
+          ? { ...action.patch, groupId: null }
+          : action.patch
+        this.document.tasks = [...applyUpdateTask(this.document.tasks, action.taskId, effectivePatch, now)]
+        if (membershipChanged) {
           this.document.groups = withGroupMembershipChange(this.document.groups, action.taskId, previousGroupId, nextGroupId, now)
         }
         break
@@ -1113,9 +1149,14 @@ export class HostTaskLedger {
    * already exact is left untouched, so this is a pure invariant pass.
    */
   private normalizeGroupOrders(now: number): void {
+    // Members are workspace-scoped: a task whose workspace pin does not match
+    // the group's scope never counts toward its order (defensive — every
+    // membership transition and the loader already enforce this).
+    const scopes = new Map(this.document.groups.map(group => [group.id, group.workspaceId]))
     const membersByGroup = new Map<string, string[]>()
     for (const task of this.document.tasks) {
       if (task.groupId === undefined) continue
+      if (!scopes.has(task.groupId) || task.workspaceId !== scopes.get(task.groupId)) continue
       const list = membersByGroup.get(task.groupId) ?? []
       list.push(task.id)
       membersByGroup.set(task.groupId, list)
@@ -1183,13 +1224,19 @@ export class HostTaskLedger {
     try {
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<LedgerDocument>
       if (parsed.schemaVersion !== TASK_BOARD_SCHEMA_VERSION || !Array.isArray(parsed.tasks)) throw new Error('unsupported ledger schema')
-      // Parse groups first (ids only) so a task pointing at a vanished group
-      // loses the dangling reference before the group order is re-derived.
-      const groupsProto = normalizeGroupRows(parsed.groups, [])
-      const groupIds = new Set(groupsProto.map(group => group.id))
-      const tasks = parseHostTasks(parsed.tasks).map(task => {
+      // Groups are workspace-scoped: normalize against the parsed tasks so a
+      // legacy group without an explicit scope adopts its members' workspace
+      // (the one-time migration), then drop any membership whose task
+      // workspace does not match the group's scope — a task pointing at a
+      // vanished group loses the dangling reference the same way — before the
+      // group order is re-derived.
+      const tasksPre = parseHostTasks(parsed.tasks)
+      const groupsProto = normalizeGroupRows(parsed.groups, tasksPre)
+      const groupScopes = new Map(groupsProto.map(group => [group.id, group.workspaceId]))
+      const tasks = tasksPre.map(task => {
         const normalized = { ...task, executions: retainRecentExecutions(task.executions) }
-        if (normalized.groupId === undefined || groupIds.has(normalized.groupId)) return normalized
+        if (normalized.groupId === undefined) return normalized
+        if (groupScopes.has(normalized.groupId) && normalized.workspaceId === groupScopes.get(normalized.groupId)) return normalized
         const { groupId: _dangling, ...rest } = normalized
         return rest
       })

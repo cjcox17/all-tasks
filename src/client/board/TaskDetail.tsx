@@ -111,12 +111,30 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   // A pinned target may disappear from the runtime (workspace deleted,
   // preset removed, model dropped from the catalog, group deleted); keep it
   // selectable as a stale row instead of silently dropping it, so the user
-  // sees exactly what the task will ask for.
-  const groupKnown = groupId === '' || groups.some(group => group.id === groupId)
+  // sees exactly what the task will ask for. Groups are workspace-scoped, so
+  // the picker offers only the groups of the task's own workspace scope (a
+  // group pinned to another scope shows as a stale row).
+  const workspaceScope = workspaceId === '' ? undefined : workspaceId
+  const scopeGroups = groups.filter(group => group.workspaceId === workspaceScope)
+  const groupKnown = groupId === '' || scopeGroups.some(group => group.id === groupId)
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
   const modelKnown = model === undefined || options.models.some(item => item.provider === model.provider && item.model === model.model)
   const modelGroups = groupExecutionModelOptions(options.models)
+
+  /** Change the task's workspace, clearing a group that cannot follow it. */
+  const changeWorkspace = (next: string): void => {
+    // Moving a task into another workspace leaves its old workspace's groups
+    // behind (membership is workspace-locked Host-side), so clear the group
+    // in the same patch instead of leaving a dangling reference.
+    const group = groups.find(candidate => candidate.id === groupId)
+    if (groupId !== '' && group !== undefined && group.workspaceId !== (next === '' ? undefined : next)) {
+      void controller.updateTask(task.id, { workspaceId: next, groupId: null })
+      return
+    }
+    void controller.updateTask(task.id, { workspaceId: next })
+  }
+
   return (
     <section className={css.detailSection}>
       <h4>{t('detail.executionSettings')}</h4>
@@ -131,7 +149,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
         >
           <option value="">{t('exec.group.default')}</option>
           {!groupKnown && <option value={groupId}>{groupId}{t('exec.mode.removed')}</option>}
-          {groups.map(group => (
+          {scopeGroups.map(group => (
             <option key={group.id} value={group.id}>{group.name}</option>
           ))}
         </select>
@@ -142,7 +160,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           className={css.select}
           value={workspaceId}
           disabled={pending}
-          onChange={event => { controller.updateTask(task.id, { workspaceId: event.target.value }) }}
+          onChange={event => { changeWorkspace(event.target.value) }}
         >
           <option value="">{t('exec.workspace.recent')}</option>
           {!workspaceKnown && <option value={workspaceId}>{workspaceId}{t('exec.mode.removed')}</option>}

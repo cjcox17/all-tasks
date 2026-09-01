@@ -707,34 +707,41 @@ describe('TaskBoard workspace landing list', () => {
     expect(container.textContent).toContain('Alpha')
   })
 
-  it('keeps groups whole in a scoped view: matching and unpinned members stay grouped, other workspaces drop out', async () => {
-    const GROUP: TaskGroupRecord = {
-      id: 'g1',
-      name: 'Nightly',
-      mode: 'sequential',
-      order: ['t-a', 't-u', 't-b'],
-      createdAt: 0,
-      updatedAt: 0,
-      offPeakOnly: false,
+  it('scopes groups to their workspace: only that workspace\'s groups show in the main columns, unassigned-scope groups live in the Unassigned section', async () => {
+    const WS_A_GROUP: TaskGroupRecord = {
+      id: 'g-a', name: 'Nightly A', mode: 'sequential', order: ['t-a'], createdAt: 0, updatedAt: 0, offPeakOnly: false, workspaceId: 'ws-a',
+    }
+    const UNASSIGNED_GROUP: TaskGroupRecord = {
+      id: 'g-u', name: 'Open', mode: 'sequential', order: ['t-u'], createdAt: 0, updatedAt: 0, offPeakOnly: false,
+    }
+    const WS_B_GROUP: TaskGroupRecord = {
+      id: 'g-b', name: 'Nightly B', mode: 'sequential', order: ['t-b'], createdAt: 0, updatedAt: 0, offPeakOnly: false, workspaceId: 'ws-b',
     }
     const { container } = await renderBoard({
       tasks: [
-        task({ id: 't-a', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
-        task({ id: 't-u', title: 'Member U', status: 'todo', groupId: 'g1' }),
-        task({ id: 't-b', title: 'Member B', status: 'todo', workspaceId: 'ws-b', groupId: 'g1' }),
+        task({ id: 't-a', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g-a' }),
+        task({ id: 't-u', title: 'Member U', status: 'todo', groupId: 'g-u' }),
+        task({ id: 't-b', title: 'Member B', status: 'todo', workspaceId: 'ws-b', groupId: 'g-b' }),
       ],
-      groups: [GROUP],
+      groups: [WS_A_GROUP, UNASSIGNED_GROUP, WS_B_GROUP],
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
     })
 
     await openWorkspace(container, 'ws-a')
 
-    const section = container.querySelector('[data-group="g1"]')
-    expect(section).not.toBeNull()
-    const memberTitles = Array.from(section!.querySelectorAll('button[data-dsh-part="card"]')).map(card => card.textContent ?? '')
+    // The workspace's own group renders in the main columns with its members.
+    const main = container.querySelector('[data-group="g-a"]')
+    expect(main).not.toBeNull()
+    const memberTitles = Array.from(main!.querySelectorAll('button[data-dsh-part="card"]')).map(card => card.textContent ?? '')
     expect(memberTitles.some(text => text.includes('Member A'))).toBe(true)
-    expect(memberTitles.some(text => text.includes('Member U'))).toBe(true)
-    expect(memberTitles.some(text => text.includes('Member B'))).toBe(false)
+    // Another workspace's group is not rendered at all in this scope.
+    expect(container.querySelector('[data-group="g-b"]')).toBeNull()
+    // The unassigned-scope group renders inside the Unassigned section.
+    const unassignedSection = container.querySelector('[data-dsh-part="unassigned"]')
+    expect(unassignedSection).not.toBeNull()
+    const unassignedGroup = unassignedSection!.querySelector('[data-group="g-u"]')
+    expect(unassignedGroup).not.toBeNull()
+    expect(unassignedGroup!.textContent).toContain('Member U')
   })
 
   it('keeps workspaces pinned by tasks but missing from the runtime list visible in the grid', async () => {
@@ -993,7 +1000,7 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
     return chevron
   }
 
-  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false, workspaceId: 'ws-a' }
   const ALPHA_ONLY = { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] }
 
   it('shows a workspace\'s group band and task rows by default and opens a task from a row', async () => {

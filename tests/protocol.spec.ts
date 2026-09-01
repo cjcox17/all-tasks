@@ -200,15 +200,25 @@ describe('group action gate', () => {
       requestId: 'create-group',
       action: {
         kind: 'create-group', id: 'g1',
-        input: { name: ' Nightly ', mode: 'parallel', maxParallel: 2, endpoints: [' cloud ', 'local'], allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' } },
+        input: { name: ' Nightly ', workspaceId: ' ws-1 ', mode: 'parallel', maxParallel: 2, endpoints: [' cloud ', 'local'], allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' } },
       },
     })
     expect(parsed?.action.kind).toBe('create-group')
     if (parsed?.action.kind !== 'create-group') throw new Error('expected create-group')
     expect(parsed.action.input).toMatchObject({
-      name: ' Nightly ', mode: 'parallel', maxParallel: 2, endpoints: ['cloud', 'local'],
+      name: ' Nightly ', workspaceId: 'ws-1', mode: 'parallel', maxParallel: 2, endpoints: ['cloud', 'local'],
       allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' },
     })
+  })
+
+  it('drops a blank workspace scope on a group create (unassigned scope)', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'create-group',
+      action: { kind: 'create-group', id: 'g1', input: { name: 'G', workspaceId: '   ' } },
+    })
+    expect(parsed?.action.kind).toBe('create-group')
+    if (parsed?.action.kind !== 'create-group') throw new Error('expected create-group')
+    expect(parsed.action.input.workspaceId).toBeUndefined()
   })
 
   it('rejects malformed group creates', () => {
@@ -219,6 +229,7 @@ describe('group action gate', () => {
       { kind: 'create-group', id: 'g1', input: { name: 'A', endpoints: 'cloud' } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', allowedHours: { start: '99:99', end: '00:00' } } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', offPeakOnly: 'yes' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', workspaceId: 5 } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', schedule: { enabled: 'yes', cron: '0 9 * * *' } } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', extra: 1 } },
       { kind: 'create-group', id: 'g1' },

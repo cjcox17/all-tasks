@@ -93,6 +93,7 @@ describe('workspaceTaskDirectory', () => {
     createdAt: 0,
     updatedAt: 0,
     offPeakOnly: false,
+    workspaceId: 'ws-a',
   }
 
   it('groups a workspace\'s on-board members in group order and lists its ungrouped tasks', () => {
@@ -109,32 +110,55 @@ describe('workspaceTaskDirectory', () => {
     expect(directory.ungrouped.map(member => member.id)).toEqual(['t-c'])
   })
 
-  it('excludes archived tasks and members pinned to other workspaces in a scoped view', () => {
+  it('excludes archived tasks in a scoped view and never shows another workspace\'s groups', () => {
     const tasks = [
       task({ id: 't-a', title: 'A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
-      task({ id: 't-b', title: 'B', status: 'todo', workspaceId: 'ws-b', groupId: 'g1' }),
+      task({ id: 't-b', title: 'B', status: 'todo', workspaceId: 'ws-b', groupId: 'g-b' }),
       task({ id: 't-c', title: 'C', status: 'todo', workspaceId: 'ws-a', groupId: 'g1', archivedAt: 1 }),
     ]
-    const directory = workspaceTaskDirectory(tasks, [GROUP], 'ws-a')
+    const directory = workspaceTaskDirectory(tasks, [GROUP, { ...GROUP, id: 'g-b', workspaceId: 'ws-b' }], 'ws-a')
+    expect(directory.grouped).toHaveLength(1)
     expect(directory.grouped[0]!.members.map(member => member.id)).toEqual(['t-a'])
   })
 
   it('drops groups with no on-board members in scope', () => {
-    const tasks = [task({ id: 't-b', title: 'B', status: 'todo', workspaceId: 'ws-b', groupId: 'g1' })]
+    const tasks = [task({ id: 't-b', title: 'B', status: 'todo', workspaceId: 'ws-b', groupId: 'g-b' })]
     const directory = workspaceTaskDirectory(tasks, [GROUP], 'ws-a')
     expect(directory.grouped).toHaveLength(0)
     expect(directory.ungrouped).toHaveLength(0)
   })
 
-  it('the All overview (undefined) spans every workspace and keeps unpinned members in groups', () => {
+  it('keeps unassigned-scope groups out of a workspace row (only the All overview spans them)', () => {
+    const unassignedGroup: TaskGroupRecord = {
+      id: 'g-u', name: 'Open', mode: 'sequential', order: ['t-u'], createdAt: 0, updatedAt: 0, offPeakOnly: false,
+    }
+    const tasks = [
+      task({ id: 't-u', title: 'U', status: 'todo', groupId: 'g-u' }),
+      task({ id: 't-a', title: 'A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
+    ]
+    const scoped = workspaceTaskDirectory(tasks, [GROUP, unassignedGroup], 'ws-a')
+    expect(scoped.grouped.map(entry => entry.group.id)).toEqual(['g1'])
+    expect(scoped.ungrouped).toHaveLength(0)
+    const all = workspaceTaskDirectory(tasks, [GROUP, unassignedGroup], undefined)
+    expect(all.grouped.map(entry => entry.group.id).sort()).toEqual(['g-u', 'g1'])
+  })
+
+  it('the All overview (undefined) spans every workspace and keeps each group\'s own-scope members', () => {
+    const unassignedGroup: TaskGroupRecord = {
+      id: 'g-u', name: 'Open', mode: 'sequential', order: ['t-u'], createdAt: 0, updatedAt: 0, offPeakOnly: false,
+    }
     const tasks = [
       task({ id: 't-a', title: 'A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
-      task({ id: 't-u', title: 'U', status: 'todo', groupId: 'g1' }),
+      task({ id: 't-u', title: 'U', status: 'todo', groupId: 'g-u' }),
       task({ id: 't-c', title: 'C', status: 'todo', workspaceId: 'ws-b' }),
       task({ id: 't-arc', title: 'Arc', status: 'done', workspaceId: 'ws-a', archivedAt: 1 }),
     ]
-    const directory = workspaceTaskDirectory(tasks, [GROUP], undefined)
-    expect(directory.grouped[0]!.members.map(member => member.id)).toEqual(['t-a', 't-u'])
+    const directory = workspaceTaskDirectory(tasks, [GROUP, unassignedGroup], undefined)
+    expect(directory.grouped).toHaveLength(2)
+    const wsMembers = directory.grouped.find(entry => entry.group.id === 'g1')!.members
+    expect(wsMembers.map(member => member.id)).toEqual(['t-a'])
+    const unassignedMembers = directory.grouped.find(entry => entry.group.id === 'g-u')!.members
+    expect(unassignedMembers.map(member => member.id)).toEqual(['t-u'])
     expect(directory.ungrouped.map(member => member.id)).toEqual(['t-c'])
   })
 })

@@ -5,6 +5,12 @@
  * runtime imports) so the Host router and unit tests share one engine.
  *
  * A group is a named set of tasks with shared execution policy:
+ *  - workspaceId: the workspace scope the group belongs to. A group scoped to
+ *    a workspace accepts only tasks pinned to that workspace as members; a
+ *    group without a scope accepts only unassigned tasks. Membership is
+ *    enforced Host-side (a task may join a group only when its own workspace
+ *    pin equals the group's scope), so the same group name can exist in many
+ *    workspaces with different settings;
  *  - endpoints: priority-ordered endpoint ids (task pin > group list > global
  *    default list);
  *  - mode: sequential (one member runs at a time, in group order) or parallel
@@ -26,7 +32,7 @@ import {
   type DailyWindow,
 } from './endpoints.ts'
 import { isValidCron, nextRunAtMs } from './schedule.ts'
-import type { ExecutionQueuedReason, TaskRecord } from './tasks.ts'
+import { normalizeTargetId, type ExecutionQueuedReason, type TaskRecord } from './tasks.ts'
 export type { ExecutionQueuedReason } from './tasks.ts'
 
 /** Bound on group name / task-id string length (defense-in-depth). */
@@ -59,8 +65,19 @@ export interface GroupScheduleRule {
 export interface TaskGroupRecord {
   /** Stable group id (uuid). */
   id: string
-  /** Display name shown on the board banners. */
+  /**
+   * Display name shown on the board banners. Names are NOT unique: the same
+   * name may exist in every workspace with different settings.
+   */
   name: string
+  /**
+   * The workspace scope this group belongs to (a workspace-list id). A task
+   * may join the group only when its own `workspaceId` equals this value;
+   * absent means the unassigned scope (only tasks without a workspace pin can
+   * be members). Never editable through update-group — a group lives and dies
+   * in the workspace it was created from.
+   */
+  workspaceId?: string
   /** How members run: one at a time (in order) or up to maxParallel at once. */
   mode: GroupExecutionMode
   /** Parallel cap; absent (parallel mode) means unlimited. */
@@ -94,6 +111,11 @@ export interface TaskGroupRecord {
 /** Input for creating a group. */
 export interface GroupCreateInput {
   name: string
+  /**
+   * Workspace scope the group belongs to; absent = the unassigned scope
+   * (only tasks without a workspace pin can be members). Fixed at creation.
+   */
+  workspaceId?: string
   /** Execution mode; defaults to 'sequential'. */
   mode?: GroupExecutionMode
   /** Parallel cap; absent = unlimited (parallel mode). */
@@ -161,6 +183,18 @@ function groupScheduleFromRequest(requested: { enabled: boolean; cron: string } 
   return { enabled: true, cron, nextRunAt: nextRunAtMs(cron, now) }
 }
 
+/**
+ * Whether a task may be a member of a group: the task's workspace pin must
+ * equal the group's workspace scope. Both absent (an unassigned task and an
+ * unassigned-scope group) match; a pinned task can never join an
+ * unassigned-scope group and vice versa. The Host enforces this at every
+ * membership transition; the UI mirrors it so mismatched joins are never
+ * offered in the first place.
+ */
+export function taskMatchesGroupScope(task: { workspaceId?: string }, group: { workspaceId?: string }): boolean {
+  return task.workspaceId === group.workspaceId
+}
+
 /** Create a group from user input; undefined when the name is blank. */
 export function createGroup(input: GroupCreateInput, now: number, id: string): TaskGroupRecord | undefined {
   const name = normalizeGroupName(input.name)
@@ -170,9 +204,11 @@ export function createGroup(input: GroupCreateInput, now: number, id: string): T
   const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
   const allowedHours = input.allowedHours === undefined ? undefined : normalizeDailyWindow(input.allowedHours)
   const schedule = groupScheduleFromRequest(input.schedule, now)
+  const workspaceId = input.workspaceId === undefined ? undefined : normalizeTargetId(input.workspaceId)
   return {
     id,
     name,
+    ...(workspaceId === undefined ? {} : { workspaceId }),
     mode,
     ...(maxParallel === undefined ? {} : { maxParallel }),
     ...(endpoints === undefined ? {} : { endpoints }),
@@ -398,16 +434,25 @@ export function withGroupScheduleRoll(
 /**
  * Normalize a persisted group row: valid rows are kept (deduplicated by id,
  * order re-derived from the member tasks); malformed rows are dropped. A
- * group's schedule is repaired field by field like a task schedule.
+ * group's schedule is repaired field by field like a task schedule. Each
+ * row's workspace scope is normalized too: an explicit value wins, and a
+ * legacy row without one adopts its members' workspace (single distinct
+ * workspace, else the unassigned scope) — the one-time migration that makes
+ * existing global groups workspace-scoped. Members outside the group's scope
+ * never enter its order.
  */
 export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]): TaskGroupRecord[] {
   if (!Array.isArray(values)) return []
-  const memberIdsByGroup = new Map<string, string[]>()
+  // Member workspace distribution per group id: it lets a legacy row without
+  // an explicit scope adopt its members' workspace (the migration path), and
+  // keeps members outside the group's scope out of its order.
+  const membersByGroup = new Map<string, { ids: string[]; scopes: Set<string | undefined> }>()
   for (const task of tasks) {
     if (task.groupId === undefined) continue
-    const list = memberIdsByGroup.get(task.groupId) ?? []
-    list.push(task.id)
-    memberIdsByGroup.set(task.groupId, list)
+    const entry = membersByGroup.get(task.groupId) ?? { ids: [], scopes: new Set<string | undefined>() }
+    entry.ids.push(task.id)
+    entry.scopes.add(task.workspaceId)
+    membersByGroup.set(task.groupId, entry)
   }
   const groups: TaskGroupRecord[] = []
   const seen = new Set<string>()
@@ -421,9 +466,23 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
     const createdAt = typeof row.createdAt === 'number' && Number.isFinite(row.createdAt) ? row.createdAt : 0
     const updatedAt = typeof row.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? row.updatedAt : createdAt
     const schedule = normalizeGroupSchedule(row.schedule)
+    // The group's scope: an explicit row value wins; a legacy row without one
+    // adopts the single distinct workspace of its members (a mixed or empty
+    // membership leaves it in the unassigned scope, where only unassigned
+    // tasks may join).
+    const explicitScope = normalizeTargetId(typeof row.workspaceId === 'string' ? row.workspaceId : undefined)
+    const memberScopes = membersByGroup.get(id)?.scopes ?? new Set<string | undefined>()
+    const workspaceId = explicitScope !== undefined
+      ? explicitScope
+      : memberScopes.size === 1 ? [...memberScopes][0] : undefined
+    const memberIds = (membersByGroup.get(id)?.ids ?? []).filter(taskId => {
+      const member = tasks.find(candidate => candidate.id === taskId)
+      return member !== undefined && member.workspaceId === workspaceId
+    })
     groups.push({
       id,
       name,
+      ...(workspaceId === undefined ? {} : { workspaceId }),
       mode: isGroupExecutionMode(row.mode) ? row.mode : 'sequential',
       ...(row.maxParallel === undefined ? {} : (() => {
         const maxParallel = normalizeMaxParallel(row.maxParallel)
@@ -440,7 +499,7 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
       offPeakOnly: row.offPeakOnly === true,
       ...(row.stopped === true ? { stopped: true } : {}),
       ...(schedule === undefined ? {} : { schedule }),
-      order: normalizeGroupOrder(row.order, memberIdsByGroup.get(id) ?? []),
+      order: normalizeGroupOrder(row.order, memberIds),
       createdAt,
       updatedAt,
     })
@@ -533,7 +592,9 @@ export function nextRunnableMember(group: TaskGroupRecord, tasks: readonly TaskR
 
 /**
  * The member tasks of a group in group order, followed by any member missing
- * from the order (defensive; the ledger keeps the order complete).
+ * from the order (defensive; the ledger keeps the order complete). Members
+ * whose workspace pin does not match the group's scope are excluded (the Host
+ * keeps the ledger consistent, so this only fires on foreign task lists).
  */
 export function orderedGroupMembers(group: TaskGroupRecord, tasks: readonly TaskRecord[]): TaskRecord[] {
   const byId = new Map(tasks.map(task => [task.id, task]))
@@ -541,12 +602,12 @@ export function orderedGroupMembers(group: TaskGroupRecord, tasks: readonly Task
   const seen = new Set<string>()
   for (const id of group.order) {
     const task = byId.get(id)
-    if (task === undefined) continue
+    if (task === undefined || !taskMatchesGroupScope(task, group)) continue
     ordered.push(task)
     seen.add(id)
   }
   for (const task of tasks) {
-    if (task.groupId === group.id && !seen.has(task.id)) ordered.push(task)
+    if (task.groupId === group.id && !seen.has(task.id) && taskMatchesGroupScope(task, group)) ordered.push(task)
   }
   return ordered
 }
