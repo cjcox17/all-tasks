@@ -16,6 +16,7 @@ import {
 } from './model-timeouts.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
 import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from './protocol.ts'
+import { suggestTaskTitle, type TitleSuggestionRequest } from './title-suggest.ts'
 
 const SESSION_POLL_MS = 5_000
 const SCHEDULE_TICK_MS = 30_000
@@ -36,6 +37,7 @@ export class AllTasksHostService {
   readonly ledger: HostTaskLedger
   readonly runner: HostExecutionRunner
   readonly power: PowerInhibitor
+  private readonly api: ApiProxy
   private readonly listeners = new Set<() => void>()
   private timers: Array<ReturnType<typeof setInterval>> = []
   private lastScheduleTick: number | undefined
@@ -62,6 +64,7 @@ export class AllTasksHostService {
     routerConfig?: EndpointRouterConfig
     settings?: ModelTimeoutSettingsSeam
   } = {}) {
+    this.api = api
     this.ledger = options.ledger ?? new HostTaskLedger()
     this.runner = new HostExecutionRunner(api, options.commandDispatcher)
     this.power = options.power ?? new PowerInhibitor()
@@ -235,6 +238,19 @@ export class AllTasksHostService {
     const settings = this.settings
     if (settings === undefined) return []
     return readEndpointProviderCatalog(settings.get('llm-pi-ai'), settings.get('llm-deepseek'))
+  }
+
+  /**
+   * Generate a task title from a run prompt through a short backend session
+   * (see {@link suggestTaskTitle}). Never touches the ledger: the browser
+   * asks for a suggestion only to pre-fill the new-task dialog, and the
+   * ledger transition still happens through the normal `create` action.
+   * @returns the generated title, or undefined when generation failed (the
+   *   browser falls back to the prompt-derived heuristic title).
+   */
+  async suggestTitle(request: TitleSuggestionRequest): Promise<string | undefined> {
+    if (!this.active) throw new Error('task board is disabled')
+    return await suggestTaskTitle(this.runner, this.api, request)
   }
 
   /**

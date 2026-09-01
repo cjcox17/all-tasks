@@ -588,6 +588,14 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-label-secondary);
 }
 
+/* Small helper text under a form field (for example the new-task dialog's
+   auto-generated-title status). */
+.fieldHint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .input {
   padding: 7px 10px;
   font-size: 13px;

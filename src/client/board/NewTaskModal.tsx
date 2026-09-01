@@ -4,10 +4,17 @@
  * When opened from a workspace's kanban the workspace is pre-selected and the
  * workspace's execution defaults pre-fill the target pickers (see the
  * WorkspaceDefaultsModal editor).
+ *
+ * While the title is blank and the user types a prompt, a debounced request
+ * asks the Host to generate a title from the prompt through a short backend
+ * session (see title-suggest); the field fills in when it lands, a manual
+ * title always wins, and a prompt-line fallback guarantees creation never
+ * blocks on the LLM.
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BoardController } from '../../core/controller.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
+import { fallbackTitle } from '../../core/title.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsRecord } from '../../core/workspace-defaults.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
@@ -15,8 +22,16 @@ import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { effectiveDefaultNames } from './execution-default-labels.ts'
 import { EndpointModelFields } from './EndpointModelFields.tsx'
+import { suggestTaskTitleClient } from '../title-suggest.ts'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
 import css from '../board.module.css'
+
+/**
+ * Pause before asking the Host for an auto-generated title: long enough that
+ * a burst of prompt typing settles into one request, short enough that the
+ * title is usually ready by the time the user hits Create.
+ */
+const TITLE_SUGGEST_DEBOUNCE_MS = 900
 
 /** New-task form overlay. */
 export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults }: {
@@ -48,6 +63,29 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   const [options, setOptions] = useState(controller.getSnapshot().executionOptions)
   const [groups, setGroups] = useState(controller.getSnapshot().groups)
   const [workspaceDefaults, setWorkspaceDefaults] = useState(controller.getSnapshot().workspaceDefaults)
+  /** Auto-title lifecycle: idle (nothing to generate), generating, or done. */
+  const [titleStatus, setTitleStatus] = useState<'idle' | 'generating' | 'done'>('idle')
+  /** Whether the title currently shown came from auto-generation (offers Regenerate). */
+  const [autoFilled, setAutoFilled] = useState(false)
+  /** The `autoTitle` setting pushed from the client wiring (default on). */
+  const [autoTitleEnabled, setAutoTitleEnabled] = useState(true)
+
+  // Live refs so the stable suggestion callback reads current field values
+  // without re-creating itself (and re-arming the debounce) on every keystroke.
+  const titleRef = useRef(title)
+  titleRef.current = title
+  const promptRef = useRef(prompt)
+  promptRef.current = prompt
+  const descriptionRef = useRef(description)
+  descriptionRef.current = description
+  const modelKeyRef = useRef(modelKey)
+  modelKeyRef.current = modelKey
+  const effortRef = useRef(reasoningEffort)
+  effortRef.current = reasoningEffort
+  /** Monotonic id of the newest generation request; stale resolutions are dropped. */
+  const generationRef = useRef(0)
+  /** Serializes generation: one in-flight Host request at a time. */
+  const inFlightRef = useRef(false)
 
   // The workspace list, preset roster, model catalog, and group roster arrive
   // from the runtime after mount; follow them so the pickers never freeze on
@@ -58,9 +96,85 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       setOptions(snapshot.executionOptions)
       setGroups(snapshot.groups)
       setWorkspaceDefaults(snapshot.workspaceDefaults)
+      setAutoTitleEnabled(snapshot.autoTitle ?? true)
     }),
     [controller],
   )
+
+  /**
+   * Ask the Host for a generated title from the current prompt/description
+   * and fill the title field when it is still blank. Serialized: a second
+   * call while one is in flight is ignored, and a resolution only lands when
+   * it is the newest request and the user has not typed a manual title
+   * meanwhile. On failure the deterministic prompt-line fallback fills the
+   * field, so creation never blocks on the LLM.
+   */
+  const runSuggestion = useCallback((): void => {
+    if (inFlightRef.current) return
+    const generationId = ++generationRef.current
+    inFlightRef.current = true
+    setTitleStatus('generating')
+    const key = modelKeyRef.current
+    const parsed = key === '' ? undefined : parseModelSelectionKey(key)
+    const model = parsed === undefined ? undefined : withReasoningEffort(parsed, effortRef.current)
+    void suggestTaskTitleClient({
+      prompt: promptRef.current,
+      description: descriptionRef.current,
+      ...(model === undefined ? {} : { model }),
+    }).then((suggested) => {
+      if (generationRef.current !== generationId) return
+      if (titleRef.current.trim() !== '') return
+      // The user cleared the prompt while the request was in flight: no title.
+      if (promptRef.current.trim() === '' && descriptionRef.current.trim() === '') {
+        setTitleStatus('idle')
+        return
+      }
+      setTitle(suggested)
+      setAutoFilled(true)
+      setTitleStatus('done')
+    }).catch(() => {
+      if (generationRef.current !== generationId) return
+      if (titleRef.current.trim() !== '') return
+      if (promptRef.current.trim() === '' && descriptionRef.current.trim() === '') {
+        setTitleStatus('idle')
+        return
+      }
+      const fallback = fallbackTitle(promptRef.current, descriptionRef.current)
+      if (fallback !== '') {
+        setTitle(fallback)
+        setAutoFilled(true)
+      }
+      setTitleStatus('done')
+    }).finally(() => {
+      if (generationRef.current === generationId) inFlightRef.current = false
+    })
+  }, [])
+
+  /**
+   * Debounced auto-generation: while the title is blank and the user has
+   * typed a prompt (or description), wait for a pause and ask the Host. A
+   * manual title always wins — typing one cancels the pending request, and a
+   * resolution landing after it is discarded.
+   */
+  useEffect(() => {
+    if (!autoTitleEnabled || inFlightRef.current) return
+    if (title.trim() !== '' || (prompt.trim() === '' && description.trim() === '')) {
+      setTitleStatus('idle')
+      return
+    }
+    setTitleStatus('generating')
+    const timer = globalThis.setTimeout(runSuggestion, TITLE_SUGGEST_DEBOUNCE_MS)
+    return () => { globalThis.clearTimeout(timer) }
+  }, [autoTitleEnabled, title, prompt, description, runSuggestion])
+
+  /** Re-run generation for the current prompt (a first suggestion may be weak). */
+  const regenerateTitle = (): void => {
+    setTitle('')
+    setAutoFilled(false)
+    // The immediate call sets inFlight synchronously, so the debounce effect
+    // (re-armed by the cleared title) skips its own scheduling.
+    runSuggestion()
+  }
 
   const submit = async (): Promise<void> => {
     if (scheduleEnabled) {
@@ -70,10 +184,15 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
         return
       }
     }
+    // A blank title falls back to the prompt's first line, so creation never
+    // blocks on the LLM — a manual title, an auto-generated one, or the
+    // prompt-line fallback all satisfy the ledger's non-blank title. A fully
+    // blank task still flows through the Host, which rejects it as before.
+    const effectiveTitle = title.trim() !== '' ? title : fallbackTitle(prompt, description)
     setPending(true)
     const model = modelKey === '' ? undefined : parseModelSelectionKey(modelKey)
     const task = await controller.createTaskConfirmed({
-      title,
+      title: effectiveTitle,
       description,
       prompt,
       workspaceId: workspaceId === '' ? undefined : workspaceId,
@@ -131,6 +250,30 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   // resolves to the endpoint's default model), and a current value the
   // endpoints cannot serve stays selectable as a stale row so the user sees
   // exactly what the task will ask for instead of a silent substitution.
+
+  /**
+   * Under the title field: while a generation is pending (or a prompt awaits
+   * the debounce) show its status; once a generated title sits in the field
+   * offer Regenerate. Nothing renders for a manual title.
+   */
+  const titleHint = (() => {
+    if (title.trim() === '' && (prompt.trim() !== '' || description.trim() !== '') && autoTitleEnabled) {
+      return (
+        <span className={css.fieldHint} role="status">
+          {titleStatus === 'generating' ? t('new.titleGenerating') : t('new.titleAutoHint')}
+        </span>
+      )
+    }
+    if (autoFilled) {
+      return (
+        <button type="button" className={css.linkButton} onClick={regenerateTitle}>
+          {t('new.titleRegenerate')}
+        </button>
+      )
+    }
+    return undefined
+  })()
+
   return (
     <ModalShell
       ariaLabel={t('board.new')}
@@ -145,9 +288,10 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
         title={title}
         description={description}
         prompt={prompt}
-        onTitleChange={value => { setTitle(value); setError(undefined) }}
+        onTitleChange={value => { setTitle(value); setAutoFilled(false); setError(undefined) }}
         onDescriptionChange={setDescription}
         onPromptChange={setPrompt}
+        titleHint={titleHint}
       />
 
         <label className={css.field}>
