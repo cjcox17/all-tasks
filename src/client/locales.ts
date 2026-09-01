@@ -45,6 +45,11 @@ export const zh = {
   'grid.approvedDefault': '新任务默认未批准',
   'grid.approvedDefaultHint': '勾选后，在此工作区新建的任务默认未批准，批准前不能以任何方式运行。',
   'grid.saveFailed': '保存失败：{error}',
+  // 工作区总览目录（展开后显示分组与任务）。
+  'list.expand': '展开分组与任务',
+  'list.collapse': '收起',
+  'list.ungrouped': '未分组',
+  'list.noTasks': '暂无任务',
     'board.runs': '次执行',
     'board.pending': '正在提交',
   'board.updated': '更新于',
@@ -293,6 +298,11 @@ export const en: Record<keyof typeof zh, string> = {
   'grid.approvedDefault': 'New tasks start unapproved',
   'grid.approvedDefaultHint': 'When checked, new tasks in this workspace start unapproved and cannot be run by any means until approved.',
   'grid.saveFailed': 'Save failed: {error}',
+  // Workspace overview directory (expand to reveal groups and tasks).
+  'list.expand': 'Expand groups & tasks',
+  'list.collapse': 'Collapse',
+  'list.ungrouped': 'Ungrouped',
+  'list.noTasks': 'No tasks yet',
     'board.runs': 'runs',
     'board.pending': 'Submitting',
   'board.updated': 'Updated',

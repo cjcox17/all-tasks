@@ -1,11 +1,13 @@
 /**
- * Workspace overview list: per-workspace task counts and the list entries.
+ * Workspace overview list: per-workspace task counts, the list entries, and
+ * the expandable per-workspace task directory (groups + ungrouped tasks).
  *
  * Pure functions so the landing view is unit-testable without a DOM. The
  * "All tasks" entry (workspaceId undefined) counts every on-board task
  * across all workspaces, including unassigned ones; a per-workspace entry
  * counts the tasks pinned to that workspace id.
  */
+import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
 import type { TaskRecord } from '../../core/tasks.ts'
 
 /** Per-workspace (or All) on-board task counts for the landing list. */
@@ -91,4 +93,57 @@ export function workspaceListEntries(
     })
   }
   return entries
+}
+
+/**
+ * Deterministic color hue (0–359) for a workspace or group id, so avatars and
+ * group bands keep a stable, distinct color across renders and themes.
+ */
+export function entityHue(value: string): number {
+  let hash = 0
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0
+  }
+  return hash % 360
+}
+
+/** One expandable directory section: a group plus its on-board members. */
+export interface WorkspaceGroupEntry {
+  group: TaskGroupRecord
+  /** The group's on-board members in scope, in group order. */
+  members: TaskRecord[]
+}
+
+/**
+ * The expandable content of one workspace row (or of the All overview when
+ * `workspaceId` is undefined): the workspace's groups that have at least one
+ * on-board member in scope, plus its on-board ungrouped tasks. Archived tasks
+ * are excluded, matching the kanban's on-board definition.
+ */
+export interface WorkspaceTaskDirectory {
+  /** Groups with members in scope, in snapshot order (empty groups stay in the kanban). */
+  grouped: WorkspaceGroupEntry[]
+  /** On-board tasks in scope with no group, in task-list order. */
+  ungrouped: TaskRecord[]
+}
+
+/**
+ * Build the expandable directory for one workspace (or the whole board when
+ * `workspaceId` is undefined). A scoped view keeps the group's members pinned
+ * to that workspace plus its unpinned members, mirroring the kanban's scoping.
+ */
+export function workspaceTaskDirectory(
+  tasks: readonly TaskRecord[],
+  groups: readonly TaskGroupRecord[],
+  workspaceId: string | undefined,
+): WorkspaceTaskDirectory {
+  const onBoard = workspaceId === undefined
+    ? tasks.filter(task => task.archivedAt === undefined)
+    : tasks.filter(task => task.archivedAt === undefined && task.workspaceId === workspaceId)
+  const grouped: WorkspaceGroupEntry[] = []
+  for (const group of groups) {
+    const members = orderedGroupMembers(group, onBoard)
+    if (members.length > 0) grouped.push({ group, members })
+  }
+  return { grouped, ungrouped: onBoard.filter(task => task.groupId === undefined) }
 }

@@ -842,7 +842,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   margin: 0 4px;
 }
 
-/* --- workspace overview list (landing view) --------------------------------- */
+/* --- workspace overview directory (landing view) ----------------------------- */
 
 .list {
   display: flex;
@@ -854,7 +854,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding-bottom: 6px;
 }
 
-/* One row: the clickable workspace row plus its trailing settings button. */
+/* One row: the clickable workspace row plus its chevron and settings buttons. */
 .listRow {
   display: flex;
   align-items: stretch;
@@ -870,7 +870,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   gap: 8px 12px;
   flex: 1;
   min-width: 0;
-  padding: 10px 14px;
+  padding: 8px 12px;
   text-align: left;
   font-family: inherit;
   background: var(--dsw-alias-bg-layer-2);
@@ -879,6 +879,11 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   cursor: pointer;
   color: var(--dsw-alias-label-primary);
   transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+/* The All-tasks row gets a faint primary tint so it reads as the overview hero. */
+.listRow[data-workspace=''] .listWorkspace {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, var(--dsw-alias-bg-layer-2));
 }
 
 .listWorkspace:hover {
@@ -890,6 +895,26 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .listWorkspace:active {
   box-shadow: var(--dsw-shadow-lv1);
   transform: translateY(0);
+}
+
+/* The workspace's colored identity chip (Monday.com-style avatar). */
+.listAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.listAvatar[data-all] {
+  background: var(--dsw-alias-state-business-primary);
 }
 
 .listTitle {
@@ -926,30 +951,147 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   min-width: 0;
 }
 
+/* Sparse status pill: colored dot + count + label; only statuses with tasks. */
 .listCount {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 999px;
   white-space: nowrap;
 }
 
+.listCount::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+  flex: none;
+}
+
+.listCount[data-status='todo']::before { background: var(--dsw-alias-state-business-primary); }
+.listCount[data-status='pending']::before { background: var(--dsw-alias-state-warning-primary, #b8860b); }
+.listCount[data-status='working']::before { background: var(--dsw-alias-state-warn-primary); }
+.listCount[data-status='scheduled']::before { background: #8b5cf6; }
+.listCount[data-status='finished']::before { background: var(--dsw-alias-state-success-primary); }
+.listCount[data-status='failed']::before { background: var(--dsw-alias-state-error-primary); }
+
 .listCountValue {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
   color: var(--dsw-alias-label-primary);
 }
 
-.listCountValue[data-count='nonzero'] {
-  color: var(--dsw-alias-state-business-primary);
-}
-
 .listCountLabel {
   font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Chevron toggles the inline directory; rotates to point down when open. */
+.listChevron {
+  align-self: center;
+  font-size: 12px;
+  transition: transform 120ms ease;
+}
+
+.listChevron[aria-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+/* The expanded content below a workspace row: its groups + ungrouped tasks. */
+.listBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 6px 0 4px 44px;
+}
+
+/* One group band: Monday.com-style colored band with a member list. */
+.groupBand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 4px solid transparent;
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.groupBandHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 2px;
+  min-width: 0;
+}
+
+.groupBandName {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupBandCount {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* One task row inside a group band (or the ungrouped band). */
+.taskRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.taskRow .statusDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+}
+
+.taskRowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A workspace with nothing on board shows a quiet hint when expanded. */
+.listEmpty {
+  margin: 0;
+  padding: 4px 0 4px 44px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -1248,6 +1390,27 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .board {
     gap: 10px;
     padding: 10px;
+  }
+
+  .listWorkspace {
+    gap: 6px 10px;
+  }
+
+  .listAvatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .listTitle {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+
+  .listBody,
+  .listEmpty {
+    padding-left: 8px;
   }
 
   .boardHeader {

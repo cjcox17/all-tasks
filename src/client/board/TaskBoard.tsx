@@ -291,7 +291,6 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const [showDefaults, setShowDefaults] = useState(false)
-  const selected = selectedTaskOf(snapshot)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
   // The workspace scoping applies to both views: filtered views keep the
@@ -725,9 +724,6 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         />
       )}
 
-      {selected !== undefined && (
-        <TaskDetail controller={controller} task={selected} />
-      )}
       {showNew && (
         <NewTaskModal
           controller={controller}
@@ -781,6 +777,9 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
     controller.closeTask()
     setView(undefined)
   }, [controller])
+  /** Open a task's detail from the landing directory (the kanban opens its own). */
+  const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
+  const selected = selectedTaskOf(snapshot)
 
   return (
     <div className={css.board} data-dsh-taskboard-board="" data-dsh-plugin="task-board">
@@ -836,10 +835,18 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
         <WorkspaceList
           tasks={snapshot.tasks}
           workspaces={snapshot.executionOptions.workspaces}
+          groups={snapshot.groups}
+          pendingTaskIds={snapshot.pendingTaskIds}
           onOpen={openWorkspace}
           onOpenAll={openAll}
           onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
+          onOpenTask={openTask}
         />
+      )}
+
+      {/* The task detail overlays the board from either view (landing or kanban). */}
+      {selected !== undefined && (
+        <TaskDetail controller={controller} task={selected} />
       )}
 
       {view === undefined && showNew && (

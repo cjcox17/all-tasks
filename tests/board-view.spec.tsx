@@ -955,3 +955,118 @@ describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
     expect(orders).toEqual([{ groupId: 'g1', order: ['t2', 't1'] }])
   })
 })
+
+describe('TaskBoard workspace directory (expandable landing)', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    return { container }
+  }
+
+  function rowOf(container: HTMLElement, workspaceId: string): HTMLElement {
+    const row = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]') as NodeListOf<HTMLElement>)
+      .find(candidate => candidate.getAttribute('data-workspace') === workspaceId)
+    expect(row, `workspace row ${workspaceId}`).toBeDefined()
+    return row!
+  }
+
+  function chevronOf(row: HTMLElement): HTMLButtonElement {
+    const chevron = row.querySelector(`button[aria-label="${t('list.expand')}"], button[aria-label="${t('list.collapse')}"]`) as HTMLButtonElement
+    expect(chevron, 'chevron button').not.toBeNull()
+    return chevron
+  }
+
+  const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+  const ALPHA_ONLY = { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] }
+
+  it('expands a workspace into its group band and task rows, and opens a task from a row', async () => {
+    const openCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
+        task({ id: 't2', title: 'Member B', status: 'done', workspaceId: 'ws-a', groupId: 'g1' }),
+        task({ id: 't3', title: 'Lone', status: 'todo', workspaceId: 'ws-a' }),
+      ],
+      groups: [GROUP],
+      executionOptions: ALPHA_ONLY,
+    }, {
+      openTask: (id: string) => { openCalls.push(id) },
+    })
+
+    // Collapsed: no group bands yet.
+    expect(container.querySelector('[data-dsh-part="workspace-group"]')).toBeNull()
+
+    await act(async () => { chevronOf(rowOf(container, 'ws-a')).click() })
+
+    const bands = container.querySelectorAll('[data-dsh-part="workspace-group"]')
+    expect(bands).toHaveLength(2) // the Nightly band plus the ungrouped band
+    const group = container.querySelector('[data-group="g1"]') as HTMLElement
+    expect(group).not.toBeNull()
+    expect(group.textContent).toContain('Nightly')
+    expect(group.textContent).toContain(t('group.sequentialBadge'))
+    const rows = group.querySelectorAll('[data-dsh-part="task-row"]')
+    expect(rows).toHaveLength(2)
+    expect(Array.from(rows).map(row => row.textContent).join(' ')).toContain('Member A')
+
+    // Clicking a task row opens its detail through the controller.
+    const memberRow = Array.from(rows).find(row => row.textContent?.includes('Member A')) as HTMLButtonElement
+    await act(async () => { memberRow.click() })
+    expect(openCalls).toEqual(['t1'])
+  })
+
+  it('collapses the directory again via the chevron', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' })],
+      groups: [GROUP],
+      executionOptions: ALPHA_ONLY,
+    })
+    const row = rowOf(container, 'ws-a')
+    await act(async () => { chevronOf(row).click() })
+    expect(container.querySelector('[data-dsh-part="workspace-group"]')).not.toBeNull()
+    await act(async () => { chevronOf(row).click() })
+    expect(container.querySelector('[data-dsh-part="workspace-group"]')).toBeNull()
+  })
+
+  it('expands the All-tasks row across every workspace, and an empty workspace shows a hint', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Pinned A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' }),
+        task({ id: 't2', title: 'Pinned B', status: 'todo', workspaceId: 'ws-b' }),
+      ],
+      groups: [GROUP],
+      executionOptions: {
+        workspaces: [
+          { workspaceId: 'ws-a', title: 'Alpha' },
+          { workspaceId: 'ws-b', title: 'Beta' },
+          { workspaceId: 'ws-empty', title: 'Empty' },
+        ],
+        presets: [],
+        models: [],
+        endpoints: [],
+      },
+    })
+
+    await act(async () => { chevronOf(rowOf(container, '')).click() })
+    expect(container.querySelector('[data-group="g1"]')?.textContent).toContain('Pinned A')
+    expect(container.textContent).toContain('Pinned B')
+
+    // ws-empty has nothing on board: expanding shows the quiet hint.
+    await act(async () => { chevronOf(rowOf(container, 'ws-empty')).click() })
+    expect(container.textContent).toContain(t('list.noTasks'))
+  })
+
+  it('chevron toggling never opens the kanban', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' })],
+      groups: [GROUP],
+      executionOptions: ALPHA_ONLY,
+    })
+    await act(async () => { chevronOf(rowOf(container, 'ws-a')).click() })
+    // Still on the landing directory, not the kanban columns.
+    expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
+    expect(container.querySelector('section[data-status]')).toBeNull()
+  })
+})
