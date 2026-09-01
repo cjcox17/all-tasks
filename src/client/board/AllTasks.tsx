@@ -1072,7 +1072,6 @@ export function AllTasks({ controller }: { controller: BoardController }) {
             onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
             onOpenTask={openTask}
             onRun={workspaceId => { void controller.runWorkspace(workspaceId) }}
-            onPause={workspaceId => { void controller.pauseWorkspaceGroups(workspaceId) }}
             onStop={workspaceId => { void controller.stopWorkspace(workspaceId) }}
             onPauseWorkspace={workspaceId => { void controller.pauseWorkspace(workspaceId) }}
             onContinueWorkspace={workspaceId => { void controller.continueWorkspace(workspaceId) }}

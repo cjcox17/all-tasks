@@ -3,8 +3,8 @@
  * table. A column-header row labels the aligned count columns (To do / Pending
  * / Working / Scheduled / Finished / Failed / Total); each workspace is one
  * table row (a leading expand/collapse chevron, color-coded avatar + name,
- * right-aligned tabular counts, and the run / pause / stop + pause-workspace +
- * settings controls) that expands inline into
+ * right-aligned tabular counts, and the run / stop + pause/continue + settings
+ * controls) that expands inline into
  * its groups — colored section headers with a name pill, mode badge, member
  * count, and a per-group collapse toggle — and its task rows (status dot,
  * title, aligned status label and badges). Workspace rows are expanded by
@@ -152,7 +152,7 @@ function WorkspaceBody({ tasks, groups, workspaceId, onOpenTask, pendingTaskIds 
   )
 }
 
-export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds, workspacePaused, onRun, onPause, onStop, onPauseWorkspace, onContinueWorkspace }: {
+export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds, workspacePaused, onRun, onStop, onPauseWorkspace, onContinueWorkspace }: {
   tasks: readonly TaskRecord[]
   workspaces: readonly ExecutionWorkspaceOption[]
   groups: readonly TaskGroupRecord[]
@@ -162,7 +162,6 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
   onOpenTask: (taskId: string) => void
   pendingTaskIds: readonly string[]
   onRun: (workspaceId: string | undefined) => void
-  onPause: (workspaceId: string | undefined) => void
   onStop: (workspaceId: string | undefined) => void
   /** When each workspace was paused (ms epoch); the '' key = the whole board. */
   workspacePaused: Record<string, number>
@@ -185,7 +184,6 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
     const hue = isAll ? undefined : entityHue(entry.workspaceId)
     const plan = planWorkspaceActions(tasks, groups, scope)
     const runEnabled = plan.todoTaskIds.length > 0 || plan.runnableGroupIds.length > 0
-    const pauseEnabled = plan.pausableGroupIds.length > 0
     const stopEnabled = plan.stoppableTaskIds.length > 0 || plan.stoppableGroupIds.length > 0
     const paused = workspacePaused[entry.workspaceId] !== undefined
     const hasRunning = entry.counts.working > 0
@@ -241,17 +239,6 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
               onClick={() => { onRun(scope) }}
             >
               ▶
-            </button>
-            <button
-              type="button"
-              className={css.iconButton}
-              data-ctl="pause"
-              disabled={!pauseEnabled}
-              aria-label={t('list.pause')}
-              title={t('list.pause')}
-              onClick={() => { onPause(scope) }}
-            >
-              ⏸
             </button>
             <button
               type="button"

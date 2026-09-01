@@ -772,7 +772,7 @@ describe('BoardController workspace fan-out', () => {
     controller.dispose()
   })
 
-  it('pauseWorkspaceGroups stops running groups; stopWorkspace cancels running ungrouped tasks and groups', async () => {
+  it('stopWorkspace cancels running ungrouped tasks and groups', async () => {
     const runTask = { ...createTask({ title: 'run', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-run'), status: 'running' as const, executions: [OPEN] }
     const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', workspaceId: 'ws-a', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
     const member = { ...createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1'), status: 'running' as const, executions: [OPEN] }
@@ -781,10 +781,6 @@ describe('BoardController workspace fan-out', () => {
     controller.start()
     await controller.retryHostSync()
 
-    await controller.pauseWorkspaceGroups('ws-a')
-    expect(actions).toEqual([{ kind: 'stop-group', groupId: 'g1' }])
-
-    actions.length = 0
     await controller.stopWorkspace('ws-a')
     expect(actions).toEqual([{ kind: 'stop', taskId: 't-run' }, { kind: 'stop-group', groupId: 'g1' }])
     controller.dispose()

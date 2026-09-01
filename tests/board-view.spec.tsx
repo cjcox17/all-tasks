@@ -1214,7 +1214,7 @@ describe('AllTasks dashboard & workspace controls', () => {
     return { container }
   }
 
-  it('renders the dashboard and per-workspace run/pause/stop controls with correct enabled states', async () => {
+  it('renders the dashboard and per-workspace run/stop controls with correct enabled states', async () => {
     const runCalls: Array<string | undefined> = []
     const { container } = await renderBoard({
       tasks: [
@@ -1239,15 +1239,33 @@ describe('AllTasks dashboard & workspace controls', () => {
       .find(candidate => candidate.getAttribute('data-workspace') === 'ws-a')
     expect(row).toBeDefined()
     const run = row!.querySelector(`button[aria-label="${t('list.run')}"]`) as HTMLButtonElement
-    const pause = row!.querySelector(`button[aria-label="${t('list.pause')}"]`) as HTMLButtonElement
     const stop = row!.querySelector(`button[aria-label="${t('list.stop')}"]`) as HTMLButtonElement
     expect(run).not.toBeNull()
     expect(run.disabled).toBe(false) // the todo task is runnable; backlog is excluded
-    expect(pause.disabled).toBe(true) // no groups
     expect(stop.disabled).toBe(false) // the running task is stoppable
 
     await act(async () => { run.click() })
     expect(runCalls).toEqual(['ws-a'])
+  })
+
+  it('shows exactly one pause button per workspace row: the workspace soft pause', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({
+        id: 't-running',
+        title: 'Running',
+        status: 'running',
+        workspaceId: 'ws-a',
+        executions: [{ id: 'e', sessionId: 's', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }],
+      })],
+      executionOptions: { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] },
+    })
+    const row = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]') as NodeListOf<HTMLElement>)
+      .find(candidate => candidate.getAttribute('data-workspace') === 'ws-a')
+    expect(row).toBeDefined()
+    const pauseButtons = Array.from(row!.querySelectorAll('button')).filter(button => button.textContent === '⏸')
+    expect(pauseButtons).toHaveLength(1)
+    expect(pauseButtons[0].getAttribute('aria-label')).toBe(t('grid.pauseWorkspace'))
+    expect(row!.querySelector('button[data-ctl="pause"]')).toBeNull()
   })
 })
 

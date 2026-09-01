@@ -1257,7 +1257,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-label-primary);
 }
 
-/* Right-hand run/pause/stop controls (fixed track, right-aligned). */
+/* Right-hand run/stop controls (fixed track, right-aligned). */
 .directoryControls {
   display: flex;
   align-items: center;
@@ -1266,7 +1266,6 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 .directoryControls .iconButton[data-ctl='run'] { color: var(--dsw-alias-state-business-primary); }
-.directoryControls .iconButton[data-ctl='pause'] { color: var(--dsw-alias-state-warn-primary); }
 .directoryControls .iconButton[data-ctl='stop'] { color: var(--dsw-alias-state-error-primary); }
 
 /* Right-hand workspace pause/continue + settings controls (fixed track,
