@@ -313,6 +313,14 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* The card is a <button>; buttons size width:auto like inline-blocks
+     (shrink-to-fit) instead of filling their block container, so an
+     ungrouped card in the column never stretched to the column width and
+     stayed as narrow as its content — stubby on wide screens, and
+     overflowing/clipping the column when a long "Updated …" meta row made
+     the content wider than the column. An explicit width makes the card
+     always fill the column (grouped members keep their flex:1 sizing). */
+  width: 100%;
   padding: 10px 12px;
   text-align: left;
   background: var(--dsw-alias-bg-base);
