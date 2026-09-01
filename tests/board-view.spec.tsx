@@ -82,6 +82,8 @@ function fakeController(
     moveGroup: async () => true,
     setApproved: () => {},
     setWorkspaceDefaults: async () => true,
+    updateTask: async () => true,
+    reorderTask: () => {},
     ...overrides,
   } as unknown as BoardController
 }
@@ -204,17 +206,19 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
 
     const todoColumn = container.querySelector('section[data-status="todo"]')
     expect(todoColumn).not.toBeNull()
+    const cards = todoColumn!.querySelector('[data-dsh-part="cards"]')
+    expect(cards).not.toBeNull()
 
-    // Simulate drag and drop
+    // Simulate drag and drop (task payloads are `task:<id>`)
     const dataTransfer = {
-      data: { 'text/plain': 't-backlog' } as Record<string, string>,
+      data: { 'text/plain': 'task:t-backlog' } as Record<string, string>,
       setData(type: string, val: string) { this.data[type] = val },
       getData(type: string) { return this.data[type] ?? '' },
       dropEffect: 'none',
     }
 
     await act(async () => {
-      todoColumn!.dispatchEvent(
+      cards!.dispatchEvent(
         Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
       )
     })
@@ -244,13 +248,15 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
     await openAllTasks(container)
 
     const todoColumn = container.querySelector('section[data-status="todo"]')
+    const todoCards = todoColumn!.querySelector('[data-dsh-part="cards"]')
+    expect(todoCards).not.toBeNull()
 
     // Dropping on the same column does nothing
     const sameColTransfer = {
-      getData: (type: string) => (type === 'text/plain' ? 't-todo' : ''),
+      getData: (type: string) => (type === 'text/plain' ? 'task:t-todo' : ''),
     }
     await act(async () => {
-      todoColumn!.dispatchEvent(
+      todoCards!.dispatchEvent(
         Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: sameColTransfer }),
       )
     })
@@ -258,10 +264,10 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
 
     // Dropping a running task does nothing
     const runningTransfer = {
-      getData: (type: string) => (type === 'text/plain' ? 't-running' : ''),
+      getData: (type: string) => (type === 'text/plain' ? 'task:t-running' : ''),
     }
     await act(async () => {
-      todoColumn!.dispatchEvent(
+      todoCards!.dispatchEvent(
         Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: runningTransfer }),
       )
     })
@@ -479,6 +485,8 @@ describe('TaskBoard group sections', () => {
     expect(banner.getAttribute('draggable')).toBe('true')
 
     const backlogColumn = container.querySelector('section[data-status="backlog"]')
+    const backlogCards = backlogColumn!.querySelector('[data-dsh-part="cards"]')
+    expect(backlogCards).not.toBeNull()
     const dataTransfer = {
       data: { 'text/plain': 'group:g1' } as Record<string, string>,
       setData(type: string, val: string) { this.data[type] = val },
@@ -486,7 +494,7 @@ describe('TaskBoard group sections', () => {
       dropEffect: 'none',
     }
     await act(async () => {
-      backlogColumn!.dispatchEvent(
+      backlogCards!.dispatchEvent(
         Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
       )
     })
@@ -842,5 +850,108 @@ describe('TaskBoard approval', () => {
     expect(hasCard(container, 'Pending')).toBe(true)
     await act(async () => { toggle.click() })
     expect(hasCard(container, 'Approved task')).toBe(true)
+  })
+})
+
+describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    // The kanban lives behind the workspace list; open the All-tasks view.
+    await openAllTasks(container)
+    return { container }
+  }
+
+  /** Dispatch a synthetic drop on `target` with the given payload + pointer Y. */
+  function dropOn(target: HTMLElement, payload: string, clientY = 0): void {
+    const dataTransfer = {
+      data: { 'text/plain': payload } as Record<string, string>,
+      setData(type: string, val: string) { this.data[type] = val },
+      getData(type: string) { return this.data[type] ?? '' },
+      dropEffect: 'none',
+    }
+    act(() => {
+      target.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer, clientY }),
+      )
+    })
+  }
+
+  /** Force a card's vertical midpoint so the insertion math is deterministic. */
+  function stubCardRect(container: HTMLElement, taskId: string, top: number, height: number): void {
+    const card = container.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement
+    card.getBoundingClientRect = () => ({
+      top, height, left: 0, right: 200, bottom: top + height, x: 0, y: top,
+      width: 200, toJSON: () => ({}),
+    })
+  }
+
+  it('drops an ungrouped task onto a group section and joins the group', async () => {
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't-joiner', title: 'Joiner', status: 'todo' })],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+    })
+    const section = container.querySelector('[data-group="g1"]') as HTMLElement
+    expect(section).not.toBeNull()
+    dropOn(section, 'task:t-joiner')
+    expect(updates).toEqual([{ id: 't-joiner', patch: { groupId: 'g1' } }])
+  })
+
+  it('drops a group member onto the column background and ungroups it', async () => {
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-member', title: 'Member', status: 'todo', groupId: 'g1' }),
+        task({ id: 't-other', title: 'Other', status: 'todo' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t-member'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+    })
+    const cards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    expect(cards).not.toBeNull()
+    dropOn(cards, 'task:t-member')
+    expect(updates).toEqual([{ id: 't-member', patch: { groupId: null } }])
+  })
+
+  it('drops an ungrouped card above another and reorders it', async () => {
+    const reorders: Array<{ id: string; before: string | undefined }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-a', title: 'Alpha', status: 'todo' }),
+        task({ id: 't-b', title: 'Beta', status: 'todo' }),
+      ],
+    }, {
+      reorderTask: (id: string, before: string | undefined) => { reorders.push({ id, before }) },
+    })
+    // Beta's midpoint sits at 100 + 40/2 = 120; drop Alpha at y=100 (above it).
+    stubCardRect(container, 't-b', 100, 40)
+    const cards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    dropOn(cards, 'task:t-a', 100)
+    expect(reorders).toEqual([{ id: 't-a', before: 't-b' }])
+  })
+
+  it('drops a member above a sibling and reorders the whole group', async () => {
+    const orders: Array<{ groupId: string; order: string[] }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'One', status: 'todo', groupId: 'g1' }),
+        task({ id: 't2', title: 'Two', status: 'todo', groupId: 'g1' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      setGroupOrder: async (groupId: string, order: string[]) => { orders.push({ groupId, order }); return true },
+    })
+    // One's midpoint sits at 100 + 40/2 = 120; drop Two at y=100 (above One).
+    stubCardRect(container, 't1', 100, 40)
+    const section = container.querySelector('[data-group="g1"]') as HTMLElement
+    dropOn(section, 'task:t2', 100)
+    expect(orders).toEqual([{ groupId: 'g1', order: ['t2', 't1'] }])
   })
 })

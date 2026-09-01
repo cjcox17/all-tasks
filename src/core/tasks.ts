@@ -334,6 +334,37 @@ export function withStatus(task: TaskRecord, status: TaskStatus, now: number): T
 }
 
 /**
+ * Move one task immediately before another in the ledger array. The ledger
+ * array order is the display order for ungrouped cards inside a column, so a
+ * drag that lands a card above/below a sibling maps to this transition.
+ *
+ * `beforeTaskId` is the task the moved task should sit directly above;
+ * `undefined` moves it to the end of the array. The transition is a no-op
+ * when the task is already in place (already directly above the target, or
+ * already at the end). Unknown ids leave the array untouched.
+ */
+export function moveTaskBefore(
+  tasks: readonly TaskRecord[],
+  taskId: string,
+  beforeTaskId: string | undefined,
+): readonly TaskRecord[] {
+  const from = tasks.findIndex(task => task.id === taskId)
+  if (from === -1) return tasks
+  if (beforeTaskId === undefined) {
+    if (from === tasks.length - 1) return tasks
+    return [...tasks.slice(0, from), ...tasks.slice(from + 1), tasks[from]!]
+  }
+  const to = tasks.findIndex(task => task.id === beforeTaskId)
+  if (to === -1 || to === from) return tasks
+  // The insertion index is the target's index; removing the dragged task
+  // shifts any target after it left by one.
+  const insertAt = to > from ? to - 1 : to
+  if (insertAt === from) return tasks
+  const rest = tasks.filter(task => task.id !== taskId)
+  return [...rest.slice(0, insertAt), tasks[from]!, ...rest.slice(insertAt)]
+}
+
+/**
  * Merge a schedule patch into a task's schedule rule (creating it when
  * absent), with a fresh updatedAt. Keys present in the patch overwrite the
  * current value — including explicit `undefined`, which clears a field (used

@@ -13,6 +13,20 @@ import { executionLabel } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
 
+/** A 1x1 transparent GIF: hides the native drag ghost so the board can draw its own. */
+const TRANSPARENT_DRAG_IMAGE =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+/** The drag payload for one task card (`task:<id>` — see the board's drop handlers). */
+export function taskDragPayload(taskId: string): string {
+  return `task:${taskId}`
+}
+
+/** Parse a `task:<id>` drag payload; undefined when it is not a task payload. */
+export function parseTaskDragPayload(payload: string): string | undefined {
+  return payload.startsWith('task:') ? payload.slice('task:'.length) : undefined
+}
+
 /** Compact relative/absolute time label. */
 export function formatHostTimestamp(ms: number, timeZone?: string): string {
   try {
@@ -37,7 +51,14 @@ export function formatTime(ms: number, timeZone?: string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function TaskCardInner({ task, pending, timeZone, onClick }: { task: TaskRecord; pending: boolean; timeZone?: string; onClick: () => void }) {
+function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
+  task: TaskRecord
+  pending: boolean
+  timeZone?: string
+  onClick: () => void
+  /** Board-level drag hook: payload + the source rect (for the custom ghost). */
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+}) {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
   const archived = task.archivedAt !== undefined
@@ -49,11 +70,23 @@ function TaskCardInner({ task, pending, timeZone, onClick }: { task: TaskRecord;
       className={css.card}
       data-status={archived ? 'archived' : task.status}
       data-dsh-part="card"
+      data-task-id={task.id}
       data-pending={pending || undefined}
       draggable={isDraggable}
       onDragStart={isDraggable ? (event) => {
-        event.dataTransfer.setData('text/plain', task.id)
+        event.dataTransfer.setData('text/plain', taskDragPayload(task.id))
         event.dataTransfer.effectAllowed = 'move'
+        // Hide the native square ghost; the board draws a fluid clone instead.
+        const image = new Image()
+        image.src = TRANSPARENT_DRAG_IMAGE
+        event.dataTransfer.setDragImage(image, 0, 0)
+        const rect = event.currentTarget.getBoundingClientRect()
+        onDragStart?.(taskDragPayload(task.id), {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        }, event.currentTarget.outerHTML)
       } : undefined}
       onClick={onClick}
       title={task.description !== '' ? task.description : task.title}

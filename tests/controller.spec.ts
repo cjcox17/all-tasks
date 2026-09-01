@@ -631,3 +631,24 @@ describe('BoardController workspace defaults', () => {
     expect(notified).toBe(1)
   })
 })
+
+describe('BoardController reorder', () => {
+  it('reorders the ledger array through the legacy path and persists', () => {
+    const { controller, store } = makeController()
+    const ids = ['a', 'b', 'c'].map(title =>
+      controller.createTask({ title, description: '', prompt: '' })!.id)
+    expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual(ids)
+    // Move the first task below the others (end of the array).
+    controller.reorderTask(ids[0]!, undefined)
+    expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual([ids[1], ids[2], ids[0]])
+    expect(store.load().map(t => t.id)).toEqual([ids[1], ids[2], ids[0]])
+  })
+
+  it('is a no-op when the task is already in place', () => {
+    const { controller } = makeController()
+    const ids = ['a', 'b', 'c'].map(title =>
+      controller.createTask({ title, description: '', prompt: '' })!.id)
+    controller.reorderTask(ids[0]!, ids[1])
+    expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual(ids)
+  })
+})

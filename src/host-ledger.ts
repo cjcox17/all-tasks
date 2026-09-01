@@ -8,6 +8,7 @@ import {
   applyCreateGroup,
   applyDeleteGroup,
   applyUpdateGroup,
+  normalizeGroupOrder,
   normalizeGroupRows,
   withGroupMembershipChange,
   withGroupOrder,
@@ -17,7 +18,7 @@ import {
   type TaskGroupRecord,
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
-import { canMoveManually, MANUAL_STATUSES, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, MANUAL_STATUSES, moveTaskBefore, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
@@ -818,9 +819,15 @@ export class HostTaskLedger {
         }
         if ('title' in action.patch && action.patch.title?.trim() === '') throw new Error('title is required')
         const previousGroupId = task.groupId
-        const nextGroupId = action.patch.groupId === null || action.patch.groupId === undefined
-          ? undefined
-          : action.patch.groupId.trim() === '' ? undefined : action.patch.groupId.trim()
+        // A patch that does not mention groupId leaves membership untouched;
+        // only an explicit null (or a blank/unknown id) ungroups the task.
+        // Treating an absent field as "ungroup" would drop a grouped task from
+        // its group's member order on every content/target edit.
+        const nextGroupId = 'groupId' in action.patch
+          ? (action.patch.groupId === null || action.patch.groupId === undefined
+            ? undefined
+            : action.patch.groupId.trim() === '' ? undefined : action.patch.groupId.trim())
+          : previousGroupId
         if (nextGroupId !== undefined && !this.document.groups.some(group => group.id === nextGroupId)) {
           throw new Error('group not found')
         }
@@ -848,6 +855,18 @@ export class HostTaskLedger {
         if (task.status === 'running' || hasOpenExecution(task)) throw new Error('running task cannot be moved')
         if (!canMoveManually(task.status, action.status)) throw new Error('invalid manual status')
         this.document.tasks = this.document.tasks.map(item => item.id === action.taskId ? withStatus(item, action.status, now) : item)
+        break
+      }
+      case 'reorder': {
+        // Reorder the ledger array (the ungrouped display order). The moved
+        // task must exist and stay where it is when the target is itself;
+        // `beforeTaskId: null` means the end of the array. Status and group
+        // membership are untouched — a reorder is a pure position change.
+        if (!this.document.tasks.some(task => task.id === action.taskId)) throw new Error('task not found')
+        if (action.beforeTaskId !== null && !this.document.tasks.some(task => task.id === action.beforeTaskId)) {
+          throw new Error('target task not found')
+        }
+        this.document.tasks = [...moveTaskBefore(this.document.tasks, action.taskId, action.beforeTaskId ?? undefined)]
         break
       }
       case 'archive': {
@@ -1029,6 +1048,11 @@ export class HostTaskLedger {
         break
       }
     }
+    // Invariant: a group's order always covers exactly its current members.
+    // Member additions append, removals drop the id; the defensive pass below
+    // heals any stale/partial order left by an edit so a member can never
+    // silently drift to the end of its group's section on the board.
+    this.normalizeGroupOrders(now)
     this.commit()
     return {
       state: this.state(),
@@ -1036,6 +1060,28 @@ export class HostTaskLedger {
       ...(runs === undefined || runs.length === 0 ? {} : { runs }),
       ...(stopSessions.length > 0 ? { stopSessions } : {}),
     }
+  }
+
+  /**
+   * Re-derive every group's member order against its current member tasks:
+   * listed ids keep their order, members missing from the list are appended
+   * (in ledger order), and dangling ids are dropped. A group whose order is
+   * already exact is left untouched, so this is a pure invariant pass.
+   */
+  private normalizeGroupOrders(now: number): void {
+    const membersByGroup = new Map<string, string[]>()
+    for (const task of this.document.tasks) {
+      if (task.groupId === undefined) continue
+      const list = membersByGroup.get(task.groupId) ?? []
+      list.push(task.id)
+      membersByGroup.set(task.groupId, list)
+    }
+    this.document.groups = this.document.groups.map(group => {
+      const order = normalizeGroupOrder(group.order, membersByGroup.get(group.id) ?? [])
+      return order.length === group.order.length && order.every((id, index) => id === group.order[index])
+        ? group
+        : { ...group, order, updatedAt: now }
+    })
   }
 
   private repairSchedules(skipPast: boolean, persist = true): void {

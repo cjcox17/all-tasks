@@ -23,7 +23,7 @@ import {
   type GroupUpdatePatch,
   type TaskGroupRecord,
 } from './groups.ts'
-import { withStatus, type NewTaskInput, type TaskRecord, type TaskStatus } from './tasks.ts'
+import { withStatus, moveTaskBefore, type NewTaskInput, type TaskRecord, type TaskStatus } from './tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './use-cases/task-archive.ts'
 import { applyCreateTask } from './use-cases/task-create.ts'
 import { applyDeleteTask } from './use-cases/task-delete.ts'
@@ -372,6 +372,21 @@ export class BoardController {
       return
     }
     this.tasks = this.tasks.map(task => task.id === id ? withStatus(task, status, this.now()) : task)
+    this.persistAndNotify()
+  }
+
+  /**
+   * Reorder one task directly above another in the ledger array (the display
+   * order for ungrouped cards inside a column). `beforeTaskId` is the task
+   * the moved task should sit above; `undefined` moves it to the end. The
+   * move is a pure position change — status and group membership are kept.
+   */
+  reorderTask(id: string, beforeTaskId: string | undefined): void {
+    if (this.deps.transport !== undefined) {
+      void this.commitRemote({ kind: 'reorder', taskId: id, beforeTaskId: beforeTaskId ?? null }, id)
+      return
+    }
+    this.tasks = [...moveTaskBefore(this.tasks, id, beforeTaskId)]
     this.persistAndNotify()
   }
 

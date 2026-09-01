@@ -3,8 +3,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, modelSelectionKey, normalizeModelSelection,
-  parseModelSelectionKey, retainRecentExecutions, settleExecution, startExecution, withSchedule, withStatus,
+  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, modelSelectionKey, moveTaskBefore,
+  normalizeModelSelection, parseModelSelectionKey, retainRecentExecutions, settleExecution, startExecution, withSchedule, withStatus,
 } from '../src/core/tasks.ts'
 
 const NOW = 1_700_000_000_000
@@ -330,5 +330,47 @@ describe('task approval', () => {
     expect(task.approved).toBe(false)
     expect(isTaskApproved(task)).toBe(false)
     expect(isTaskApproved({ approved: false } as never)).toBe(false)
+  })
+})
+
+describe('moveTaskBefore', () => {
+  function tasks(ids: string[]) {
+    return ids.map(id => createTask({ title: id, description: '', prompt: '' }, NOW, id))
+  }
+
+  it('moves a task directly above a later task', () => {
+    const list = tasks(['a', 'b', 'c', 'd'])
+    expect(moveTaskBefore(list, 'c', 'b').map(t => t.id)).toEqual(['a', 'c', 'b', 'd'])
+  })
+
+  it('moves a task above a task that comes earlier (to the end of the array)', () => {
+    const list = tasks(['a', 'b', 'c', 'd'])
+    expect(moveTaskBefore(list, 'b', undefined).map(t => t.id)).toEqual(['a', 'c', 'd', 'b'])
+  })
+
+  it('is a no-op when the task already sits directly above the target', () => {
+    const list = tasks(['a', 'b', 'c'])
+    expect(moveTaskBefore(list, 'a', 'b')).toBe(list)
+  })
+
+  it('is a no-op when the task is already last and the target is the end', () => {
+    const list = tasks(['a', 'b', 'c'])
+    expect(moveTaskBefore(list, 'c', undefined)).toBe(list)
+  })
+
+  it('is a no-op when dropped on its own position', () => {
+    const list = tasks(['a', 'b', 'c'])
+    expect(moveTaskBefore(list, 'b', 'b')).toBe(list)
+  })
+
+  it('moves the first task to the end', () => {
+    const list = tasks(['a', 'b', 'c'])
+    expect(moveTaskBefore(list, 'a', undefined).map(t => t.id)).toEqual(['b', 'c', 'a'])
+  })
+
+  it('leaves the array untouched for unknown ids', () => {
+    const list = tasks(['a', 'b'])
+    expect(moveTaskBefore(list, 'missing', 'a')).toBe(list)
+    expect(moveTaskBefore(list, 'a', 'missing')).toBe(list)
   })
 })

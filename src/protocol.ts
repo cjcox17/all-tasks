@@ -65,6 +65,15 @@ export type TaskBoardAction =
   | { kind: 'update'; taskId: string; patch: TaskUpdatePatch }
   | { kind: 'delete'; taskId: string }
   | { kind: 'move'; taskId: string; status: TaskStatus }
+  | {
+    kind: 'reorder'
+    taskId: string
+    /**
+     * The task the moved task should sit directly above in the ledger array
+     * (the ungrouped display order); `null` moves it to the end of the array.
+     */
+    beforeTaskId: string | null
+  }
   | { kind: 'archive'; taskId: string }
   | { kind: 'restore'; taskId: string }
   | { kind: 'set-schedule'; taskId: string; patch: { enabled?: boolean; cron?: string } }
@@ -401,6 +410,11 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       if (!exactKeys(action, ['kind', 'taskId', 'status'])) return undefined
       return taskId !== undefined && isTaskStatus(action.status)
         ? { requestId: envelope.requestId, action: action as unknown as Extract<TaskBoardAction, { kind: 'move' }> }
+        : undefined
+    case 'reorder':
+      if (!exactKeys(action, ['kind', 'taskId', 'beforeTaskId'])) return undefined
+      return taskId !== undefined && (action.beforeTaskId === null || boundedId(action.beforeTaskId))
+        ? { requestId: envelope.requestId, action: { kind: 'reorder', taskId, beforeTaskId: action.beforeTaskId } }
         : undefined
     case 'delete':
     case 'archive':

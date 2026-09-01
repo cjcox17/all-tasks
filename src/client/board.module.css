@@ -263,6 +263,41 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* Anchor the drag insertion line. */
+  position: relative;
+}
+
+/* While a task drag hovers a column's card stack, tint the drop area. */
+.cards[data-dragover] {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, transparent);
+}
+
+/* The drag insertion line: where a dropped card lands in the stack. */
+.dropIndicator {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-bg-base);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* The floating drag ghost: a live clone of the dragged card / group header
+   that follows the pointer (the native square ghost is hidden). */
+.dragGhost {
+  position: fixed;
+  z-index: 1400;
+  pointer-events: none;
+  opacity: 0.92;
+  transform: rotate(2deg) scale(1.02);
+  transform-origin: top left;
+  box-shadow: var(--dsw-shadow-lv3);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .columnEmpty {
@@ -626,6 +661,22 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   border-radius: 10px;
   background: var(--dsw-alias-interactive-bg-hover);
   border: 1px dashed var(--dsw-alias-border-l2);
+  /* Anchor the member-insertion line. */
+  position: relative;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* A group section accepts a task drop: join/reorder highlight. */
+.groupSection[data-droptarget] {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, var(--dsw-alias-interactive-bg-hover));
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-business-primary) inset;
+}
+
+/* The Unassigned section accepts a drop that ungroups a task. */
+.unassignedSection[data-droptarget] {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-base));
 }
 
 .groupHeader {
@@ -645,6 +696,19 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A draggable card or group header signals its move handle with a grab
+   cursor; while a drag is in flight every source shows the grabbing hand.
+   Non-draggable cards (running/pending) keep the pointer cursor. */
+.card[draggable='true'],
+.groupHeader[draggable='true'] {
+  cursor: grab;
+}
+
+.columns[data-dragging] .card[draggable='true'],
+.columns[data-dragging] .groupHeader[draggable='true'] {
+  cursor: grabbing;
 }
 
 .groupBadge {

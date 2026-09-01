@@ -855,3 +855,101 @@ describe('HostTaskLedger', () => {
     })
   })
 })
+
+describe('HostTaskLedger reorder + order invariants', () => {
+  it('reorders the ledger array and persists the order across a reload', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    for (const id of ['a', 'b', 'c', 'd']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '' } })
+    }
+    expect(ledger.state().tasks.map(t => t.id)).toEqual(['a', 'b', 'c', 'd'])
+    ledger.applyRequest('reorder-1', { kind: 'reorder', taskId: 'c', beforeTaskId: 'b' })
+    expect(ledger.state().tasks.map(t => t.id)).toEqual(['a', 'c', 'b', 'd'])
+    // Moving a task to the end via a null target.
+    ledger.applyRequest('reorder-2', { kind: 'reorder', taskId: 'a', beforeTaskId: null })
+    expect(ledger.state().tasks.map(t => t.id)).toEqual(['c', 'b', 'd', 'a'])
+    ledger.dispose()
+
+    const reloaded = new HostTaskLedger(root, () => NOW)
+    expect(reloaded.state().tasks.map(t => t.id)).toEqual(['c', 'b', 'd', 'a'])
+    reloaded.dispose()
+  })
+
+  it('rejects a reorder whose task or target does not exist', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'a', description: '', prompt: '' } })
+    expect(() => ledger.applyRequest('bad-1', { kind: 'reorder', taskId: 'missing', beforeTaskId: null })).toThrow('task not found')
+    expect(() => ledger.applyRequest('bad-2', { kind: 'reorder', taskId: 'a', beforeTaskId: 'missing' })).toThrow('target task not found')
+    ledger.dispose()
+  })
+
+  it('keeps both groups member orders exact when a task changes groups', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group-a', { kind: 'create-group', id: 'g-a', input: { name: 'A' } })
+    ledger.applyRequest('create-group-b', { kind: 'create-group', id: 'g-b', input: { name: 'B' } })
+    for (const id of ['t1', 't2', 't3']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-a' } })
+    }
+    ledger.applyRequest('move-member', { kind: 'update', taskId: 't2', patch: { groupId: 'g-b' } })
+    const groups = ledger.state().groups
+    const orderA = groups.find(g => g.id === 'g-a')!.order
+    const orderB = groups.find(g => g.id === 'g-b')!.order
+    expect(orderA).toEqual(['t1', 't3'])
+    expect(orderB).toEqual(['t2'])
+    ledger.dispose()
+  })
+
+  it('heals an incomplete member order after an action (normalize pass)', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-t1', { kind: 'create', id: 't1', input: { title: 't1', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-t2', { kind: 'create', id: 't2', input: { title: 't2', description: '', prompt: '', groupId: 'g1' } })
+    // Simulate an order that lost its tail member (e.g. a stale partial write).
+    ledger.applyRequest('set-group-order', { kind: 'set-group-order', groupId: 'g1', order: ['t1'] })
+    expect(ledger.state().groups[0].order).toEqual(['t1', 't2'])
+    // A later action re-derives the same complete order (idempotent).
+    ledger.applyRequest('touch', { kind: 'update', taskId: 't1', patch: { title: 't1 v2' } })
+    expect(ledger.state().groups[0].order).toEqual(['t1', 't2'])
+    ledger.dispose()
+  })
+})
+
+describe('HostTaskLedger edit does not reorder group members', () => {
+  it('keeps a grouped task in its group order when editing content or targets', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    for (const id of ['t1', 't2', 't3']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+    }
+    expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
+    // Content edit: title/description/prompt only — membership must be intact.
+    ledger.applyRequest('edit-t1', { kind: 'update', taskId: 't1', patch: { title: 't1 v2', description: 'd', prompt: 'p' } })
+    expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
+    // Target edit: workspace/model/etc. without a groupId — same guarantee.
+    ledger.applyRequest('edit-t2', { kind: 'update', taskId: 't2', patch: { workspaceId: 'ws-1' } })
+    expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
+    // The edited tasks stay members of the group.
+    const group = ledger.state().groups[0]
+    expect(ledger.state().tasks.filter(t => t.groupId === 'g1').map(t => t.id)).toEqual(group.order)
+    ledger.dispose()
+  })
+
+  it('still ungroups a task when the patch carries an explicit null groupId', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    for (const id of ['t1', 't2']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+    }
+    ledger.applyRequest('ungroup-t1', { kind: 'update', taskId: 't1', patch: { groupId: null } })
+    const state = ledger.state()
+    expect(state.tasks.find(t => t.id === 't1')?.groupId).toBeUndefined()
+    expect(state.groups[0].order).toEqual(['t2'])
+    ledger.dispose()
+  })
+})

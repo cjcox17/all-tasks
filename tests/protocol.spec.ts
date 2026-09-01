@@ -363,3 +363,28 @@ describe('group action gate', () => {
     expect(parseActionEnvelope({ requestId: 'set-group-bad', action: { kind: 'update', taskId: 'task-a', patch: { groupId: 5 } } })).toBeUndefined()
   })
 })
+
+describe('reorder action gate', () => {
+  it('accepts a reorder with a bounded target task id', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'reorder-a',
+      action: { kind: 'reorder', taskId: 'task-a', beforeTaskId: 'task-b' },
+    })
+    expect(parsed?.action).toEqual({ kind: 'reorder', taskId: 'task-a', beforeTaskId: 'task-b' })
+  })
+
+  it('accepts a reorder to the end of the array (null target)', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'reorder-b',
+      action: { kind: 'reorder', taskId: 'task-a', beforeTaskId: null },
+    })
+    expect(parsed?.action).toEqual({ kind: 'reorder', taskId: 'task-a', beforeTaskId: null })
+  })
+
+  it('rejects reorders with missing, extra, or malformed fields', () => {
+    expect(parseActionEnvelope({ requestId: 'r1', action: { kind: 'reorder', taskId: 'task-a' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r2', action: { kind: 'reorder', taskId: '', beforeTaskId: null } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r3', action: { kind: 'reorder', taskId: 'task-a', beforeTaskId: 5 } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r4', action: { kind: 'reorder', taskId: 'task-a', beforeTaskId: 'task-b', extra: 1 } })).toBeUndefined()
+  })
+})
