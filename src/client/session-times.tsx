@@ -141,7 +141,11 @@ export interface TokenUsageLike {
 
 /** Minimal conversation snapshot face used by the injection lookup. */
 export interface ConversationSnapshotLike {
-  chat?: { nodes?: ToolNodeStoreLike }
+  chat?: {
+    nodes?: ToolNodeStoreLike
+    /** Visible flow node keys; the real builder replaces this array on every structural change. */
+    order?: readonly unknown[]
+  }
 }
 
 /**
@@ -314,6 +318,16 @@ export function makeAssistantTimeShadow(
     const nodes = props.useSession === undefined
       ? undefined
       : props.useSession((snapshot) => (snapshot as ConversationSnapshotLike)?.chat?.nodes)
+    // The chat node store is mutable and keeps ONE instance, so subscribing to
+    // `nodes` alone never re-renders this shadow when later nodes (notably the
+    // turn tail, which materializes only at turn/end) land. The flow `order`
+    // array is replaced on every structural change, so subscribing to it
+    // re-renders the shadow — and re-runs the idempotent injection effect —
+    // once the turn tail row exists, which is what lets a tail that appears
+    // after this step settled receive its token chip.
+    const flowOrder = props.useSession === undefined
+      ? undefined
+      : props.useSession((snapshot) => (snapshot as ConversationSnapshotLike)?.chat?.order)
     useEffect(() => {
       if (!enabled()) return
       if (props.node?.data?.status !== 'settled') return
@@ -325,6 +339,9 @@ export function makeAssistantTimeShadow(
         injectTurnTokenChip(root, turn, usage)
       }
     })
+    // `flowOrder` is read purely to drive re-renders; the effect above
+    // re-reads the live node store on every run.
+    void flowOrder
     if (officialRef.current === undefined) return null
     return createElement(officialRef.current, props)
   })

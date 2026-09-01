@@ -3,7 +3,7 @@
  * Session-view timestamps: clock/duration formatters, the tool-chip injection
  * into settled assistant steps, and the message-clock stylesheet toggle.
  */
-import { act, type ReactElement } from 'react'
+import { act, useSyncExternalStore, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
@@ -330,6 +330,139 @@ describe('makeAssistantTimeShadow', () => {
     render(<Shadow node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'settled' } }} useSession={(selector) => selector(snapshot)} />)
     expect(document.querySelector('[data-official="assistant"]')).not.toBeNull()
     expect(row.querySelectorAll('[data-dsh-part="session-time"]').length).toBe(0)
+  })
+})
+
+describe('makeAssistantTimeShadow turn-tail arrival timing', () => {
+  function officialStub(props: AssistantTimeOwner): ReactElement {
+    return <div data-official="assistant">{String(props.node?.key ?? 'none')}</div>
+  }
+
+  /**
+   * Mutable node store keeping ONE instance while its values change — the real
+   * `MutableChatNodeStore` behavior, which makes `snapshot.chat.nodes`
+   * referentially stable across node updates.
+   */
+  class MutableStore implements ToolNodeStoreLike {
+    private entries: ToolTimeNodeLike[] = []
+    private cache: readonly ToolTimeNodeLike[] = []
+    private dirty = true
+
+    upsert(...nodes: ToolTimeNodeLike[]): void {
+      this.entries = [...this.entries, ...nodes]
+      this.dirty = true
+    }
+
+    values(): readonly ToolTimeNodeLike[] {
+      if (this.dirty) {
+        this.cache = this.entries
+        this.dirty = false
+      }
+      return this.cache
+    }
+  }
+
+  /**
+   * Subscribable conversation snapshot whose `chat.nodes` reference is stable
+   * across updates while `chat.order` is replaced on structural changes —
+   * matching the real snapshot builder. The shadow's `useSession` is backed by
+   * `useSyncExternalStore`, so the shadow re-renders only when a selected
+   * value changes identity (exactly like the real session-standard-kit hook).
+   */
+  function conversationStore(nodes: MutableStore) {
+    let snapshot: { chat: { nodes: MutableStore; order: readonly string[] } } = {
+      chat: { nodes, order: [] },
+    }
+    const listeners = new Set<() => void>()
+    return {
+      get: () => snapshot,
+      update: (patch: { order: readonly string[] }): void => {
+        snapshot = { chat: { nodes, order: patch.order } }
+        for (const listener of listeners) listener()
+      },
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    }
+  }
+
+  function useSessionFrom(store: ReturnType<typeof conversationStore>) {
+    return function useSession<T>(selector: (snapshot: unknown) => T): T {
+      return useSyncExternalStore(store.subscribe, () => selector(store.get()))
+    }
+  }
+
+  it('injects the token chip when the turn tail appears after this step settled', () => {
+    // A tool row for this step already exists when the step settles (tool
+    // calls precede the closing message), so the tool time chip injects.
+    const row = document.createElement('div')
+    row.setAttribute('data-chat-call-id', 'c1')
+    const title = document.createElement('div')
+    title.setAttribute('data-disclosure-row', 'true')
+    title.textContent = 'Bash'
+    row.appendChild(title)
+    document.body.appendChild(row)
+
+    const nodes = new MutableStore()
+    nodes.upsert({ kind: 'tool-call', data: { root: settledTool('c1', todayAt(9, 0, 0), todayAt(9, 0, 3)) } } as unknown as ToolTimeNodeLike)
+    const store = conversationStore(nodes)
+    const Shadow = makeAssistantTimeShadow(officialStub, () => true)
+    render(
+      <Shadow
+        node={{
+          key: '7:assistant-step',
+          kind: 'assistant-step',
+          data: { status: 'settled', turn: 7, usage: { inputTokens: 100, outputTokens: 25, cacheReadTokens: 900 } },
+        }}
+        useSession={useSessionFrom(store)}
+      />,
+    )
+    // Settle-time commit: the closing usage exists but the turn-tail row does
+    // not (it appears only at turn/end), so no token chip yet — the tool time
+    // chip does inject.
+    expect(row.querySelector('[data-dsh-part="session-time"]')?.textContent).toBe('09:00:00 · 3.0s')
+    expect(document.querySelectorAll('[data-dsh-part="session-tokens"]').length).toBe(0)
+
+    // turn/end: the flow adds the turn-tail node (same chat.nodes instance) and
+    // the tail row lands in the DOM. The assistant-step seat does not re-render
+    // (its node prop reference is unchanged), so only the shadow's own
+    // subscriptions can re-run the injection effect.
+    nodes.upsert({
+      kind: 'turn-tail',
+      data: { turn: 7, closing: { usage: { inputTokens: 100, outputTokens: 25, cacheReadTokens: 900 } } },
+    } as unknown as ToolTimeNodeLike)
+    const tail = document.createElement('div')
+    tail.setAttribute('data-turn-tail', '7')
+    const actions = document.createElement('div')
+    actions.setAttribute('data-dsh-part', 'tail-actions')
+    tail.appendChild(actions)
+    document.body.appendChild(tail)
+    act(() => { store.update({ order: ['tool-call', 'assistant-step', 'turn-tail'] }) })
+
+    const chip = tail.querySelector('[data-dsh-part="session-tokens"]')
+    expect(chip?.textContent).toBe('Input 1K tok · Output 25 tok')
+  })
+
+  it('does not inject a token chip when the turn tail never gains usage', () => {
+    const nodes = new MutableStore()
+    const store = conversationStore(nodes)
+    const Shadow = makeAssistantTimeShadow(officialStub, () => true)
+    render(
+      <Shadow
+        node={{ key: '7:assistant-step', kind: 'assistant-step', data: { status: 'settled', turn: 7 } }}
+        useSession={useSessionFrom(store)}
+      />,
+    )
+    const tail = document.createElement('div')
+    tail.setAttribute('data-turn-tail', '7')
+    const actions = document.createElement('div')
+    actions.setAttribute('data-dsh-part', 'tail-actions')
+    tail.appendChild(actions)
+    document.body.appendChild(tail)
+    nodes.upsert({ kind: 'turn-tail', data: { turn: 7, closing: {} } } as unknown as ToolTimeNodeLike)
+    act(() => { store.update({ order: ['turn-tail'] }) })
+    expect(document.querySelectorAll('[data-dsh-part="session-tokens"]').length).toBe(0)
   })
 })
 
