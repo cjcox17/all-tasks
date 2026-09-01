@@ -6,8 +6,6 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import type { BoardController } from '../../core/controller.ts'
-import { groupExecutionModelOptions } from '../../core/controller.ts'
-import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type ExecutionRecord, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
@@ -17,10 +15,9 @@ import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EditTaskModal } from './EditTaskModal.tsx'
-import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
 import { effectiveDefaultNames } from './execution-default-labels.ts'
+import { EndpointModelFields } from './EndpointModelFields.tsx'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
-import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import { STATUS_KEY } from './status-key.ts'
 
 /** Execution outcome → locale key. */
@@ -157,18 +154,12 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const groupKnown = groupId === '' || scopeGroups.some(group => group.id === groupId)
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
-  const modelKnown = model === undefined || options.models.some(item => item.provider === model.provider && item.model === model.model)
-  // The model dropdown is constrained by the task's pinned endpoints: only
-  // models at least one pinned endpoint serves are offered. A pinned model
-  // outside that set stays selectable as a stale row ("not served by pinned
-  // endpoints" when the catalog still knows it), so the effective selection
-  // the router will make is never hidden.
-  const taskEndpoints = task.endpoints ?? []
-  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, taskEndpoints)
-  const modelServable = model === undefined || taskEndpoints.length === 0 || servableModels.some(item =>
-    item.provider === model.provider && item.model === model.model)
-  const modelGroups = groupExecutionModelOptions(servableModels)
-  const modelStale = model !== undefined && !modelServable
+  // The endpoint → model cascade (EndpointModelFields) keeps the model select
+  // inside the task's endpoint selection: only models at least one pinned
+  // endpoint serves are offered, and a pinned model outside that set stays
+  // selectable as a stale row ("not served by pinned endpoints" when the
+  // catalog still knows it), so the effective selection the router will make
+  // is never hidden.
 
   /** Change the task's workspace, clearing a group that cannot follow it. */
   const changeWorkspace = (next: string): void => {
@@ -235,56 +226,22 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           ))}
         </select>
       </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('new.model')}</span>
-        <select
-          className={css.select}
-          value={modelKey}
-          disabled={pending}
-          onChange={event => {
-            const key = event.target.value
-            controller.updateTask(task.id, { model: key === '' ? null : parseModelSelectionKey(key) })
-          }}
-        >
-          <option value="">{defaultModel === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultModel })}</option>
-          {model !== undefined && !modelKnown && (
-            <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.removed')}</option>
-          )}
-          {modelStale && modelKnown && (
-            <option value={modelKey}>{model.provider} · {model.model}{t('exec.model.notServed')}</option>
-          )}
-          {modelGroups.map(group => (
-            <optgroup key={group.provider} label={group.providerName}>
-              {group.models.map(option => (
-                <option key={option.model} value={modelSelectionKey({ provider: option.provider, model: option.model })}>
-                  {option.modelName ?? option.model}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {modelStale && modelKnown && <span className={css.settingsHint}>{t('exec.model.endpointHint')}</span>}
-      </label>
-      {model !== undefined && (
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('new.model.effort')}</span>
-          <ReasoningEffortPicker
-            value={model.reasoningEffort ?? ''}
-            disabled={pending}
-            onChange={effort => { void controller.updateTask(task.id, { model: withReasoningEffort(model, effort) }) }}
-          />
-        </label>
-      )}
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('new.endpoints')}</span>
-        <EndpointOrderEditor
-          endpoints={task.endpoints ?? []}
-          options={options.endpoints}
-          disabled={pending}
-          onChange={list => { void controller.updateTask(task.id, { endpoints: list.length === 0 ? null : list }) }}
-        />
-        {(task.endpoints === undefined || task.endpoints.length === 0) && workspaceDefaultHint(defaultEndpoints)}
-      </label>
+      <EndpointModelFields
+        endpoints={task.endpoints ?? []}
+        onEndpointsChange={list => { void controller.updateTask(task.id, { endpoints: list.length === 0 ? null : list }) }}
+        endpointOptions={options.endpoints}
+        models={options.models}
+        modelKey={modelKey}
+        onModelChange={key => { controller.updateTask(task.id, { model: key === '' ? null : parseModelSelectionKey(key) }) }}
+        modelBlankLabel={defaultModel === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultModel })}
+        effort={model?.reasoningEffort ?? ''}
+        onEffortChange={effort => {
+          if (model === undefined) return
+          void controller.updateTask(task.id, { model: withReasoningEffort(model, effort) })
+        }}
+        disabled={pending}
+        endpointsHint={task.endpoints === undefined || task.endpoints.length === 0 ? workspaceDefaultHint(defaultEndpoints) : undefined}
+      />
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>
         <select
