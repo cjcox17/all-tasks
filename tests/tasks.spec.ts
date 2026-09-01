@@ -341,25 +341,25 @@ describe('task origin (source)', () => {
     expect(createTask({ title: 'E', description: '', prompt: '', source: 'event' }, 1, 't-3').source).toBe('event')
   })
 
-  it('gates approval at creation: only the user dialog or an explicit approved:true mints an approved task', () => {
-    // The board dialog claims the user origin: stays approved.
+  it('records the origin without changing approval state', () => {
+    // The board dialog claims the user origin: approved (absent).
     const user = applyCreateTask([], { title: 'U', description: '', prompt: '', source: 'user' }, NOW, 't-user')
+    expect(user.task?.source).toBe('user')
     expect(user.task?.approved).toBeUndefined()
     expect(isTaskApproved(user.task!)).toBe(true)
-    // A programmatic create without an origin (the wire defaults it to api) is
-    // unapproved by default: it lands for review and cannot run until approved.
+    // A programmatic create without an origin defaults to api, still approved
+    // (creation never gates): the origin is informational only.
     const api = applyCreateTask([], { title: 'A', description: '', prompt: '' }, NOW, 't-api')
     expect(api.task?.source).toBe('api')
-    expect(api.task?.approved).toBe(false)
-    expect(isTaskApproved(api.task!)).toBe(false)
-    // An event-created task is unapproved too...
+    expect(api.task?.approved).toBeUndefined()
+    expect(isTaskApproved(api.task!)).toBe(true)
+    // An event-created task records the event origin and stays approved.
     const event = applyCreateTask([], { title: 'E', description: '', prompt: '', source: 'event' }, NOW, 't-event')
-    expect(event.task?.approved).toBe(false)
-    // ...unless the creator explicitly approves it (the webhook autoRun flow).
+    expect(event.task?.source).toBe('event')
+    expect(event.task?.approved).toBeUndefined()
+    // An explicit approval request is honored verbatim in both directions.
     const auto = applyCreateTask([], { title: 'R', description: '', prompt: '', source: 'event', approved: true }, NOW, 't-run')
     expect(auto.task?.approved).toBeUndefined()
-    expect(isTaskApproved(auto.task!)).toBe(true)
-    // An explicit unapproved request wins over the user origin too.
     const gated = applyCreateTask([], { title: 'G', description: '', prompt: '', source: 'user', approved: false }, NOW, 't-gated')
     expect(gated.task?.approved).toBe(false)
   })

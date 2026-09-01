@@ -57,11 +57,12 @@ describe('event routes', () => {
     expect(result.status).toBe(200)
     const createCall = apply.mock.calls.find(call => (call[1] as { kind?: string }).kind === 'create')
     expect(createCall).toBeDefined()
-    const input = (createCall?.[1] as { input: { prompt: string; source: string; approved: boolean } }).input
+    const input = (createCall?.[1] as { input: { prompt: string; source: string; approved?: boolean } }).input
     expect(input.prompt).toContain('build failed')
-    // autoRun is off: the event-created task is event-origin and unapproved.
+    // The event-created task records the event origin; creation never forces
+    // an approval state.
     expect(input.source).toBe('event')
-    expect(input.approved).toBe(false)
+    expect(input.approved).toBeUndefined()
   })
 
   it('rejects a request without the browser same-origin marker', async () => {

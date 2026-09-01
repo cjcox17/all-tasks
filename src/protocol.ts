@@ -337,8 +337,8 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
         const groupId = input.groupId === undefined ? undefined : input.groupId.trim()
         // An absent origin means the caller did not claim the board's own
-        // dialog, so the task is programmatic (`api`): it mints unapproved
-        // unless `approved: true` is passed explicitly.
+        // dialog, so the task is programmatic (`api`). This is informational
+        // only (the board shows an API badge); it never changes approval.
         const source = input.source === undefined ? 'api' : input.source
         const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId && source === input.source
           ? input

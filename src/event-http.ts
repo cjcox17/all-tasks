@@ -73,18 +73,14 @@ export function createHttpEventSource(config: HttpEventConfig = {}, env: NodeJS.
     },
     map(request, body) {
       // Event-created tasks carry the `event` origin so the board can show
-      // where they came from, and they land **unapproved** unless autoRun is
-      // on: the common "land in the backlog for review" flow must never let a
-      // webhook task appear and start by itself — a human approves it first
-      // (the card shows the Not approved badge and can never run until then).
-      // autoRun callers explicitly want immediate execution, so their tasks
-      // are minted approved.
+      // where they came from. The origin is informational only: it never
+      // changes the task's approval state (autoRun still decides whether the
+      // task is launched, but creation does not gate it).
       const input = {
         title: bodyTitle(body, 'Webhook event'),
         description: '',
         prompt: bodyText(body),
         source: 'event' as const,
-        approved: config.autoRun === true,
         ...(config.workspaceId === undefined || config.workspaceId.trim() === '' ? {} : { workspaceId: config.workspaceId.trim() }),
       }
       const dedupeKey = stringHeader(request.headers[HTTP_EVENT_DEDUPE_HEADER])

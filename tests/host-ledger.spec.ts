@@ -725,28 +725,25 @@ describe('HostTaskLedger', () => {
     expect(ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' }).state.tasks[0]!.status).toBe('running')
   })
 
-  it('mints a programmatic (api/event) create unapproved and keeps a user create approved', () => {
+  it('records the origin on a create without changing approval (creation never gates)', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     // A protocol create without an explicit origin (scripts, tools, agents):
-    // the wire sanitizer defaults it to `api`, and the ledger gates it.
+    // the wire sanitizer defaults it to `api` — informational only, still runnable.
     ledger.applyRequest('create-api', { kind: 'create', id: 'api-task', input: { title: 'Script task', description: '', prompt: '' } })
     const apiTask = ledger.state().tasks.find(task => task.id === 'api-task')!
     expect(apiTask.source).toBe('api')
-    expect(apiTask.approved).toBe(false)
-    expect(() => ledger.applyRequest('run', { kind: 'run', taskId: 'api-task' })).toThrow('task is not approved')
-    // The board dialog claims `user`: approved as before.
+    expect(apiTask.approved).toBeUndefined()
+    expect(ledger.applyRequest('run', { kind: 'run', taskId: 'api-task' }).state.tasks[0]!.status).toBe('running')
+    // The board dialog claims `user`.
     ledger.applyRequest('create-user', { kind: 'create', id: 'user-task', input: { title: 'My task', description: '', prompt: '', source: 'user' } })
     const userTask = ledger.state().tasks.find(task => task.id === 'user-task')!
     expect(userTask.source).toBe('user')
     expect(userTask.approved).toBeUndefined()
-    // An explicit approved:true overrides the programmatic default (autoRun events).
-    ledger.applyRequest('create-event-run', { kind: 'create', id: 'event-task', input: { title: 'Alert', description: '', prompt: '', source: 'event', approved: true } })
+    // An event create records the event origin and stays approved.
+    ledger.applyRequest('create-event', { kind: 'create', id: 'event-task', input: { title: 'Alert', description: '', prompt: '', source: 'event' } })
     const eventTask = ledger.state().tasks.find(task => task.id === 'event-task')!
     expect(eventTask.source).toBe('event')
     expect(eventTask.approved).toBeUndefined()
-    // Approving an api task clears the gate so it can run.
-    ledger.applyRequest('approve', { kind: 'set-approved', taskId: 'api-task', approved: true })
-    expect(ledger.applyRequest('run', { kind: 'run', taskId: 'api-task' }).state.tasks[0]!.status).toBe('running')
   })
 
   it('unapproves a task through set-approved and refuses every run path', () => {

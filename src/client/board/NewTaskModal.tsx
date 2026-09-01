@@ -74,9 +74,8 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       title,
       description,
       prompt,
-      // The board's own dialog claims the user origin explicitly: the wire
-      // sanitizer defaults an absent origin to `api` (programmatic), which
-      // would otherwise mint this task unapproved.
+      // The board's own dialog claims the user origin explicitly (the wire
+      // sanitizer defaults an absent origin to `api` for transparency).
       source: 'user' as const,
       workspaceId: workspaceId === '' ? undefined : workspaceId,
       mode: mode === '' ? undefined : mode,

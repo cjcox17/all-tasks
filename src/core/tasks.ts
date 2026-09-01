@@ -165,10 +165,8 @@ export interface TaskRecord {
    * protocol `create` action (a script, another tool, or an agent) without an
    * explicit origin; `event` means an inbound event source (the webhook)
    * created it. Absent on legacy records behaves as `user`. The origin is
-   * display-only on the board — it never gates execution by itself — but a
-   * non-user origin mints the task unapproved at creation time (see
-   * {@link applyCreateTask}), so a programmatically created task can never
-   * run until a human approves it.
+   * display-only on the board — it never changes the task's approval state
+   * and never gates execution.
    */
   source?: TaskSource
 }
@@ -298,9 +296,8 @@ export interface NewTaskInput {
    * Origin of the task being created. The board's new-task dialog always
    * passes `user`; the event webhook passes `event`; any other protocol
    * `create` caller may omit it, in which case the wire sanitizer defaults it
-   * to `api` (programmatic). A non-user origin mints the task unapproved at
-   * creation unless `approved: true` is passed explicitly (see
-   * {@link applyCreateTask}).
+   * to `api` (programmatic). The origin is informational only and never
+   * changes the task's approval state.
    */
   source?: TaskSource
 }

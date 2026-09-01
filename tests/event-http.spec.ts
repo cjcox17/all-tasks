@@ -17,18 +17,18 @@ describe('event-http', () => {
     expect(mapping.input.prompt).toContain('"log": "boom"')
   })
 
-  it('marks event-created tasks with the event origin, approved only when autoRun', async () => {
-    // autoRun off (the review flow): the task is event-origin and unapproved,
-    // so it lands in the backlog and can never run until a human approves it.
+  it('marks event-created tasks with the event origin without changing approval', async () => {
+    // The origin is informational only: autoRun still drives launch, but the
+    // mapping never forces an approval state onto the created task.
     const review = createHttpEventSource()
     const reviewMapping = await review.map(req(), { title: 'Alert' })
     expect(reviewMapping.input.source).toBe('event')
-    expect(reviewMapping.input.approved).toBe(false)
-    // autoRun on (immediate execution requested by the caller): approved.
+    expect(reviewMapping.input.approved).toBeUndefined()
     const run = createHttpEventSource({ autoRun: true })
     const runMapping = await run.map(req(), { title: 'Alert' })
     expect(runMapping.input.source).toBe('event')
-    expect(runMapping.input.approved).toBe(true)
+    expect(runMapping.input.approved).toBeUndefined()
+    expect(runMapping.autoRun).toBe(true)
   })
 
   it('derives a dedupe key from the header and defaults autoRun to false', async () => {
