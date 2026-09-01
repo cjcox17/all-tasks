@@ -741,6 +741,41 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 1px 8px;
 }
 
+/* Live group status pills on the banner: Running (a member's session is
+   executing) and Pending (members are held before launch — queued for a
+   group slot, the allowed window, or an endpoint). */
+.groupStatus {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.groupStatus[data-kind='running'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.groupStatus[data-kind='pending'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+/* The tiny spinner inside the Running pill (reuses the card spinner's spin). */
+.groupStatusSpinner {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border: 1.5px solid var(--dsw-alias-state-warn-primary);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: dshTbSpin 800ms linear infinite;
+}
+
 .groupEmpty {
   margin: 0 8px 8px;
   font-size: 12px;
@@ -1813,7 +1848,8 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     transition: none;
   }
 
-  .cardSpinner {
+  .cardSpinner,
+  .groupStatusSpinner {
     animation: none;
   }
 }

@@ -13,7 +13,13 @@
  */
 import { memo, useCallback, useEffect, useState, type DragEvent as ReactDragEvent } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
-import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
+import {
+  groupRuntimeStatus,
+  orderedGroupMembers,
+  type ExecutionQueuedReason,
+  type GroupRuntimeStatus,
+  type TaskGroupRecord,
+} from '../../core/groups.ts'
 import { COLUMNS, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
@@ -108,16 +114,25 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
   return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} />
 })
 
+/** Human hint for a pending group: the reason(s) its held members wait. */
+function pendingReasonsHint(reasons: readonly ExecutionQueuedReason[]): string {
+  if (reasons.length === 0) return t('group.pendingHint')
+  return reasons.map(reason => t(reason === 'group'
+    ? 'detail.result.waitingGroup'
+    : reason === 'window' ? 'detail.result.waitingWindow' : 'detail.result.waiting')).join(' · ')
+}
+
 /**
- * Group section header inside a column: name, member count, mode badge,
- * start/stop/resume, manage. The whole header is a drag source so a group can
- * be moved between manual columns in one action (see the column drop handler).
+ * Group section header inside a column: name, member count, mode badge, live
+ * Running/Pending status, start/stop/resume, manage. The whole header is a
+ * drag source so a group can be moved between manual columns in one action
+ * (see the column drop handler).
  */
-function GroupBanner({ group, count, running, canStart, onStart, onStop, onResume, onManage, onDragStart }: {
+function GroupBanner({ group, count, status, canStart, onStart, onStop, onResume, onManage, onDragStart }: {
   group: TaskGroupRecord
   count: number
-  /** Whether any member has an open (running/queued) execution. */
-  running: boolean
+  /** Open-execution status (running/queued members) of the whole group. */
+  status: GroupRuntimeStatus
   /** Whether any on-board member can be started right now. */
   canStart: boolean
   onStart: () => void
@@ -127,7 +142,11 @@ function GroupBanner({ group, count, running, canStart, onStart, onStop, onResum
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
 }) {
   const stopped = group.stopped === true
-  const draggable = !running && !stopped
+  // Any open execution — running or queued — holds the group's attention: the
+  // banner is not draggable and the stop button is live (a queued member is
+  // stopped just like a launched one).
+  const hasOpen = status.running > 0 || status.pending > 0
+  const draggable = !hasOpen && !stopped
   return (
     <header
       className={css.groupHeader}
@@ -154,6 +173,19 @@ function GroupBanner({ group, count, running, canStart, onStart, onStop, onResum
       <span className={css.groupBadge} data-mode={group.mode}>
         {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
       </span>
+      {status.running > 0 && (
+        <span className={css.groupStatus} data-kind="running" title={t('group.runningHint')}>
+          <span className={css.groupStatusSpinner} aria-hidden="true" />
+          {t('group.running')}
+          {status.running > 1 ? ` ${status.running}` : ''}
+        </span>
+      )}
+      {status.pending > 0 && (
+        <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
+          {t('group.pending')}
+          {status.pending > 1 ? ` ${status.pending}` : ''}
+        </span>
+      )}
       {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
       {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
       <span className={css.groupCount}>{count}</span>
@@ -183,7 +215,7 @@ function GroupBanner({ group, count, running, canStart, onStart, onStop, onResum
           type="button"
           className={css.ghostButton}
           aria-label={t('group.stop')}
-          disabled={!running}
+          disabled={!hasOpen}
           onClick={onStop}
         >
           ⏹
@@ -206,11 +238,11 @@ function GroupBanner({ group, count, running, canStart, onStart, onStop, onResum
  * Every running/queued member gets a per-card stop button (so a group can be
  * stopped member-by-member from the board, without opening a session).
  */
-function GroupSection({ group, members, hasRunning, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
-  /** Whether any board-wide member has a running execution (enables stop-group). */
-  hasRunning: boolean
+  /** Open-execution status of the whole group (running/queued members). */
+  status: GroupRuntimeStatus
   /** Whether any on-board member can be started right now (enables start-group). */
   canStart: boolean
   pendingIds: readonly string[]
@@ -233,7 +265,7 @@ function GroupSection({ group, members, hasRunning, canStart, pendingIds, timeZo
       <GroupBanner
         group={group}
         count={members.length}
-        running={hasRunning}
+        status={status}
         canStart={canStart}
         onStart={onStartGroup}
         onStop={onStopGroup}
@@ -667,7 +699,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       key={group.id}
                       group={group}
                       members={members}
-                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      status={groupRuntimeStatus(group, snapshot.tasks)}
                       canStart={canStartGroup(group.id)}
                       pendingIds={snapshot.pendingTaskIds}
                       timeZone={snapshot.host?.scheduler.timeZone}
@@ -688,7 +720,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       key={group.id}
                       group={group}
                       members={[]}
-                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      status={groupRuntimeStatus(group, snapshot.tasks)}
                       canStart={canStartGroup(group.id)}
                       pendingIds={snapshot.pendingTaskIds}
                       timeZone={snapshot.host?.scheduler.timeZone}

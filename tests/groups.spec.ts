@@ -10,6 +10,7 @@ import {
   createGroup,
   effectiveEndpointIds,
   groupCapacityFull,
+  groupRuntimeStatus,
   groupWindowOpen,
   isGroupExecutionMode,
   nextRunnableMember,
@@ -22,7 +23,7 @@ import {
   withGroupScheduleRoll,
   type TaskGroupRecord,
 } from '../src/core/groups.ts'
-import { createTask, type TaskRecord } from '../src/core/tasks.ts'
+import { createTask, type ExecutionRecord, type TaskRecord } from '../src/core/tasks.ts'
 
 const NOW = 1_700_000_000_000
 
@@ -273,5 +274,69 @@ describe('execution policy helpers', () => {
 
     const archivedT4 = { ...t4, archivedAt: NOW }
     expect(nextRunnableMember(ordered, [t1, runningT2, t3, archivedT4])).toBeUndefined()
+  })
+})
+
+describe('group runtime status', () => {
+  const group = createGroup({ name: 'G' }, NOW, 'g1')!
+
+  /** An open (unsettled) execution; default = the brief pre-route window. */
+  function openExecution(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
+    return {
+      id: 'x1',
+      sessionId: undefined,
+      startedAt: NOW,
+      endedAt: undefined,
+      result: undefined,
+      error: undefined,
+      ...overrides,
+    }
+  }
+
+  it('reports nothing for a group without open executions (or members)', () => {
+    const member = task('t1', { groupId: 'g1', status: 'todo' })
+    const ungrouped = task('t2', { status: 'todo' })
+    expect(groupRuntimeStatus(group, [member, ungrouped])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
+    expect(groupRuntimeStatus(group, [])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
+  })
+
+  it('counts launched members as running', () => {
+    const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's1' })] })
+    const t2 = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's2' })] })
+    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 2, pending: 0, pendingReasons: [] })
+  })
+
+  it('counts queued members as pending and collects their reasons in first-seen order', () => {
+    const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'group' })] })
+    const t2 = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'window' })] })
+    const t3 = task('t3', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'endpoint' })] })
+    expect(groupRuntimeStatus(group, [t1, t2, t3])).toEqual({
+      running: 0,
+      pending: 3,
+      pendingReasons: ['group', 'window', 'endpoint'],
+    })
+  })
+
+  it('deduplicates pending reasons', () => {
+    const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'window' })] })
+    const t2 = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'window' })] })
+    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 0, pending: 2, pendingReasons: ['window'] })
+  })
+
+  it('treats an open pre-route execution without a reason as pending', () => {
+    const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution()] })
+    expect(groupRuntimeStatus(group, [t1])).toEqual({ running: 0, pending: 1, pendingReasons: [] })
+  })
+
+  it('ignores settled executions and other groups', () => {
+    const settled = task('t1', { groupId: 'g1', status: 'done', executions: [openExecution({ sessionId: 's1', endedAt: NOW + 1, result: 'succeeded' })] })
+    const elsewhere = task('t2', { status: 'running', executions: [openExecution({ sessionId: 's9' })] })
+    expect(groupRuntimeStatus(group, [settled, elsewhere])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
+  })
+
+  it('mixes running and pending members (sequential hand-off)', () => {
+    const launched = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's1' })] })
+    const queued = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'endpoint' })] })
+    expect(groupRuntimeStatus(group, [launched, queued])).toEqual({ running: 1, pending: 1, pendingReasons: ['endpoint'] })
   })
 })

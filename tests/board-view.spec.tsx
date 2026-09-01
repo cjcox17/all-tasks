@@ -402,7 +402,14 @@ describe('TaskBoard group sections', () => {
     const stopCalls: string[] = []
     const stopGroupCalls: string[] = []
     const { container } = await renderBoard({
-      tasks: [task({ id: 't1', title: 'Member A', status: 'running', groupId: 'g1' })],
+      tasks: [task({
+        id: 't1',
+        title: 'Member A',
+        status: 'running',
+        groupId: 'g1',
+        // A running member always carries an open (unsettled) execution.
+        executions: [{ id: 'x1', sessionId: 's1', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }],
+      })],
       groups: [GROUP],
     }, {
       stopTask: async (id: string) => { stopCalls.push(id); return true },
