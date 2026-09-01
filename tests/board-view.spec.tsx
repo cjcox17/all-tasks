@@ -956,6 +956,107 @@ describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
     dropOn(section, 'task:t2', 100)
     expect(orders).toEqual([{ groupId: 'g1', order: ['t2', 't1'] }])
   })
+
+  it('dropping a group back onto its own column is a no-op (moveGroup not called)', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' }),
+        task({ id: 't2', title: 'Member B', status: 'todo', groupId: 'g1' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const todoCards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    expect(todoCards).not.toBeNull()
+    // The group already sits in the todo column: dropping it there must not
+    // rewrite every member (which would bump their updatedAt stamps).
+    dropOn(todoCards, 'group:g1')
+    expect(moveCalls).toEqual([])
+  })
+
+  it('reorders an unassigned card dropped above a sibling inside the Unassigned section', async () => {
+    const reorders: Array<{ id: string; before: string | undefined }> = []
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => {
+      root.render(<TaskBoard controller={fakeController({
+        tasks: [
+          task({ id: 't-u1', title: 'Unassigned A', status: 'todo' }),
+          task({ id: 't-u2', title: 'Unassigned B', status: 'todo' }),
+          task({ id: 't-pin', title: 'Pinned', status: 'todo', workspaceId: 'ws-a' }),
+        ],
+        executionOptions: { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] },
+      }, {
+        reorderTask: (id: string, before: string | undefined) => { reorders.push({ id, before }) },
+      })} />)
+    })
+    await openWorkspace(container, 'ws-a')
+
+    const section = container.querySelector('[data-dsh-part="unassigned"]') as HTMLElement
+    expect(section).not.toBeNull()
+    // Unassigned A's midpoint sits at 100 + 40/2 = 120; drop Unassigned B at
+    // y=100 (above it) inside the section → B reorders above A.
+    stubCardRect(container, 't-u1', 100, 40)
+    dropOn(section, 'task:t-u2', 100)
+    expect(reorders).toEqual([{ id: 't-u2', before: 't-u1' }])
+  })
+
+  it('opens the drag ghost over the grabbed point and keeps it under the cursor (fluid drag)', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => {
+      root.render(<TaskBoard controller={fakeController({
+        tasks: [task({ id: 't-ghost', title: 'Ghost', status: 'todo' })],
+      })} />)
+    })
+    await openAllTasks(container)
+
+    const card = container.querySelector('[data-task-id="t-ghost"]') as HTMLElement
+    expect(card).not.toBeNull()
+    card.getBoundingClientRect = () => ({
+      x: 100, y: 200, left: 100, top: 200, right: 300, bottom: 240,
+      width: 200, height: 40, toJSON: () => ({}),
+    })
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      setData(type: string, val: string) { this.data[type] = val },
+      getData(type: string) { return this.data[type] ?? '' },
+      dropEffect: 'none',
+      setDragImage() {},
+    }
+    await act(async () => {
+      card.dispatchEvent(Object.assign(
+        new Event('dragstart', { bubbles: true, cancelable: true }),
+        { dataTransfer, clientX: 140, clientY: 210 },
+      ))
+    })
+    // The grab point is (140, 210) inside a box at (100, 200): the ghost must
+    // open exactly over the source element (left 100, top 200), not snap its
+    // top-left corner to the pointer.
+    const ghost = container.querySelector('[data-dsh-part="drag-ghost"]') as HTMLElement
+    expect(ghost).not.toBeNull()
+    expect(ghost.style.left).toBe('100px')
+    expect(ghost.style.top).toBe('200px')
+
+    // While dragging, the ghost follows the pointer with the same grab offset:
+    // pointer at (300, 250) → ghost at (260, 240).
+    await act(async () => {
+      window.dispatchEvent(Object.assign(new Event('drag', { bubbles: true }), { clientX: 300, clientY: 250 }))
+    })
+    expect(ghost.style.left).toBe('260px')
+    expect(ghost.style.top).toBe('240px')
+
+    await act(async () => {
+      window.dispatchEvent(new Event('dragend', { bubbles: true }))
+    })
+    expect(container.querySelector('[data-dsh-part="drag-ghost"]')).toBeNull()
+  })
 })
 
 describe('TaskBoard workspace directory (expandable landing)', () => {

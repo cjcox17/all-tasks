@@ -619,6 +619,23 @@ describe('BoardController legacy group transitions', () => {
     expect(await controller.updateTask('task-a', { groupId: 'g1' })).toBe(true)
     controller.dispose()
   })
+
+  it('editing a group member preserves the group member order', async () => {
+    const { controller } = makeController()
+    const group = await controller.createGroupConfirmed({ name: 'Nightly', mode: 'sequential' })
+    controller.createTask({ title: 'A', description: '', prompt: '', groupId: group!.id })
+    controller.createTask({ title: 'B', description: '', prompt: '', groupId: group!.id })
+    const [a, b] = controller.groupMembers(group!.id)
+    expect(await controller.setGroupOrder(group!.id, [b!.id, a!.id])).toBe(true)
+    expect(controller.groupMembers(group!.id).map(t => t.title)).toEqual(['B', 'A'])
+
+    // Editing one member (content + execution targets, no group change) must
+    // not reshuffle the group's member order.
+    expect(await controller.updateTask(b!.id, { title: 'B edited', description: '', prompt: 'p' })).toBe(true)
+    expect(await controller.updateTask(b!.id, { workspaceId: 'ws-1' })).toBe(true)
+    expect(controller.groupMembers(group!.id).map(t => t.title)).toEqual(['B edited', 'A'])
+    expect(controller.getSnapshot().groups[0]!.order).toEqual([b!.id, a!.id])
+  })
 })
 
 describe('BoardController workspace defaults', () => {
@@ -663,11 +680,27 @@ describe('BoardController reorder', () => {
     expect(store.load().map(t => t.id)).toEqual([ids[1], ids[2], ids[0]])
   })
 
-  it('is a no-op when the task is already in place', () => {
-    const { controller } = makeController()
+  it('is a no-op when the task is already in place — nothing is persisted', () => {
+    const { controller, store } = makeController()
     const ids = ['a', 'b', 'c'].map(title =>
       controller.createTask({ title, description: '', prompt: '' })!.id)
+    const save = vi.spyOn(store, 'save')
     controller.reorderTask(ids[0]!, ids[1])
     expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual(ids)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('editing a task never changes its position (edit ≠ reorder)', async () => {
+    const { controller, store } = makeController()
+    const ids = ['alpha', 'beta', 'gamma'].map(title =>
+      controller.createTask({ title, description: '', prompt: '' })!.id)
+    const before = controller.getSnapshot().tasks.map(t => t.id)
+    // Edit the middle task's content, schedule, approval, and targets —
+    // every editable surface — and the ledger order must stay identical.
+    expect(await controller.updateTask(ids[1]!, { title: 'beta edited', description: 'd', prompt: 'p' })).toBe(true)
+    expect(await controller.updateTask(ids[1]!, { workspaceId: 'ws-1', mode: 'anchored' })).toBe(true)
+    controller.setApproved(ids[1]!, true)
+    expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual(before)
+    expect(store.load().map(t => t.id)).toEqual(before)
   })
 })

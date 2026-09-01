@@ -57,7 +57,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
   timeZone?: string
   onClick: () => void
   /** Board-level drag hook: payload + the source rect (for the custom ghost). */
-  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: { x: number; y: number }) => void
 }) {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
@@ -86,7 +86,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
           y: rect.y,
           width: rect.width,
           height: rect.height,
-        }, event.currentTarget.outerHTML)
+        }, event.currentTarget.outerHTML, { x: event.clientX, y: event.clientY })
       } : undefined}
       onClick={onClick}
       title={task.description !== '' ? task.description : task.title}
