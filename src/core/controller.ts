@@ -806,7 +806,7 @@ export class BoardController {
     return true
   }
 
-  // --- workspace-level fan-out (the landing list's run / pause / stop) ---------
+  // --- workspace-level fan-out (the landing list's run / stop) -----------------
 
   /**
    * Start one workspace's ready work (or the whole board when `workspaceId` is
@@ -819,13 +819,6 @@ export class BoardController {
     const plan = planWorkspaceActions(this.tasks, this.groups, workspaceId)
     for (const id of plan.todoTaskIds) await this.runTask(id)
     for (const id of plan.runnableGroupIds) await this.runGroup(id)
-  }
-
-  /** Pause a workspace's running groups (each becomes stopped, resumable later). */
-  async pauseWorkspaceGroups(workspaceId?: string): Promise<void> {
-    if (this.deps.transport === undefined) return
-    const plan = planWorkspaceActions(this.tasks, this.groups, workspaceId)
-    for (const id of plan.pausableGroupIds) await this.stopGroup(id)
   }
 
   /** Stop a workspace's running work: cancel running ungrouped tasks and running groups. */

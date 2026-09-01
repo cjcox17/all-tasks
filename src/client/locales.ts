@@ -58,7 +58,6 @@ export const zh = {
   'list.expandGroup': '展开分组',
   'list.collapseGroup': '收起分组',
   'list.run': '运行待办任务与分组',
-  'list.pause': '暂停运行中的分组',
   'list.stop': '停止全部运行',
   // 顶部数据看板。
   'dash.tasks': '任务',
@@ -373,7 +372,6 @@ export const en: Record<keyof typeof zh, string> = {
   'list.expandGroup': 'Expand group',
   'list.collapseGroup': 'Collapse group',
   'list.run': 'Run todo tasks & groups',
-  'list.pause': 'Pause running groups',
   'list.stop': 'Stop everything running',
   // Dashboard summary strip.
   'dash.tasks': 'Tasks',
