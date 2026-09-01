@@ -524,6 +524,7 @@ export class TaskBoardHostService {
           result.outcome,
           'error' in result ? result.error : undefined,
           'summary' in result ? result.summary : undefined,
+          'usage' in result ? result.usage : undefined,
         )
       } catch {
         // A transient inspection failure never settles a running execution.

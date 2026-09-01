@@ -84,6 +84,9 @@ function fakeController(
     setWorkspaceDefaults: async () => true,
     updateTask: async () => true,
     reorderTask: () => {},
+    runWorkspace: async () => {},
+    pauseWorkspace: async () => {},
+    stopWorkspace: async () => {},
     ...overrides,
   } as unknown as BoardController
 }
@@ -984,7 +987,7 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
   const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
   const ALPHA_ONLY = { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] }
 
-  it('expands a workspace into its group band and task rows, and opens a task from a row', async () => {
+  it('shows a workspace\'s group band and task rows by default and opens a task from a row', async () => {
     const openCalls: string[] = []
     const { container } = await renderBoard({
       tasks: [
@@ -998,11 +1001,7 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
       openTask: (id: string) => { openCalls.push(id) },
     })
 
-    // Collapsed: no group bands yet.
-    expect(container.querySelector('[data-dsh-part="workspace-group"]')).toBeNull()
-
-    await act(async () => { chevronOf(rowOf(container, 'ws-a')).click() })
-
+    // Workspaces are expanded by default: the bands and task rows are visible.
     const bands = container.querySelectorAll('[data-dsh-part="workspace-group"]')
     expect(bands).toHaveLength(2) // the Nightly band plus the ungrouped band
     const group = container.querySelector('[data-group="g1"]') as HTMLElement
@@ -1019,17 +1018,19 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
     expect(openCalls).toEqual(['t1'])
   })
 
-  it('collapses the directory again via the chevron', async () => {
+  it('collapses a workspace directory via the chevron and re-expands it', async () => {
     const { container } = await renderBoard({
       tasks: [task({ id: 't1', title: 'Member A', status: 'todo', workspaceId: 'ws-a', groupId: 'g1' })],
       groups: [GROUP],
       executionOptions: ALPHA_ONLY,
     })
     const row = rowOf(container, 'ws-a')
-    await act(async () => { chevronOf(row).click() })
+    // Expanded by default.
     expect(container.querySelector('[data-dsh-part="workspace-group"]')).not.toBeNull()
     await act(async () => { chevronOf(row).click() })
     expect(container.querySelector('[data-dsh-part="workspace-group"]')).toBeNull()
+    await act(async () => { chevronOf(row).click() })
+    expect(container.querySelector('[data-dsh-part="workspace-group"]')).not.toBeNull()
   })
 
   it('expands the All-tasks row across every workspace, and an empty workspace shows a hint', async () => {
@@ -1055,8 +1056,7 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
     expect(container.querySelector('[data-group="g1"]')?.textContent).toContain('Pinned A')
     expect(container.textContent).toContain('Pinned B')
 
-    // ws-empty has nothing on board: expanding shows the quiet hint.
-    await act(async () => { chevronOf(rowOf(container, 'ws-empty')).click() })
+    // ws-empty has nothing on board and is expanded by default: the quiet hint shows.
     expect(container.textContent).toContain(t('list.noTasks'))
   })
 
@@ -1070,5 +1070,52 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
     // Still on the landing directory, not the kanban columns.
     expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
     expect(container.querySelector('section[data-status]')).toBeNull()
+  })
+})
+
+describe('TaskBoard dashboard & workspace controls', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    return { container }
+  }
+
+  it('renders the dashboard and per-workspace run/pause/stop controls with correct enabled states', async () => {
+    const runCalls: Array<string | undefined> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-todo', title: 'Ready', status: 'todo', workspaceId: 'ws-a' }),
+        task({ id: 't-backlog', title: 'Later', status: 'backlog', workspaceId: 'ws-a' }),
+        task({
+          id: 't-running',
+          title: 'Running',
+          status: 'running',
+          workspaceId: 'ws-a',
+          executions: [{ id: 'e', sessionId: 's', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }],
+        }),
+      ],
+      executionOptions: { workspaces: [{ workspaceId: 'ws-a', title: 'Alpha' }], presets: [], models: [], endpoints: [] },
+    }, {
+      runWorkspace: async (workspaceId?: string) => { runCalls.push(workspaceId) },
+    })
+
+    expect(container.querySelector('[data-dsh-part="dashboard"]')).not.toBeNull()
+
+    const row = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]') as NodeListOf<HTMLElement>)
+      .find(candidate => candidate.getAttribute('data-workspace') === 'ws-a')
+    expect(row).toBeDefined()
+    const run = row!.querySelector(`button[aria-label="${t('list.run')}"]`) as HTMLButtonElement
+    const pause = row!.querySelector(`button[aria-label="${t('list.pause')}"]`) as HTMLButtonElement
+    const stop = row!.querySelector(`button[aria-label="${t('list.stop')}"]`) as HTMLButtonElement
+    expect(run).not.toBeNull()
+    expect(run.disabled).toBe(false) // the todo task is runnable; backlog is excluded
+    expect(pause.disabled).toBe(true) // no groups
+    expect(stop.disabled).toBe(false) // the running task is stoppable
+
+    await act(async () => { run.click() })
+    expect(runCalls).toEqual(['ws-a'])
   })
 })

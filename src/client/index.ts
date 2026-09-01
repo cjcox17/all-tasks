@@ -190,6 +190,19 @@ export function apply(ctx: ClientContext): void {
     }
     pushEndpointOptions()
     disposers.push(settingsScope.subscribe(pushEndpointOptions))
+    // Per-token pricing for the dashboard cost estimate (0 = not configured).
+    const pushPricing = (): void => {
+      const settings = settingsScope.getSnapshot()
+      const input = settings.status === 'ready' ? settings.value?.costPerMillionInputTokens : undefined
+      const output = settings.status === 'ready' ? settings.value?.costPerMillionOutputTokens : undefined
+      controller.setPricing(
+        typeof input === 'number' && input > 0 && typeof output === 'number' && output > 0
+          ? { inputPerMillion: input, outputPerMillion: output }
+          : undefined,
+      )
+    }
+    pushPricing()
+    disposers.push(settingsScope.subscribe(pushPricing))
     const pushModelOptions = async (): Promise<void> => {
       try {
         const response = await connection.api.llm.models({})

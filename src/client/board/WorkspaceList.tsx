@@ -2,19 +2,20 @@
  * Workspace overview (the board's landing view): a Monday.com-style board
  * table. A column-header row labels the aligned count columns (To do / Pending
  * / Working / Scheduled / Finished / Failed / Total); each workspace is one
- * table row (color-coded avatar + name, right-aligned tabular counts, expand +
- * settings controls) that expands inline into its groups — colored section
- * headers with a name pill, mode badge, member count, and a per-group collapse
- * toggle — and its task rows (status dot, title, aligned status label and
- * badges). Clicking a workspace row opens that workspace's kanban; clicking a
- * task row opens the task detail; the ⚙ button opens the workspace
- * default-settings editor. The list is the first view the board shows; the
- * kanban is always workspace-scoped behind it.
+ * table row (color-coded avatar + name, right-aligned tabular counts, and the
+ * run / pause / stop + expand + settings controls) that expands inline into
+ * its groups — colored section headers with a name pill, mode badge, member
+ * count, and a per-group collapse toggle — and its task rows (status dot,
+ * title, aligned status label and badges). Workspace rows are expanded by
+ * default so their tasks show underneath, in foldable layers. Clicking a
+ * workspace row opens that workspace's kanban; clicking a task row opens the
+ * task detail; the ⚙ button opens the workspace default-settings editor.
  */
 import { useState } from 'react'
 import type { TaskGroupRecord } from '../../core/groups.ts'
 import type { ExecutionWorkspaceOption } from '../../core/controller.ts'
 import type { TaskRecord, TaskStatus } from '../../core/tasks.ts'
+import { planWorkspaceActions } from '../../core/workspace-actions.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { STATUS_KEY } from './status-key.ts'
 import css from '../board.module.css'
@@ -149,7 +150,7 @@ function WorkspaceBody({ tasks, groups, workspaceId, onOpenTask, pendingTaskIds 
   )
 }
 
-export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds }: {
+export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds, onRun, onPause, onStop }: {
   tasks: readonly TaskRecord[]
   workspaces: readonly ExecutionWorkspaceOption[]
   groups: readonly TaskGroupRecord[]
@@ -158,18 +159,28 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
   onSettings: (workspaceId: string) => void
   onOpenTask: (taskId: string) => void
   pendingTaskIds: readonly string[]
+  onRun: (workspaceId: string | undefined) => void
+  onPause: (workspaceId: string | undefined) => void
+  onStop: (workspaceId: string | undefined) => void
 }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // Workspace rows are expanded by default; the aggregate All-tasks row stays
+  // collapsed until asked (it repeats every workspace's content).
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ '': false })
   const toggle = (key: string): void => {
-    setExpanded(previous => ({ ...previous, [key]: !previous[key] }))
+    setExpanded(previous => ({ ...previous, [key]: previous[key] === false ? true : false }))
   }
   const entries = workspaceListEntries(tasks, workspaces)
   const allCounts = countWorkspaceTasks(tasks, undefined)
 
   const renderSection = (entry: { workspaceId: string; title: string; counts: WorkspaceCounts }) => {
     const isAll = entry.workspaceId === ''
-    const open = expanded[entry.workspaceId] === true
+    const scope = isAll ? undefined : entry.workspaceId
+    const open = expanded[entry.workspaceId] !== false
     const hue = isAll ? undefined : entityHue(entry.workspaceId)
+    const plan = planWorkspaceActions(tasks, groups, scope)
+    const runEnabled = plan.todoTaskIds.length > 0 || plan.runnableGroupIds.length > 0
+    const pauseEnabled = plan.pausableGroupIds.length > 0
+    const stopEnabled = plan.stoppableTaskIds.length > 0 || plan.stoppableGroupIds.length > 0
     return (
       <div key={entry.workspaceId} className={css.directorySection} data-workspace={entry.workspaceId} data-dsh-part="workspace-card">
         <div className={css.directoryRow}>
@@ -200,6 +211,41 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
             </span>
           ))}
           <span className={css.directoryTotal} data-col="total">{entry.counts.total}</span>
+          <span className={css.directoryControls}>
+            <button
+              type="button"
+              className={css.iconButton}
+              data-ctl="run"
+              disabled={!runEnabled}
+              aria-label={t('list.run')}
+              title={t('list.run')}
+              onClick={() => { onRun(scope) }}
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              className={css.iconButton}
+              data-ctl="pause"
+              disabled={!pauseEnabled}
+              aria-label={t('list.pause')}
+              title={t('list.pause')}
+              onClick={() => { onPause(scope) }}
+            >
+              ⏸
+            </button>
+            <button
+              type="button"
+              className={css.iconButton}
+              data-ctl="stop"
+              disabled={!stopEnabled}
+              aria-label={t('list.stop')}
+              title={t('list.stop')}
+              onClick={() => { onStop(scope) }}
+            >
+              ⏹
+            </button>
+          </span>
           <span className={css.directoryActions}>
             <button
               type="button"
@@ -227,7 +273,7 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
           <WorkspaceBody
             tasks={tasks}
             groups={groups}
-            workspaceId={isAll ? undefined : entry.workspaceId}
+            workspaceId={scope}
             onOpenTask={onOpenTask}
             pendingTaskIds={pendingTaskIds}
           />
@@ -245,6 +291,7 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
             <span key={column.col} className={css.headCount} data-col={column.col}>{t(column.key)}</span>
           ))}
           <span className={css.headTotal} data-col="total">{t('list.total')}</span>
+          <span className={css.headControls} />
           <span className={css.headActions} />
         </div>
         {renderSection({ workspaceId: '', title: t('grid.allTasks'), counts: allCounts })}
