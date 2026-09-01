@@ -659,6 +659,21 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   flex: none;
 }
 
+/* --- endpoint → model cascade -------------------------------------------------- */
+
+/* The endpoint selection comes first and the model select lives inside its
+   scope, offering only the models the selected endpoints serve (see
+   filterModelsByEndpoints — the picker-side mirror of the router's rule). */
+.endpointModelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
 /* --- group sections ------------------------------------------------------------ */
 
 .groupSection {

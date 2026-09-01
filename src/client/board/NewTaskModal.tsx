@@ -7,17 +7,14 @@
  */
 import { useEffect, useState } from 'react'
 import type { BoardController } from '../../core/controller.ts'
-import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsRecord } from '../../core/workspace-defaults.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
-import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
+import { EndpointModelFields } from './EndpointModelFields.tsx'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
-import { ModelPicker } from './ModelPicker.tsx'
-import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import css from '../board.module.css'
 
 /** New-task form overlay. */
@@ -115,25 +112,12 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
     }
   }
 
-  // The model dropdown is constrained by the pinned endpoints: only models at
-  // least one pinned endpoint serves are offered (a blank pin = deployment
-  // default, which the router resolves to the endpoint's default model). A
-  // current value that survives the filter keeps its normal option; one that
-  // does not stays selectable as a stale row — "not served by pinned
-  // endpoints" when the catalog still knows it, "removed" when it is gone —
-  // so the user sees exactly what the task will ask for instead of a silent
-  // substitution.
-  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, endpoints)
-  const modelInCatalog = modelKey === '' || options.models.some(model =>
-    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
-  const modelServable = modelKey === '' || servableModels.some(model =>
-    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
-  const modelStale = modelKey !== '' && !modelServable
-  const modelStaleLabel = modelStale
-    ? (modelInCatalog ? t('exec.model.notServed') : t('exec.model.removed'))
-    : undefined
-  const modelStaleHint = modelStale && modelInCatalog ? t('exec.model.endpointHint') : undefined
-
+  // The endpoint → model cascade (EndpointModelFields) keeps the model select
+  // inside the endpoint selection: only models at least one pinned endpoint
+  // serves are offered (a blank pin = deployment default, which the router
+  // resolves to the endpoint's default model), and a current value the
+  // endpoints cannot serve stays selectable as a stale row so the user sees
+  // exactly what the task will ask for instead of a silent substitution.
   return (
     <ModalShell
       ariaLabel={t('board.new')}
@@ -203,29 +187,17 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
           </select>
         </label>
 
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('new.model')}</span>
-          <ModelPicker
-            models={servableModels}
-            value={modelKey}
-            onChange={setModelKey}
-            blankLabel={t('exec.model.workspaceDefault')}
-            staleLabel={modelStaleLabel}
-            staleHint={modelStaleHint}
-          />
-        </label>
-
-        {modelKey !== '' && (
-          <label className={css.field}>
-            <span className={css.fieldLabel}>{t('new.model.effort')}</span>
-            <ReasoningEffortPicker value={reasoningEffort} onChange={setReasoningEffort} />
-          </label>
-        )}
-
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('new.endpoints')}</span>
-          <EndpointOrderEditor endpoints={endpoints} options={options.endpoints} onChange={setEndpoints} />
-        </label>
+        <EndpointModelFields
+          endpoints={endpoints}
+          onEndpointsChange={setEndpoints}
+          endpointOptions={options.endpoints}
+          models={options.models}
+          modelKey={modelKey}
+          onModelChange={setModelKey}
+          modelBlankLabel={t('exec.model.workspaceDefault')}
+          effort={reasoningEffort}
+          onEffortChange={setReasoningEffort}
+        />
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.permission')}</span>

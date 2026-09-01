@@ -350,4 +350,18 @@ describe('TaskDetail endpoint-constrained model picker', () => {
     expect(staleOption?.textContent).toContain(t('exec.model.notServed'))
     expect(container.textContent).toContain(t('exec.model.endpointHint'))
   })
+
+  it('renders the endpoint selection before the model select (model inside the endpoint)', async () => {
+    const container = await renderDetail(
+      task({ endpoints: ['deepseek-official'] }),
+      MODEL_CATALOG,
+      async () => true,
+      SERVING_ENDPOINTS,
+    )
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const selects = [...container.querySelectorAll('select')]
+    const modelIndex = selects.indexOf(selectOf(container, chatKey))
+    const addIndex = selects.indexOf(addEndpointSelectOf(container) as HTMLSelectElement)
+    expect(modelIndex).toBeGreaterThan(addIndex)
+  })
 })

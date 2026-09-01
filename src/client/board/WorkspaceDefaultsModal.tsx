@@ -8,16 +8,13 @@
  */
 import { useEffect, useState } from 'react'
 import type { BoardController, ExecutionOptionsSnapshot } from '../../core/controller.ts'
-import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsPatch } from '../../core/workspace-defaults.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type AllTasksKey } from '../locales.ts'
 import css from '../board.module.css'
-import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
+import { EndpointModelFields } from './EndpointModelFields.tsx'
 import { ModalShell } from './TaskForm.tsx'
-import { ModelPicker } from './ModelPicker.tsx'
-import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 
 /** Workspace default-settings overlay. */
 export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose }: {
@@ -76,21 +73,11 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
     onClose()
   }
 
-  // The model dropdown is constrained by the pinned endpoints, exactly like
-  // the new-task modal: only models at least one pinned endpoint serves are
-  // offered; a current value outside that set stays selectable as a stale row
-  // so the saved default is never a silent surprise.
-  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, endpoints)
-  const modelInCatalog = modelKey === '' || options.models.some(model =>
-    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
-  const modelServable = modelKey === '' || servableModels.some(model =>
-    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
-  const modelStale = modelKey !== '' && !modelServable
-  const modelStaleLabel = modelStale
-    ? (modelInCatalog ? t('exec.model.notServed') : t('exec.model.removed'))
-    : undefined
-  const modelStaleHint = modelStale && modelInCatalog ? t('exec.model.endpointHint') : undefined
-
+  // The endpoint → model cascade (EndpointModelFields) keeps the model select
+  // inside the endpoint selection, exactly like the task forms: only models at
+  // least one pinned endpoint serves are offered; a current value outside that
+  // set stays selectable as a stale row so the saved default is never a
+  // silent surprise.
   return (
     <ModalShell
       ariaLabel={t('grid.settingsTitle')}
@@ -121,28 +108,16 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
         </select>
       </label>
 
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('new.model')}</span>
-        <ModelPicker
-          models={servableModels}
-          value={modelKey}
-          onChange={setModelKey}
-          staleLabel={modelStaleLabel}
-          staleHint={modelStaleHint}
-        />
-      </label>
-
-      {modelKey !== '' && (
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('new.model.effort')}</span>
-          <ReasoningEffortPicker value={reasoningEffort} onChange={setReasoningEffort} />
-        </label>
-      )}
-
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('new.endpoints')}</span>
-        <EndpointOrderEditor endpoints={endpoints} options={options.endpoints} onChange={setEndpoints} />
-      </label>
+      <EndpointModelFields
+        endpoints={endpoints}
+        onEndpointsChange={setEndpoints}
+        endpointOptions={options.endpoints}
+        models={options.models}
+        modelKey={modelKey}
+        onModelChange={setModelKey}
+        effort={reasoningEffort}
+        onEffortChange={setReasoningEffort}
+      />
 
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>

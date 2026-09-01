@@ -374,3 +374,34 @@ describe('NewTaskModal endpoint-constrained model picker', () => {
     })
   })
 })
+
+describe('NewTaskModal endpoint → model cascade', () => {
+  const SERVING_ENDPOINTS: readonly ExecutionEndpointOption[] = [
+    { id: 'deepseek-official', name: 'DeepSeek Official', provider: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+    { id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'], defaultModel: 'qwen/qwen3.8-27b' },
+  ]
+
+  /** The model select must sit inside the endpoint selection: after the endpoint editor. */
+  function modelSelectIndex(container: HTMLElement, modelKey: string): number {
+    return [...container.querySelectorAll('select')].indexOf(selectOf(container, modelKey))
+  }
+
+  function endpointAddIndex(container: HTMLElement): number {
+    return [...container.querySelectorAll('select')].indexOf(
+      container.querySelector(`select[aria-label="${t('endpoint.add')}"]`) as HTMLSelectElement)
+  }
+
+  it('renders the endpoint selection before the model select (model inside the endpoint)', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'), SERVING_ENDPOINTS)
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    expect(modelSelectIndex(container, chatKey)).toBeGreaterThan(endpointAddIndex(container))
+  })
+
+  it('explains the endpoint-scoped model list as soon as an endpoint is pinned', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'), SERVING_ENDPOINTS)
+    expect(container.textContent).not.toContain(t('exec.model.endpointHint'))
+    const add = container.querySelector(`select[aria-label="${t('endpoint.add')}"]`) as HTMLSelectElement
+    await act(async () => { setSelect(add, 'deepseek-official') })
+    expect(container.textContent).toContain(t('exec.model.endpointHint'))
+  })
+})
