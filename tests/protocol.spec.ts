@@ -262,6 +262,24 @@ describe('group action gate', () => {
     expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: Array.from({ length: 513 }, (_, i) => `t${i}`) } })).toBeUndefined()
   })
 
+  it('gates stop, stop-group, and move-group', () => {
+    expect(parseActionEnvelope({ requestId: 'stop', action: { kind: 'stop', taskId: 't1' } })).toMatchObject({ action: { kind: 'stop', taskId: 't1' } })
+    expect(parseActionEnvelope({ requestId: 'stop-bad', action: { kind: 'stop' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'stop-group', action: { kind: 'stop-group', groupId: 'g1' } })).toMatchObject({ action: { kind: 'stop-group', groupId: 'g1' } })
+    expect(parseActionEnvelope({ requestId: 'stop-group-bad', action: { kind: 'stop-group' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'move-group', action: { kind: 'move-group', groupId: 'g1', status: 'todo' } })).toMatchObject({ action: { kind: 'move-group', groupId: 'g1', status: 'todo' } })
+    expect(parseActionEnvelope({ requestId: 'move-group-bad', action: { kind: 'move-group', groupId: 'g1', status: 'nope' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'move-group-bad2', action: { kind: 'move-group', groupId: 'g1' } })).toBeUndefined()
+  })
+
+  it('accepts the stopped flag on a group update patch', () => {
+    const stop = parseActionEnvelope({ requestId: 'stop-g', action: { kind: 'update-group', groupId: 'g1', patch: { stopped: true } } })
+    expect(stop?.action.kind).toBe('update-group')
+    if (stop?.action.kind !== 'update-group') throw new Error('expected update-group')
+    expect(stop.action.patch.stopped).toBe(true)
+    expect(parseActionEnvelope({ requestId: 'stop-g-bad', action: { kind: 'update-group', groupId: 'g1', patch: { stopped: 'yes' } } })).toBeUndefined()
+  })
+
   it('accepts and normalizes a groupId on create', () => {
     const parsed = parseActionEnvelope({
       requestId: 'create-grouped',

@@ -148,6 +148,28 @@ describe('HostExecutionRunner', () => {
     await expect(runner.inspect('session-a')).resolves.toEqual({ outcome: 'pending' })
   })
 
+  it('classifies an aborted turn end (user stop) as cancelled, not succeeded', async () => {
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }),
+        history: async (request: { rpcId: unknown }) => ok(request, {
+          events: [{ event: { type: 'turn/end', seq: 5, time: 1_100, data: { reason: { kind: 'aborted' } } } }],
+          hasMore: false,
+        }),
+      },
+    }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy)
+    await expect(runner.inspect('session-a', 1_000)).resolves.toEqual({ outcome: 'cancelled', error: 'execution was stopped' })
+  })
+
+  it('cancels a live session through the sessions.cancel RPC', async () => {
+    const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
+    const runner = new HostExecutionRunner({ sessions: { cancel } } as unknown as ApiProxy)
+    await expect(runner.cancel('session-a')).resolves.toBeUndefined()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(cancel.mock.calls[0][0].payload).toMatchObject({ sessionId: 'session-a' })
+  })
+
   it('pages backward to the execution turn and ignores later user turns in the same session', async () => {
     const history = vi.fn(async (request: { rpcId: unknown; payload: { beforeSeq?: number } }) => request.payload.beforeSeq === undefined
       ? ok(request, {

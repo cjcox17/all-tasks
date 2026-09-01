@@ -34,16 +34,60 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
   return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} />
 })
 
-/** Group section header inside a column: name, member count, mode badge, manage. */
-function GroupBanner({ group, count, onManage }: { group: TaskGroupRecord; count: number; onManage: () => void }) {
+/**
+ * Group section header inside a column: name, member count, mode badge,
+ * stop/resume, manage. The whole header is a drag source so a group can be
+ * moved between manual columns in one action (see the column drop handler).
+ */
+function GroupBanner({ group, count, running, onStop, onResume, onManage }: {
+  group: TaskGroupRecord
+  count: number
+  /** Whether any member has an open (running/queued) execution. */
+  running: boolean
+  onStop: () => void
+  onResume: () => void
+  onManage: () => void
+}) {
+  const stopped = group.stopped === true
+  const draggable = !running && !stopped
   return (
-    <header className={css.groupHeader} data-dsh-part="group">
+    <header
+      className={css.groupHeader}
+      data-dsh-part="group"
+      draggable={draggable}
+      onDragStart={draggable ? (event) => {
+        event.dataTransfer.setData('text/plain', `group:${group.id}`)
+        event.dataTransfer.effectAllowed = 'move'
+      } : undefined}
+      title={draggable ? t('group.dragHint') : undefined}
+    >
       <span className={css.groupName} title={group.name}>{group.name}</span>
       <span className={css.groupBadge} data-mode={group.mode}>
         {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
       </span>
+      {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
       {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
       <span className={css.groupCount}>{count}</span>
+      {stopped ? (
+        <button
+          type="button"
+          className={css.ghostButton}
+          aria-label={t('group.resume')}
+          onClick={onResume}
+        >
+          ▶
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={css.ghostButton}
+          aria-label={t('group.stop')}
+          disabled={!running}
+          onClick={onStop}
+        >
+          ⏹
+        </button>
+      )}
       <button
         type="button"
         className={css.ghostButton}
@@ -53,6 +97,55 @@ function GroupBanner({ group, count, onManage }: { group: TaskGroupRecord; count
         ⚙
       </button>
     </header>
+  )
+}
+
+/**
+ * One group's section inside a column: the banner plus its member cards.
+ * Every running/queued member gets a per-card stop button (so a group can be
+ * stopped member-by-member from the board, without opening a session).
+ */
+function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen, onManage, onStopMember, onStopGroup, onResume }: {
+  group: TaskGroupRecord
+  members: readonly TaskRecord[]
+  /** Whether any board-wide member has a running execution (enables stop-group). */
+  hasRunning: boolean
+  pendingIds: readonly string[]
+  timeZone?: string
+  onOpen: (id: string) => void
+  onManage: () => void
+  onStopMember: (id: string) => void
+  onStopGroup: () => void
+  onResume: () => void
+}) {
+  return (
+    <div className={css.groupSection} data-group={group.id}>
+      <GroupBanner
+        group={group}
+        count={members.length}
+        running={hasRunning}
+        onStop={onStopGroup}
+        onResume={onResume}
+        onManage={onManage}
+      />
+      {members.length === 0 && <p className={css.groupEmpty}>{t('group.emptyMembers')}</p>}
+      {members.map(task => (
+        <div key={task.id} className={css.groupMember}>
+          <MemoTaskCard task={task} pending={pendingIds.includes(task.id)} timeZone={timeZone} onOpen={onOpen} />
+          {task.status === 'running' && (
+            <button
+              type="button"
+              className={css.stopButton}
+              aria-label={t('group.stopMember')}
+              title={t('group.stopMember')}
+              onClick={() => { onStopMember(task.id) }}
+            >
+              ⏹
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -182,6 +275,11 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
             const grouped = snapshot.groups
               .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
               .filter(entry => entry.members.length > 0)
+            // Groups with no members anywhere still show (in the todo column)
+            // so they stay visible and manageable after creation.
+            const emptyGroups = column.status === 'todo'
+              ? snapshot.groups.filter(group => !snapshot.tasks.some(task => task.groupId === group.id))
+              : []
             const isManualDropTarget = column.status === 'backlog' || column.status === 'todo'
             return (
               <section
@@ -195,11 +293,22 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                 } : undefined}
                 onDrop={isManualDropTarget ? (event) => {
                   event.preventDefault()
-                  const taskId = event.dataTransfer.getData('text/plain')
-                  if (!taskId) return
-                  const dropped = snapshot.tasks.find(t => t.id === taskId)
+                  const payload = event.dataTransfer.getData('text/plain')
+                  if (!payload) return
+                  if (payload.startsWith('group:')) {
+                    const groupId = payload.slice('group:'.length)
+                    const droppedGroup = snapshot.groups.find(g => g.id === groupId)
+                    if (droppedGroup && droppedGroup.stopped !== true) {
+                      const members = snapshot.tasks.filter(t => t.groupId === groupId && t.archivedAt === undefined)
+                      if (members.every(m => m.status !== 'running')) {
+                        controller.moveGroup(groupId, column.status)
+                      }
+                    }
+                    return
+                  }
+                  const dropped = snapshot.tasks.find(t => t.id === payload)
                   if (dropped && canMoveManually(dropped.status, column.status) && dropped.status !== column.status) {
-                    controller.moveTask(taskId, column.status)
+                    controller.moveTask(payload, column.status)
                   }
                 } : undefined}
               >
@@ -224,18 +333,36 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                     </div>
                   )}
                   {grouped.map(({ group, members }) => (
-                    <div key={group.id} className={css.groupSection} data-group={group.id}>
-                      <GroupBanner
-                        group={group}
-                        count={members.length}
-                        onManage={() => { setGroupEditor({ group }) }}
-                      />
-                      {members.map(task => (
-                        <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
-                      ))}
-                    </div>
+                    <GroupSection
+                      key={group.id}
+                      group={group}
+                      members={members}
+                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      pendingIds={snapshot.pendingTaskIds}
+                      timeZone={snapshot.host?.scheduler.timeZone}
+                      onOpen={openTask}
+                      onManage={() => { setGroupEditor({ group }) }}
+                      onStopMember={id => { void controller.stopTask(id) }}
+                      onStopGroup={() => { void controller.stopGroup(group.id) }}
+                      onResume={() => { void controller.resumeGroup(group.id) }}
+                    />
                   ))}
-                  {tasks.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
+                  {emptyGroups.map(group => (
+                    <GroupSection
+                      key={group.id}
+                      group={group}
+                      members={[]}
+                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      pendingIds={snapshot.pendingTaskIds}
+                      timeZone={snapshot.host?.scheduler.timeZone}
+                      onOpen={openTask}
+                      onManage={() => { setGroupEditor({ group }) }}
+                      onStopMember={id => { void controller.stopTask(id) }}
+                      onStopGroup={() => { void controller.stopGroup(group.id) }}
+                      onResume={() => { void controller.resumeGroup(group.id) }}
+                    />
+                  ))}
+                  {tasks.length === 0 && emptyGroups.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
                 </div>
               </section>
             )

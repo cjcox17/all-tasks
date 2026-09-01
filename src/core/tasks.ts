@@ -365,6 +365,9 @@ export function startExecution(
  * Settle a running execution: record the outcome and move the task into the
  * matching column. No-op (returns the input task) when the execution is not
  * the task's latest or is already settled.
+ *
+ * A cancelled outcome lands in the failed column (a stop/cancel is a
+ * non-success: the run did not complete), never back in todo.
  */
 export function settleExecution(
   task: TaskRecord,
@@ -380,9 +383,7 @@ export function settleExecution(
   const settled: ExecutionRecord = { ...execution, endedAt: now, result: outcome, error }
   const executions = [...task.executions]
   executions[index] = settled
-  const status: TaskStatus = outcome === 'succeeded' ? 'done'
-    : outcome === 'failed' ? 'failed'
-      : task.status === 'running' ? 'todo' : task.status
+  const status: TaskStatus = outcome === 'succeeded' ? 'done' : 'failed'
   return { ...task, status, updatedAt: now, executions }
 }
 

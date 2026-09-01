@@ -158,6 +158,15 @@ describe('group update', () => {
     expect(disarmed.groups[0]!.schedule?.enabled).toBe(false)
   })
 
+  it('sets and clears the stopped flag through the update patch', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const stopped = applyUpdateGroup([group], 'g1', { stopped: true }, NOW + 1)
+    expect(stopped.applied).toBe(true)
+    expect(stopped.groups[0]!.stopped).toBe(true)
+    const resumed = applyUpdateGroup(stopped.groups, 'g1', { stopped: false }, NOW + 2)
+    expect(resumed.groups[0]!.stopped).toBeUndefined()
+  })
+
   it('rolls a group schedule forward and keeps lastTriggeredAt on later rolls', () => {
     const group = createGroup({ name: 'G' }, NOW, 'g1')!
     const armed = applyUpdateGroup([group], 'g1', { schedule: { enabled: true, cron: '0 9 * * *' } }, NOW)
@@ -182,7 +191,7 @@ describe('group deletion and persisted rows', () => {
   it('normalizes persisted rows (drops malformed, dedupes ids, repairs schedules, re-derives order)', () => {
     const tasks = [task('t1', { groupId: 'g1' }), task('t2', { groupId: 'g1' })]
     const rows = [
-      { id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, order: ['t2'], schedule: { enabled: true, cron: '0 9 * * *' } },
+      { id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true, order: ['t2'], schedule: { enabled: true, cron: '0 9 * * *' } },
       { id: 'g1', name: 'Duplicate' },
       { id: '', name: 'No id' },
       { id: 'g3', name: '   ' },
@@ -191,7 +200,7 @@ describe('group deletion and persisted rows', () => {
     ]
     const groups = normalizeGroupRows(rows, tasks)
     expect(groups).toHaveLength(3)
-    expect(groups[0]).toMatchObject({ id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2 })
+    expect(groups[0]).toMatchObject({ id: 'g1', name: 'Good', mode: 'parallel', maxParallel: 2, stopped: true })
     expect(groups[0]!.order).toEqual(['t2', 't1'])
     expect(groups[0]!.schedule).toMatchObject({ enabled: true, cron: '0 9 * * *' })
     // A malformed schedule is dropped with the group kept.

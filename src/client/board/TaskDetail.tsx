@@ -447,6 +447,16 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
               {t('detail.edit')}
             </button>
           )}
+          {!archived && running && (
+            <button
+              type="button"
+              className={css.dangerButton}
+              disabled={pending}
+              onClick={() => { void controller.stopTask(current.id) }}
+            >
+              {t('detail.stop')}
+            </button>
+          )}
           {!archived && (
             <button
               type="button"

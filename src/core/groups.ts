@@ -74,6 +74,12 @@ export interface TaskGroupRecord {
   allowedHours?: DailyWindow
   /** Only launch members inside the global off-peak window. */
   offPeakOnly: boolean
+  /**
+   * Whether the group is stopped: no member may launch (auto-advance, manual
+   * runs, and crons are refused) until the group is resumed. Set by the
+   * stop-group action, which also cancels every open member execution.
+   */
+  stopped?: boolean
   /** Optional group cron; when enabled members inherit it (their cron is ignored). */
   schedule?: GroupScheduleRule
   /** Member task ids in manual order (drives sequential starts and display). */
@@ -176,9 +182,7 @@ export function createGroup(input: GroupCreateInput, now: number, id: string): T
     createdAt: now,
     updatedAt: now,
   }
-}
-
-/** Result of a create transition: the new group (when accepted) + the next list. */
+}/** Result of a create transition: the new group (when accepted) + the next list. */
 export interface CreateGroupResult {
   group: TaskGroupRecord | undefined
   groups: readonly TaskGroupRecord[]
@@ -260,6 +264,8 @@ export interface GroupUpdatePatch {
   /** `null` clears the allowed-hours window. */
   allowedHours?: DailyWindow | null
   offPeakOnly?: boolean
+  /** Stop (true) or resume (false) the group: no member launches while stopped. */
+  stopped?: boolean
   /** `null` removes the schedule rule; an object sets it (cron validated when enabled). */
   schedule?: { enabled?: boolean; cron?: string } | null
 }
@@ -331,6 +337,10 @@ export function applyUpdateGroup(
     ...(mode === undefined ? {} : { mode }),
     ...('offPeakOnly' in patch ? { offPeakOnly: patch.offPeakOnly === true } : {}),
     updatedAt: now,
+  }
+  if ('stopped' in patch) {
+    if (patch.stopped === true) next.stopped = true
+    else delete next.stopped
   }
   if ('maxParallel' in patch) {
     if (maxParallel !== undefined) next.maxParallel = maxParallel
@@ -427,6 +437,7 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
         return allowedHours === undefined ? {} : { allowedHours }
       })()),
       offPeakOnly: row.offPeakOnly === true,
+      ...(row.stopped === true ? { stopped: true } : {}),
       ...(schedule === undefined ? {} : { schedule }),
       order: normalizeGroupOrder(row.order, memberIdsByGroup.get(id) ?? []),
       createdAt,

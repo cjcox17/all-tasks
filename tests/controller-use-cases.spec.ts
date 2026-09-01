@@ -117,7 +117,7 @@ describe('use-case: update content editability', () => {
     expect(canEditTaskContent(done)).toBe(false)
 
     const cancelled = settleExecution(startExecution(fresh, NOW, 'e-cancel').task, 'e-cancel', 'cancelled', NOW + 1, undefined)
-    expect(cancelled.status).toBe('todo')
+    expect(cancelled.status).toBe('failed')
     expect(canEditTaskContent(cancelled)).toBe(false)
 
     expect(canEditTaskContent({ ...fresh, archivedAt: NOW })).toBe(false)

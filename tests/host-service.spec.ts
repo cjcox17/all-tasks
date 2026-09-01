@@ -181,6 +181,43 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     service.dispose()
     interval.mockRestore()
   })
+
+  it('fires the session cancel RPC for a stop action with a running session', async () => {
+    const ledger = new HostTaskLedger(root(), () => 0)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    const executionId = opened.state.tasks[0].executions[0].id
+    ledger.attachSession('task-a', executionId, 'session-a')
+    const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
+    const service = new TaskBoardHostService({ sessions: { cancel } } as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => 0,
+    })
+    const snapshot = service.apply('stop-1', { kind: 'stop', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(cancel.mock.calls[0][0].payload).toMatchObject({ sessionId: 'session-a' })
+    expect(snapshot.tasks[0].status).toBe('failed')
+    service.dispose()
+  })
+
+  it('does not fire the session cancel RPC for a queued-only stop (no session yet)', async () => {
+    const ledger = new HostTaskLedger(root(), () => 0)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
+    const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
+    const service = new TaskBoardHostService({ sessions: { cancel } } as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => 0,
+    })
+    service.apply('stop-1', { kind: 'stop', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(cancel).not.toHaveBeenCalled()
+    service.dispose()
+  })
 })
 
 describe('TaskBoardHostService poll heartbeat', () => {

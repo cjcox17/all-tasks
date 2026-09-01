@@ -52,6 +52,7 @@ function launchApi(create: ReturnType<typeof vi.fn>) {
       }),
       rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Task', seq: 1 }),
       prompt: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
+      cancel: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
     },
   } as unknown as ApiProxy
 }
@@ -396,6 +397,53 @@ describe('TaskBoardHostService group routing', () => {
     expect(settled.result).toBe('failed')
     expect(settled.error).toContain('never became eligible to launch within the max-wait window')
     expect(h.create).not.toHaveBeenCalled()
+    h.service.dispose()
+  })
+
+  it('a stopped group launches nothing: cancels members, blocks runs, and skips auto-advance until resumed', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'Stop', ['a', 'b'])
+
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    const aExec = a.executions[0]!.id
+
+    // Stop the group: A is cancelled (failed), the group is marked stopped,
+    // and B must not auto-start.
+    h.service.apply('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    await flush()
+    const afterStop = h.ledger.state()
+    expect(afterStop.tasks.find(task => task.id === 'a')!.executions[0]!.result).toBe('cancelled')
+    expect(afterStop.tasks.find(task => task.id === 'a')!.status).toBe('failed')
+    expect(afterStop.groups[0]!.stopped).toBe(true)
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(1)
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // Manual runs of a stopped-group member are refused; resume re-enables.
+    expect(() => h.ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })).toThrow('group is stopped')
+    h.service.apply('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    // Resume lets the sequence advance: A is settled (failed), so B auto-starts.
+    await flush()
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    h.service.dispose()
+  })
+
+  it('moves a whole group to a manual column through the service', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([]), () => now)
+    seedGroup(h, 'g1', 'Move', ['a', 'b'])
+
+    h.service.apply('move-group', { kind: 'move-group', groupId: 'g1', status: 'backlog' })
+    const state = h.ledger.state()
+    expect(state.tasks.find(task => task.id === 'a')!.status).toBe('backlog')
+    expect(state.tasks.find(task => task.id === 'b')!.status).toBe('backlog')
     h.service.dispose()
   })
 })

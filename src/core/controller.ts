@@ -556,6 +556,38 @@ export class BoardController {
     await this.commitRemote({ kind: 'rerun', taskId: id }, id)
   }
 
+  /** Stop one task's running execution (cancel the session, settle as cancelled). */
+  async stopTask(id: string): Promise<boolean> {
+    const task = this.tasks.find(candidate => candidate.id === id)
+    if (task === undefined || task.archivedAt !== undefined) return false
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'stop', taskId: id }, id)
+  }
+
+  /** Stop a whole group: cancel every open member execution and mark it stopped. */
+  async stopGroup(groupId: string): Promise<boolean> {
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'stop-group', groupId }, groupId)
+  }
+
+  /** Resume a stopped group (member launches are allowed again). */
+  async resumeGroup(groupId: string): Promise<boolean> {
+    return await this.updateGroup(groupId, { stopped: false })
+  }
+
+  /** Move every on-board member of a group to one manual status column. */
+  async moveGroup(groupId: string, status: TaskStatus): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'move-group', groupId, status }, groupId)
+    }
+    const members = this.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+    if (members.some(member => member.status === 'running')) return false
+    this.tasks = this.tasks.map(task =>
+      task.groupId === groupId && task.archivedAt === undefined ? withStatus(task, status, this.now()) : task)
+    this.persistAndNotify()
+    return true
+  }
+
   // --- internals ---------------------------------------------------------------
 
   /**

@@ -561,4 +561,76 @@ describe('HostTaskLedger', () => {
     expect(restarted.state().scheduler.error).toBe('visible after restart')
     restarted.dispose()
   })
+
+  it('stops one task: settles its open execution as cancelled and returns the session to cancel', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    const executionId = opened.state.tasks[0].executions[0].id
+    ledger.attachSession('task-a', executionId, 'session-a')
+
+    const result = ledger.applyRequest('stop', { kind: 'stop', taskId: 'task-a' })
+    expect(result.stopSessions).toEqual(['session-a'])
+    const task = result.state.tasks.find(value => value.id === 'task-a')!
+    expect(task.status).toBe('failed')
+    expect(task.executions[0]).toMatchObject({ result: 'cancelled', endedAt: NOW })
+    // A second stop is refused (nothing left running).
+    expect(() => ledger.applyRequest('stop-2', { kind: 'stop', taskId: 'task-a' })).toThrow('not running')
+  })
+
+  it('stops a task with only a queued run (no session yet)', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    const executionId = opened.state.tasks[0].executions[0].id
+    ledger.markQueued('task-a', executionId, 'cloud', NOW, 'endpoint')
+    const result = ledger.applyRequest('stop', { kind: 'stop', taskId: 'task-a' })
+    expect(result.stopSessions).toBeUndefined()
+    expect(result.state.tasks[0].status).toBe('failed')
+    expect(result.state.tasks[0].executions[0].result).toBe('cancelled')
+  })
+
+  it('stops a whole group: cancels every open member execution, marks it stopped, and reports sessions', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    const a = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    const b = ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
+    const aExec = a.state.tasks.find(value => value.id === 'a')!.executions[0].id
+    const bExec = b.state.tasks.find(value => value.id === 'b')!.executions[0].id
+    ledger.attachSession('a', aExec, 'session-a')
+    ledger.attachSession('b', bExec, 'session-b')
+
+    const result = ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    expect(result.stopSessions).toEqual(['session-a', 'session-b'])
+    expect(result.state.groups[0]!.stopped).toBe(true)
+    for (const id of ['a', 'b']) {
+      expect(result.state.tasks.find(value => value.id === id)!.status).toBe('failed')
+      expect(result.state.tasks.find(value => value.id === id)!.executions[0].result).toBe('cancelled')
+    }
+    // Members of a stopped group cannot be run again until resumed.
+    expect(() => ledger.applyRequest('run-a-2', { kind: 'run', taskId: 'a' })).toThrow('group is stopped')
+    // Resume clears the flag and allows runs again.
+    ledger.applyRequest('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    expect(ledger.state().groups[0]!.stopped).toBeUndefined()
+    expect(ledger.applyRequest('run-a-3', { kind: 'run', taskId: 'a' }).state.tasks.find(value => value.id === 'a')!.status).toBe('running')
+  })
+
+  it('moves a whole group to a manual column and refuses while a member runs', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+
+    const moved = ledger.applyRequest('move-group', { kind: 'move-group', groupId: 'g1', status: 'todo' })
+    const tasks = moved.state.tasks
+    expect(tasks.find(value => value.id === 'a')!.status).toBe('todo')
+    expect(tasks.find(value => value.id === 'b')!.status).toBe('todo')
+    expect(() => ledger.applyRequest('move-group-bad', { kind: 'move-group', groupId: 'g1', status: 'done' })).toThrow('invalid manual status')
+
+    // A running member blocks the whole move.
+    ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
+    expect(() => ledger.applyRequest('move-group-2', { kind: 'move-group', groupId: 'g1', status: 'backlog' })).toThrow('group has running tasks')
+  })
 })

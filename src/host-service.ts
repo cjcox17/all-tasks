@@ -151,6 +151,16 @@ export class TaskBoardHostService {
     if (!this.active) throw new Error('task board is disabled')
     const result = this.ledger.applyRequest(requestId, action)
     if (result.run !== undefined) this.scheduleLaunch(result.run)
+    // A stop/stop-group settles the ledger synchronously; the session cancel
+    // RPC fires after so the agent actually halts (best-effort — a session
+    // that is already gone is not an error).
+    if (result.stopSessions !== undefined) {
+      for (const sessionId of result.stopSessions) {
+        void this.runner.cancel(sessionId).catch(error => {
+          console.error('[dsh-task-board] session cancel failed', error)
+        })
+      }
+    }
     return {
       schemaVersion: 2,
       revision: result.state.revision,
@@ -323,6 +333,12 @@ export class TaskBoardHostService {
     const now = new Date(this.now())
     const localMinutes = clockMinutesInTimeZone(now, hostTimeZone())
     if (group !== undefined) {
+      // A stopped group launches nothing (defensive: manual runs, crons, and
+      // queued runs are all refused/cancelled upstream, but a stale queued run
+      // must never slip through).
+      if (group.stopped === true) {
+        return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'group' }
+      }
       if (groupCapacityFull(group, this.groupLaunchedCount(group.id))) {
         return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'group' }
       }
@@ -350,6 +366,8 @@ export class TaskBoardHostService {
     for (const view of this.ledger.groupRuntimeViews()) {
       // Triggers: an armed group schedule, or a settled member freeing a slot.
       if (!view.scheduleEnabled && !view.newestExecutionSettled) continue
+      // A stopped group launches nothing; resume clears the flag.
+      if (view.stopped) continue
       // A queued member is waiting for a slot/window/endpoint; it holds the
       // sequence's place — never start another member over it.
       if (view.members.some(member => member.queued)) continue

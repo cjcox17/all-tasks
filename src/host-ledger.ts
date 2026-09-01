@@ -17,7 +17,7 @@ import {
   type TaskGroupRecord,
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
-import { canMoveManually, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, MANUAL_STATUSES, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
@@ -117,6 +117,8 @@ export interface GroupRuntimeView {
   readonly maxParallel?: number
   readonly allowedHours?: { start: string; end: string }
   readonly offPeakOnly: boolean
+  /** Whether the group is stopped (no member launches until resumed). */
+  readonly stopped: boolean
   /** Whether the group's own cron is armed. */
   readonly scheduleEnabled: boolean
   /**
@@ -520,6 +522,7 @@ export class HostTaskLedger {
         ...(group.maxParallel === undefined ? {} : { maxParallel: group.maxParallel }),
         ...(group.allowedHours === undefined ? {} : { allowedHours: group.allowedHours }),
         offPeakOnly: group.offPeakOnly,
+        stopped: group.stopped === true,
         scheduleEnabled: group.schedule?.enabled === true,
         newestExecutionSettled: newest !== undefined && newest.endedAt !== undefined,
         order: [...group.order],
@@ -549,6 +552,8 @@ export class HostTaskLedger {
     for (const group of this.document.groups) {
       const schedule = group.schedule
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
+      // A stopped group's cron is held; the schedule resumes on resume.
+      if (group.stopped === true) continue
       due.push({ groupId: group.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
     }
     return due
@@ -586,16 +591,20 @@ export class HostTaskLedger {
    * Return value-only references for task schedules due at the supplied Host
    * time. A task whose group has an enabled schedule is skipped: its own cron
    * is ignored while the group cron governs the sequence (members inherit it).
+   * A task whose group is stopped is skipped too: stopping the group holds
+   * every member cron until the group resumes.
    */
   dueSchedules(now: number): DueScheduleReference[] {
     const groupScheduled = new Set<string>()
+    const stoppedGroups = new Set<string>()
     for (const group of this.document.groups) {
       if (group.schedule?.enabled === true) groupScheduled.add(group.id)
+      if (group.stopped === true) stoppedGroups.add(group.id)
     }
     const due: DueScheduleReference[] = []
     for (const task of this.document.tasks) {
       if (task.archivedAt !== undefined) continue
-      if (task.groupId !== undefined && groupScheduled.has(task.groupId)) continue
+      if (task.groupId !== undefined && (groupScheduled.has(task.groupId) || stoppedGroups.has(task.groupId))) continue
       const schedule = task.schedule
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
       due.push({ taskId: task.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
@@ -621,7 +630,7 @@ export class HostTaskLedger {
     }
   }
 
-  applyRequest(requestId: string, action: TaskBoardAction): { state: LedgerState; run?: OpenedRun } {
+  applyRequest(requestId: string, action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; stopSessions?: string[] } {
     const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex')
     const cached = this.requestCache.get(requestId)
     if (cached !== undefined) {
@@ -648,7 +657,7 @@ export class HostTaskLedger {
     if (task === undefined || task.archivedAt !== undefined) return undefined
     // A task whose group has an enabled schedule is governed by the group cron;
     // its own cron must never fire it (defensive; dueSchedules already skips).
-    if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && group.schedule?.enabled === true)) {
+    if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && (group.schedule?.enabled === true || group.stopped === true))) {
       return undefined
     }
     if (task.status === 'running' || hasOpenExecution(task)) {
@@ -710,9 +719,10 @@ export class HostTaskLedger {
     this.commit()
   }
 
-  private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun } {
+  private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; stopSessions?: string[] } {
     const now = this.now()
     let run: OpenedRun | undefined
+    const stopSessions: string[] = []
     switch (action.kind) {
       case 'import': {
         const sources = new Set(this.document.scheduler.importedSources ?? [])
@@ -818,9 +828,54 @@ export class HostTaskLedger {
         const task = this.document.tasks.find(item => item.id === action.taskId)
         if (task?.archivedAt !== undefined) throw new Error('archived task is read-only')
         if (task === undefined || task.status === 'running' || hasOpenExecution(task)) throw new Error('task is already running or missing')
+        if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && group.stopped === true)) {
+          throw new Error('group is stopped')
+        }
         const base = action.kind === 'rerun' ? withStatus(task, 'todo', now) : task
         run = startExecution(base, now, crypto.randomUUID())
         this.document.tasks = this.document.tasks.map(item => item.id === task.id ? run!.task : item)
+        break
+      }
+      case 'stop': {
+        const task = this.document.tasks.find(item => item.id === action.taskId)
+        if (task === undefined) throw new Error('task not found')
+        if (task.archivedAt !== undefined) throw new Error('archived task is read-only')
+        const execution = task.executions.find(entry => entry.endedAt === undefined)
+        if (execution === undefined) throw new Error('task is not running')
+        if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
+        this.document.tasks = this.document.tasks.map(item => item.id === action.taskId
+          ? settleExecution(item, execution.id, 'cancelled', now, 'stopped by user')
+          : item)
+        break
+      }
+      case 'stop-group': {
+        if (!this.document.groups.some(group => group.id === action.groupId)) throw new Error('group not found')
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId !== action.groupId) return task
+          const execution = task.executions.find(entry => entry.endedAt === undefined)
+          if (execution === undefined) return task
+          if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
+          return settleExecution(task, execution.id, 'cancelled', now, 'group stopped by user')
+        })
+        this.document.groups = this.document.groups.map(group => group.id === action.groupId
+          ? { ...group, stopped: true, updatedAt: now }
+          : group)
+        break
+      }
+      case 'move-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
+        if (group === undefined) throw new Error('group not found')
+        if (!MANUAL_STATUSES.includes(action.status)) throw new Error('invalid manual status')
+        // Moving a group moves every on-board member; running or queued
+        // members cannot be moved (same rule as individual moves).
+        const members = this.document.tasks.filter(task => task.groupId === action.groupId && task.archivedAt === undefined)
+        if (members.some(member => member.status === 'running' || hasOpenExecution(member))) {
+          throw new Error('group has running tasks')
+        }
+        this.document.tasks = this.document.tasks.map(task =>
+          task.groupId === action.groupId && task.archivedAt === undefined
+            ? withStatus(task, action.status, now)
+            : task)
         break
       }
       case 'create-group': {
@@ -869,7 +924,11 @@ export class HostTaskLedger {
       }
     }
     this.commit()
-    return { state: this.state(), ...(run === undefined ? {} : { run }) }
+    return {
+      state: this.state(),
+      ...(run === undefined ? {} : { run }),
+      ...(stopSessions.length > 0 ? { stopSessions } : {}),
+    }
   }
 
   private repairSchedules(skipPast: boolean, persist = true): void {

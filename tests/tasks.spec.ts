@@ -113,10 +113,10 @@ describe('settleExecution', () => {
     expect(settled.executions[0].error).toBe('boom')
   })
 
-  it('cancelled runs return a non-running task to todo', () => {
+  it('settles cancelled runs as failed (a stop/cancel never lands in todo)', () => {
     const { task } = startExecution(sampleTask(), NOW, 'exec-1')
     const settled = settleExecution(task, 'exec-1', 'cancelled', NOW + 10, 'interrupted')
-    expect(settled.status).toBe('todo')
+    expect(settled.status).toBe('failed')
     expect(settled.executions[0].result).toBe('cancelled')
   })
 

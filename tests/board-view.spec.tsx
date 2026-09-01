@@ -71,6 +71,10 @@ function fakeController(
     updateGroup: async () => true,
     deleteGroup: async () => true,
     setGroupOrder: async () => true,
+    stopTask: async () => true,
+    stopGroup: async () => true,
+    resumeGroup: async () => true,
+    moveGroup: async () => true,
     ...overrides,
   } as unknown as BoardController
 }
@@ -289,12 +293,12 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
 describe('TaskBoard group sections', () => {
   const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
 
-  async function renderBoard(snapshot: Partial<ControllerSnapshot>): Promise<{ container: HTMLElement }> {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot)} />) })
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
     return { container }
   }
 
@@ -338,6 +342,83 @@ describe('TaskBoard group sections', () => {
     expect(button).not.toBeNull()
     await act(async () => { button!.click() })
     expect(container.textContent).toContain(t('group.create'))
+  })
+
+  it('renders an empty group in the todo column so it stays visible', async () => {
+    const { container } = await renderBoard({
+      tasks: [],
+      groups: [{ ...GROUP, order: [] }],
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    expect(section!.textContent).toContain('Nightly')
+    expect(section!.textContent).toContain(t('group.emptyMembers'))
+    // The empty group appears exactly once (in the todo column), not in every column.
+    expect(container.querySelectorAll('[data-group="g1"]')).toHaveLength(1)
+  })
+
+  it('offers a per-member stop button for running members and stops the group from the banner', async () => {
+    const stopCalls: string[] = []
+    const stopGroupCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'running', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      stopTask: async (id: string) => { stopCalls.push(id); return true },
+      stopGroup: async (id: string) => { stopGroupCalls.push(id); return true },
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    const stopMember = section!.querySelector(`button[aria-label="${t('group.stopMember')}"]`) as HTMLButtonElement
+    expect(stopMember).not.toBeNull()
+    await act(async () => { stopMember.click() })
+    expect(stopCalls).toEqual(['t1'])
+    const stopGroup = section!.querySelector(`button[aria-label="${t('group.stop')}"]`) as HTMLButtonElement
+    expect(stopGroup).not.toBeNull()
+    await act(async () => { stopGroup.click() })
+    expect(stopGroupCalls).toEqual(['g1'])
+  })
+
+  it('shows a resume button and a stopped badge for a stopped group', async () => {
+    const resumeCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [{ ...GROUP, stopped: true }],
+    }, {
+      resumeGroup: async (id: string) => { resumeCalls.push(id); return true },
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section?.textContent).toContain(t('group.stopped'))
+    const resume = section!.querySelector(`button[aria-label="${t('group.resume')}"]`) as HTMLButtonElement
+    expect(resume).not.toBeNull()
+    await act(async () => { resume.click() })
+    expect(resumeCalls).toEqual(['g1'])
+  })
+
+  it('drops a dragged group banner onto a manual column and moves the whole group', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const banner = container.querySelector('[data-group="g1"] [data-dsh-part="group"]') as HTMLElement
+    expect(banner.getAttribute('draggable')).toBe('true')
+
+    const backlogColumn = container.querySelector('section[data-status="backlog"]')
+    const dataTransfer = {
+      data: { 'text/plain': 'group:g1' } as Record<string, string>,
+      setData(type: string, val: string) { this.data[type] = val },
+      getData(type: string) { return this.data[type] ?? '' },
+      dropEffect: 'none',
+    }
+    await act(async () => {
+      backlogColumn!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
+      )
+    })
+    expect(moveCalls).toEqual([{ id: 'g1', status: 'backlog' }])
   })
 })
 

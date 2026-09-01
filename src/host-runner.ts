@@ -43,10 +43,21 @@ export class SessionLaunchError extends Error {
   }
 }
 
-function isErrorTurnEnd(data: unknown): boolean {
-  if (typeof data !== 'object' || data === null) return false
+/**
+ * Classify one turn/end reason into the run outcome: an `error` reason is a
+ * failure; an `aborted` reason (the user stopped the turn — the board's stop
+ * buttons and DSH's own cancel both produce it) is a cancellation, never a
+ * success; anything else (completed, blocked, max-tokens, interrupted) is a
+ * success. Returns undefined when the payload carries no readable reason.
+ */
+function turnEndOutcome(data: unknown): 'succeeded' | 'failed' | 'cancelled' | undefined {
+  if (typeof data !== 'object' || data === null) return undefined
   const reason = (data as { reason?: unknown }).reason
-  return typeof reason === 'object' && reason !== null && (reason as { kind?: unknown }).kind === 'error'
+  if (typeof reason !== 'object' || reason === null) return undefined
+  const kind = (reason as { kind?: unknown }).kind
+  if (kind === 'error') return 'failed'
+  if (kind === 'aborted') return 'cancelled'
+  return 'succeeded'
 }
 
 export class HostExecutionRunner {
@@ -140,6 +151,16 @@ export class HostExecutionRunner {
   }
 
   /**
+   * Stop one execution's session: cancel the active turn (the board's stop
+   * action settles the ledger first, then fires this so the agent actually
+   * halts). Best-effort — a session that is already gone is not an error.
+   */
+  async cancel(sessionId: string): Promise<void> {
+    const response = await this.api.sessions.cancel(request({ sessionId: sessionId as ExecutionSessionId }))
+    if (!response.result.ok) throw failure(response.result.error)
+  }
+
+  /**
    * Resolve one execution's outcome. The caller may pass the session list it
    * already fetched this poll tick; otherwise inspect lists sessions itself.
    * Sharing the list keeps a poll with E open executions at one list RPC
@@ -208,8 +229,9 @@ export class HostExecutionRunner {
       return { outcome: 'pending' }
     }
     this.scanMemos.delete(sessionId)
-    return isErrorTurnEnd(turnEnd.event.data)
-      ? { outcome: 'failed', error: 'agent turn ended with an error' }
-      : { outcome: 'succeeded' }
+    const outcome = turnEndOutcome(turnEnd.event.data)
+    if (outcome === 'failed') return { outcome: 'failed', error: 'agent turn ended with an error' }
+    if (outcome === 'cancelled') return { outcome: 'cancelled', error: 'execution was stopped' }
+    return { outcome: 'succeeded' }
   }
 }

@@ -9,6 +9,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
+import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
@@ -56,6 +57,7 @@ function controllerFake(
     archiveTask: vi.fn(),
     restoreTask: vi.fn(),
     rerunTask: vi.fn(async () => {}),
+    stopTask: vi.fn(async () => true),
     setSchedule: vi.fn(() => true),
     isHostBacked: () => false,
   } as unknown as BoardController
@@ -98,6 +100,26 @@ describe('task content editing before execution (issue #1110)', () => {
       executions: [{ id: 'e-run', sessionId: undefined, startedAt: 1, endedAt: undefined, result: undefined, error: undefined }],
     }))
     expect(editButtonOf(container)).toBeUndefined()
+  })
+
+  it('stops a running task from the detail footer', async () => {
+    const stopTask = vi.fn(async () => true)
+    const { controller, snapshot } = controllerFake(task({
+      status: 'running',
+      executions: [{ id: 'e-run', sessionId: undefined, startedAt: 1, endedAt: undefined, result: undefined, error: undefined }],
+    }))
+    const fake = { ...controller, stopTask } as unknown as BoardController
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => {
+      root.render(<TaskDetail controller={fake} task={snapshot.tasks[0]!} />)
+    })
+    const stop = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('detail.stop')))
+    expect(stop).not.toBeNull()
+    await act(async () => { stop!.click() })
+    expect(stopTask).toHaveBeenCalledWith('t1')
   })
 
   it('hides the edit button for a settled task', async () => {

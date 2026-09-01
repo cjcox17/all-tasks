@@ -667,6 +667,52 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-label-tertiary);
 }
 
+.groupStopped {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-state-danger-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.groupEmpty {
+  margin: 0 8px 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* One member row: the card plus its inline stop button. */
+.groupMember {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.groupMember .card {
+  flex: 1;
+  min-width: 0;
+}
+
+.stopButton {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-state-danger-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.stopButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
 .groupSection .card {
   margin: 0 4px;
 }

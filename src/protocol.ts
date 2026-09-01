@@ -64,10 +64,13 @@ export type TaskBoardAction =
   | { kind: 'set-schedule'; taskId: string; patch: { enabled?: boolean; cron?: string } }
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
+  | { kind: 'stop'; taskId: string }
   | { kind: 'create-group'; id: string; input: GroupCreateInput }
   | { kind: 'update-group'; groupId: string; patch: GroupUpdatePatch }
   | { kind: 'delete-group'; groupId: string }
   | { kind: 'set-group-order'; groupId: string; order: string[] }
+  | { kind: 'stop-group'; groupId: string }
+  | { kind: 'move-group'; groupId: string; status: TaskStatus }
 
 export interface TaskBoardActionEnvelope {
   requestId: string
@@ -251,13 +254,14 @@ function groupInput(value: unknown): value is GroupCreateInput {
 /** Gate a group update patch (every field optional; null clears a field). */
 function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'schedule'])) return false
+  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'stopped', 'schedule'])) return false
   if (patch.name !== undefined && (typeof patch.name !== 'string' || patch.name.trim() === '' || patch.name.length > GROUP_FIELD_BOUND)) return false
   if (patch.mode !== undefined && !isGroupExecutionMode(patch.mode)) return false
   if (patch.maxParallel !== undefined && patch.maxParallel !== null && normalizeMaxParallel(patch.maxParallel) === undefined) return false
   if (patch.endpoints !== undefined && patch.endpoints !== null && !Array.isArray(patch.endpoints) && normalizeEndpointList(patch.endpoints) === undefined) return false
   if (patch.allowedHours !== undefined && patch.allowedHours !== null && normalizeDailyWindow(patch.allowedHours) === undefined) return false
   if (patch.offPeakOnly !== undefined && typeof patch.offPeakOnly !== 'boolean') return false
+  if (patch.stopped !== undefined && typeof patch.stopped !== 'boolean') return false
   if (patch.schedule !== undefined && patch.schedule !== null && !groupScheduleField(patch.schedule)) return false
   return true
 }
@@ -345,6 +349,19 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       if (!exactKeys(action, ['kind', 'groupId', 'order'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== '' && groupOrderPayload(action.order)
         ? { requestId: envelope.requestId, action: { kind: 'set-group-order', groupId: action.groupId, order: action.order } }
+        : undefined
+    case 'stop':
+      if (!exactKeys(action, ['kind', 'taskId'])) return undefined
+      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: { kind: 'stop', taskId } }
+    case 'stop-group':
+      if (!exactKeys(action, ['kind', 'groupId'])) return undefined
+      return typeof action.groupId === 'string' && action.groupId !== ''
+        ? { requestId: envelope.requestId, action: { kind: 'stop-group', groupId: action.groupId } }
+        : undefined
+    case 'move-group':
+      if (!exactKeys(action, ['kind', 'groupId', 'status'])) return undefined
+      return typeof action.groupId === 'string' && action.groupId !== '' && isTaskStatus(action.status)
+        ? { requestId: envelope.requestId, action: { kind: 'move-group', groupId: action.groupId, status: action.status } }
         : undefined
     case 'set-schedule':
       if (!exactKeys(action, ['kind', 'taskId', 'patch'])) return undefined
