@@ -48,6 +48,14 @@ export interface TaskBoardSnapshot {
    * is created in that workspace, keyed by workspace-list id.
    */
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
+  /**
+   * When each workspace was paused (ms epoch), keyed by workspace-list id;
+   * the empty string key means the whole board (the All tasks overview row).
+   * While paused, tasks pinned to the workspace launch nothing and open
+   * executions are halted until the workspace is continued. Absent (or an
+   * empty map) on snapshots from an older Host.
+   */
+  workspacePaused?: Record<string, number>
   scheduler: TaskBoardSchedulerSnapshot
   power: TaskBoardPowerSnapshot
 }
@@ -80,6 +88,8 @@ export type TaskBoardAction =
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
   | { kind: 'stop'; taskId: string }
+  | { kind: 'pause'; taskId: string }
+  | { kind: 'continue'; taskId: string }
   | { kind: 'set-approved'; taskId: string; approved: boolean }
   | { kind: 'set-workspace-defaults'; workspaceId: string; patch: WorkspaceDefaultsPatch }
   | { kind: 'create-group'; id: string; input: GroupCreateInput }
@@ -87,8 +97,12 @@ export type TaskBoardAction =
   | { kind: 'delete-group'; groupId: string }
   | { kind: 'set-group-order'; groupId: string; order: string[] }
   | { kind: 'stop-group'; groupId: string }
+  | { kind: 'pause-group'; groupId: string }
+  | { kind: 'continue-group'; groupId: string }
   | { kind: 'run-group'; groupId: string }
   | { kind: 'move-group'; groupId: string; status: TaskStatus }
+  | { kind: 'pause-workspace'; workspaceId: string }
+  | { kind: 'continue-workspace'; workspaceId: string }
 
 export interface TaskBoardActionEnvelope {
   requestId: string
@@ -371,8 +385,10 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         ? { requestId: envelope.requestId, action: { kind: 'set-group-order', groupId: action.groupId, order: action.order } }
         : undefined
     case 'stop':
+    case 'pause':
+    case 'continue':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
-      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: { kind: 'stop', taskId } }
+      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as TaskBoardAction }
     case 'set-approved':
       if (!exactKeys(action, ['kind', 'taskId', 'approved'])) return undefined
       return taskId !== undefined && typeof action.approved === 'boolean'
@@ -387,9 +403,19 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
         return { requestId: envelope.requestId, action: { kind: 'set-workspace-defaults', workspaceId: action.workspaceId, patch } }
       }
     case 'stop-group':
+    case 'pause-group':
+    case 'continue-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== ''
-        ? { requestId: envelope.requestId, action: { kind: 'stop-group', groupId: action.groupId } }
+        ? { requestId: envelope.requestId, action: action as TaskBoardAction }
+        : undefined
+    case 'pause-workspace':
+    case 'continue-workspace':
+      // A bounded workspace id, or the empty string for the whole board (the
+      // All tasks overview row).
+      if (!exactKeys(action, ['kind', 'workspaceId'])) return undefined
+      return typeof action.workspaceId === 'string' && action.workspaceId.length <= GROUP_FIELD_BOUND
+        ? { requestId: envelope.requestId, action: action as TaskBoardAction }
         : undefined
     case 'run-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined

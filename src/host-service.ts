@@ -133,6 +133,7 @@ export class TaskBoardHostService {
       tasks: state.tasks,
       groups: state.groups,
       workspaceDefaults: state.workspaceDefaults,
+      workspacePaused: state.workspacePaused,
       scheduler: state.scheduler,
       power: this.power.snapshot(),
     }
@@ -156,9 +157,9 @@ export class TaskBoardHostService {
     // A manual group start opens several runs at once; each is routed and
     // launched (or queued) independently, exactly like a single-task run.
     for (const opened of result.runs ?? []) this.scheduleLaunch(opened)
-    // A stop/stop-group settles the ledger synchronously; the session cancel
-    // RPC fires after so the agent actually halts (best-effort — a session
-    // that is already gone is not an error).
+    // A stop/stop-group/pause settles or marks the ledger synchronously; the
+    // session cancel RPC fires after so the agent actually halts (best-effort
+    // — a session that is already gone is not an error).
     if (result.stopSessions !== undefined) {
       for (const sessionId of result.stopSessions) {
         void this.runner.cancel(sessionId).catch(error => {
@@ -166,12 +167,21 @@ export class TaskBoardHostService {
         })
       }
     }
+    // A continue action re-prompts the paused session so the agent resumes
+    // with its history (best-effort; a session that vanished settles as
+    // cancelled on the next poll).
+    for (const resume of result.resumeRuns ?? []) {
+      void this.runner.continue(resume.task, resume.sessionId).catch(error => {
+        console.error('[dsh-task-board] session resume failed', error)
+      })
+    }
     return {
       schemaVersion: 2,
       revision: result.state.revision,
       tasks: result.state.tasks,
       groups: result.state.groups,
       workspaceDefaults: result.state.workspaceDefaults,
+      workspacePaused: result.state.workspacePaused,
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }
@@ -306,6 +316,11 @@ export class TaskBoardHostService {
         this.ledger.settle(queued.taskId, queued.executionId, 'cancelled', 'task is not approved')
         continue
       }
+      // A paused run is deliberately inert: it is never launched, never
+      // expires, and keeps its queue place until the `continue` action clears
+      // the pause (the unapproved gate above still wins — an unapproved task
+      // can never run by any means).
+      if (queued.pausedAt !== undefined) continue
       if (now - queued.queuedAt > maxWaitMs) {
         this.ledger.settle(queued.taskId, queued.executionId, 'failed', 'run never became eligible to launch within the max-wait window')
         continue
@@ -346,6 +361,14 @@ export class TaskBoardHostService {
       ...(task.model === undefined && defaults?.model !== undefined ? { model: defaults.model } : {}),
       endpoints: effectiveEndpointIds(task, group, defaults?.endpoints),
     }
+    // A task pinned to a paused workspace launches nothing by any means until
+    // the workspace is continued; the run waits (holding its queue place) and
+    // auto-starts once the workspace resumes. The gate applies even when no
+    // routing is configured at all (the group-less early return below must not
+    // bypass it).
+    if (this.ledger.workspacePausedFor(task)) {
+      return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'workspace' }
+    }
     // The group gates (capacity, window) apply to every member launch even
     // when no endpoints are configured at all — only a group-less task with
     // no routing list bypasses the router entirely.
@@ -353,10 +376,10 @@ export class TaskBoardHostService {
     const now = new Date(this.now())
     const localMinutes = clockMinutesInTimeZone(now, hostTimeZone())
     if (group !== undefined) {
-      // A stopped group launches nothing (defensive: manual runs, crons, and
-      // queued runs are all refused/cancelled upstream, but a stale queued run
-      // must never slip through).
-      if (group.stopped === true) {
+      // A stopped/paused group launches nothing (defensive: manual runs,
+      // crons, and queued runs are all refused/cancelled upstream, but a
+      // stale queued run must never slip through).
+      if (group.stopped === true || group.paused === true) {
         return { mode: 'wait', endpointId: effective.endpoints?.[0], reasons: [], reason: 'group' }
       }
       if (groupCapacityFull(group, this.groupLaunchedCount(group.id))) {
@@ -386,8 +409,9 @@ export class TaskBoardHostService {
     for (const view of this.ledger.groupRuntimeViews()) {
       // Triggers: an armed group schedule, or a settled member freeing a slot.
       if (!view.scheduleEnabled && !view.newestExecutionSettled) continue
-      // A stopped group launches nothing; resume clears the flag.
-      if (view.stopped) continue
+      // A stopped or paused group launches nothing; resume/continue clears
+      // the flag.
+      if (view.stopped || view.paused) continue
       // A queued member is waiting for a slot/window/endpoint; it holds the
       // sequence's place — never start another member over it.
       if (view.members.some(member => member.queued)) continue
@@ -457,6 +481,14 @@ export class TaskBoardHostService {
     try {
       const sessionId = await this.runner.launch(this.withWorkspaceDefaults(task), route)
       this.ledger.attachSession(task.id, executionId, sessionId)
+      // The run may have been paused while its launch was in flight (no
+      // session existed yet, so the pause action could not cancel it). A
+      // paused run must never execute: halt the freshly attached session.
+      if (this.ledger.executionPaused(task.id, executionId)) {
+        void this.runner.cancel(sessionId).catch(error => {
+          console.error('[dsh-task-board] session cancel failed', error)
+        })
+      }
     } catch (error) {
       if (error instanceof SessionLaunchError) {
         this.ledger.attachSession(task.id, executionId, error.sessionId)
@@ -515,8 +547,15 @@ export class TaskBoardHostService {
   ): Promise<void> {
     for (const execution of executions) {
       if (execution.sessionId === undefined) continue
+      // A paused run is deliberately not observed: its session is idle (the
+      // pause cancelled the turn) and nothing settles until `continue`
+      // re-prompts it and clears the flag.
+      if (execution.pausedAt !== undefined) continue
       try {
-        const result = await this.runner.inspect(execution.sessionId, execution.startedAt, sessions)
+        // A continued run observes only events after its latest resume: the
+        // pause's cancelled turn/end must never settle the run.
+        const boundary = execution.watchFromAt ?? execution.startedAt
+        const result = await this.runner.inspect(execution.sessionId, boundary, sessions)
         if (result.outcome === 'pending') continue
         this.ledger.settle(
           execution.taskId,

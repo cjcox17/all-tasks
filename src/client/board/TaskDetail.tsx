@@ -32,22 +32,31 @@ const RESULT_KEY: Record<NonNullable<ExecutionRecord['result']>, TaskBoardKey> =
 function waitingKey(reason: ExecutionRecord['queuedReason']): TaskBoardKey {
   if (reason === 'group') return 'detail.result.waitingGroup'
   if (reason === 'window') return 'detail.result.waitingWindow'
+  if (reason === 'workspace') return 'detail.result.waitingWorkspace'
   return 'detail.result.waiting'
 }
 
 /** One execution-history row. */
-function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
+function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onContinue }: {
   execution: ExecutionRecord
   timeZone?: string
   endpointName: (id: string) => string
   onOpen: (sessionId: string) => void
+  /** Present only for the open execution (pause/continue affordances). */
+  onPause?: () => void
+  onContinue?: () => void
 }) {
   const result = execution.result
   const waiting = execution.queuedAt !== undefined && execution.sessionId === undefined
+  const paused = execution.pausedAt !== undefined
   return (
-    <li className={css.executionRow} data-result={result}>
+    <li className={css.executionRow} data-result={result} data-paused={paused || undefined}>
       <span className={css.executionBadge} data-result={result}>
-        {result === undefined ? (waiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running')) : t(RESULT_KEY[result])}
+        {result === undefined
+          ? (paused
+            ? t('detail.result.paused')
+            : waiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running'))
+          : t(RESULT_KEY[result])}
       </span>
       <span className={css.executionTimes}>
         {t('detail.executionStarted')} {formatTime(execution.startedAt, timeZone)}
@@ -65,6 +74,27 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
         >
           {t('detail.viewSession')} ⌁
         </button>
+      )}
+      {execution.endedAt === undefined && (
+        paused
+          ? onContinue !== undefined && (
+            <button
+              type="button"
+              className={css.linkButton}
+              onClick={onContinue}
+            >
+              {t('detail.continue')} ▶
+            </button>
+          )
+          : onPause !== undefined && (
+            <button
+              type="button"
+              className={css.linkButton}
+              onClick={onPause}
+            >
+              {t('detail.pause')} ⏸
+            </button>
+          )
       )}
       {execution.error !== undefined && execution.error !== '' && (
         <span className={css.executionError}>{execution.error}</span>
@@ -366,6 +396,7 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
   const snapshot = controller.getSnapshot()
   const running = current.status === 'running'
   const archived = current.archivedAt !== undefined
+  const paused = running && current.executions.some(execution => execution.endedAt === undefined && execution.pausedAt !== undefined)
   const pending = snapshot.pendingTaskIds.includes(current.id)
   const transportError = snapshot.transportError
   const timeZone = snapshot.host?.scheduler.timeZone
@@ -378,8 +409,8 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
       <div className={css.detail} role="dialog" aria-label={t('detail.title')}>
         <header className={css.detailHeader}>
           <h2 className={css.detailTitle}>{current.title}</h2>
-          <span className={css.statusBadge} data-status={archived ? 'archived' : current.status}>
-            {archived ? t('board.archive') : t(STATUS_KEY[current.status])}
+          <span className={css.statusBadge} data-status={archived ? 'archived' : paused ? 'paused' : current.status}>
+            {archived ? t('board.archive') : paused ? t('detail.result.paused') : t(STATUS_KEY[current.status])}
           </span>
           <button
             type="button"
@@ -444,15 +475,20 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
               <p className={css.detailText}>{t('detail.noExecution')}</p>
             ) : (
               <ul className={css.executionList}>
-                {[...current.executions].reverse().map(execution => (
-                  <ExecutionRow
-                    key={execution.id}
-                    execution={execution}
-                    timeZone={timeZone}
-                    endpointName={endpointName}
-                    onOpen={sessionId => { controller.openSession(sessionId) }}
-                  />
-                ))}
+                {[...current.executions].reverse().map(execution => {
+                  const isOpen = execution.endedAt === undefined
+                  return (
+                    <ExecutionRow
+                      key={execution.id}
+                      execution={execution}
+                      timeZone={timeZone}
+                      endpointName={endpointName}
+                      onOpen={sessionId => { controller.openSession(sessionId) }}
+                      onPause={isOpen && !archived ? () => { void controller.pauseTask(current.id) } : undefined}
+                      onContinue={isOpen && !archived ? () => { void controller.continueTask(current.id) } : undefined}
+                    />
+                  )
+                })}
               </ul>
             )}
           </section>
@@ -490,14 +526,35 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
             </button>
           )}
           {!archived && running && (
-            <button
-              type="button"
-              className={css.dangerButton}
-              disabled={pending}
-              onClick={() => { void controller.stopTask(current.id) }}
-            >
-              {t('detail.stop')}
-            </button>
+            <>
+              {paused ? (
+                <button
+                  type="button"
+                  className={css.ghostButton}
+                  disabled={pending}
+                  onClick={() => { void controller.continueTask(current.id) }}
+                >
+                  {t('detail.continue')} ▶
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={css.ghostButton}
+                  disabled={pending}
+                  onClick={() => { void controller.pauseTask(current.id) }}
+                >
+                  {t('detail.pause')} ⏸
+                </button>
+              )}
+              <button
+                type="button"
+                className={css.dangerButton}
+                disabled={pending}
+                onClick={() => { void controller.stopTask(current.id) }}
+              >
+                {t('detail.stop')}
+              </button>
+            </>
           )}
           {!archived && (
             <button

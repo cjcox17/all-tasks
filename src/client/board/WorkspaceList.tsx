@@ -96,6 +96,7 @@ function GroupBand({ group, members, hue, collapsed, onToggle, onOpenTask, pendi
           {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
         </span>
         {group.stopped === true && <span className={css.groupStopped}>{t('group.stopped')}</span>}
+        {group.paused === true && <span className={css.groupPaused}>{t('group.paused')}</span>}
         {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
         <span className={css.groupBandCount}>{members.length}</span>
       </header>
@@ -149,7 +150,7 @@ function WorkspaceBody({ tasks, groups, workspaceId, onOpenTask, pendingTaskIds 
   )
 }
 
-export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds }: {
+export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, onSettings, onOpenTask, pendingTaskIds, workspacePaused, onPauseWorkspace, onContinueWorkspace }: {
   tasks: readonly TaskRecord[]
   workspaces: readonly ExecutionWorkspaceOption[]
   groups: readonly TaskGroupRecord[]
@@ -158,6 +159,10 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
   onSettings: (workspaceId: string) => void
   onOpenTask: (taskId: string) => void
   pendingTaskIds: readonly string[]
+  /** When each workspace was paused (ms epoch); the '' key = the whole board. */
+  workspacePaused: Record<string, number>
+  onPauseWorkspace: (workspaceId: string) => void
+  onContinueWorkspace: (workspaceId: string) => void
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const toggle = (key: string): void => {
@@ -170,6 +175,8 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
     const isAll = entry.workspaceId === ''
     const open = expanded[entry.workspaceId] === true
     const hue = isAll ? undefined : entityHue(entry.workspaceId)
+    const paused = workspacePaused[entry.workspaceId] !== undefined
+    const hasRunning = entry.counts.working > 0
     return (
       <div key={entry.workspaceId} className={css.directorySection} data-workspace={entry.workspaceId} data-dsh-part="workspace-card">
         <div className={css.directoryRow}>
@@ -188,6 +195,7 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
               {(entry.title.trim()[0] ?? '?').toUpperCase()}
             </span>
             <span className={css.listTitle}>{entry.title}</span>
+            {paused && <span className={css.workspacePaused}>{t('grid.workspacePaused')}</span>}
           </button>
           {COUNT_COLUMNS.map(column => (
             <span
@@ -201,6 +209,28 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
           ))}
           <span className={css.directoryTotal} data-col="total">{entry.counts.total}</span>
           <span className={css.directoryActions}>
+            {paused ? (
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('grid.continueWorkspace')}
+                title={t('grid.continueWorkspace')}
+                onClick={() => { onContinueWorkspace(entry.workspaceId) }}
+              >
+                ▶
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('grid.pauseWorkspace')}
+                title={t('grid.pauseWorkspace')}
+                disabled={!hasRunning}
+                onClick={() => { onPauseWorkspace(entry.workspaceId) }}
+              >
+                ⏸
+              </button>
+            )}
             <button
               type="button"
               className={`${css.iconButton} ${css.listChevron}`}

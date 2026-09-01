@@ -40,15 +40,31 @@ export interface ExecutionRecord {
   queuedAt?: number
   /**
    * Why the run is being held before launch: the endpoint list has no eligible
-   * candidate, a group slot (sequential/parallel capacity) is occupied, or the
-   * group's allowed window is closed. Absent on launched runs.
+   * candidate, a group slot (sequential/parallel capacity) is occupied, the
+   * group's allowed window is closed, or the task's workspace is paused.
+   * Absent on launched runs.
    */
-  queuedReason?: 'endpoint' | 'group' | 'window'
+  queuedReason?: 'endpoint' | 'group' | 'window' | 'workspace'
   /**
    * The endpoint this run is routed through: the preferred candidate while
    * queued, the actually chosen endpoint once launched.
    */
   endpointId?: string
+  /**
+   * When the run was paused (ms epoch): the execution session's active turn
+   * was cancelled but the session was kept alive and the execution stays open.
+   * While paused the Host never settles the run, launches nothing for it, and
+   * holds a queued run; the `continue` action clears the flag and re-prompts
+   * the same session so the agent resumes with its history. Absent = running.
+   */
+  pausedAt?: number
+  /**
+   * The newest instant from which the Host observes the session (ms epoch).
+   * Set when a paused run is continued: the runner ignores every `turn/end`
+   * before this boundary (the pause's cancelled turn) and settles only the
+   * resumed turn. Absent on runs that were never paused.
+   */
+  watchFromAt?: number
 }
 
 /**
@@ -455,4 +471,54 @@ export function executionLabel(execution: ExecutionRecord): string {
   if (execution.result === 'failed') return 'failed'
   if (execution.result === 'cancelled') return 'cancelled'
   return 'running'
+}
+
+/** The open (unsettled) execution of a task, if any — running, queued, or paused. */
+export function openExecutionOf(task: TaskRecord): ExecutionRecord | undefined {
+  return task.executions.find(execution => execution.endedAt === undefined)
+}
+
+/** Whether the task's open execution is paused (halted but resumable). */
+export function isTaskPaused(task: TaskRecord): boolean {
+  return openExecutionOf(task)?.pausedAt !== undefined
+}
+
+/**
+ * Pause an open execution: keep the run open, record the pause instant, and
+ * leave the session alive so `continue` can re-prompt it later. Returns the
+ * updated task, or undefined when the execution is not open or already paused.
+ */
+export function pauseExecution(
+  task: TaskRecord,
+  executionId: string,
+  now: number,
+): TaskRecord | undefined {
+  const index = task.executions.findIndex(execution => execution.id === executionId)
+  if (index === -1) return undefined
+  const execution = task.executions[index]
+  if (execution.endedAt !== undefined || execution.pausedAt !== undefined) return undefined
+  const executions = [...task.executions]
+  executions[index] = { ...execution, pausedAt: now }
+  return { ...task, updatedAt: now, executions }
+}
+
+/**
+ * Continue a paused execution: clear the pause and advance the observation
+ * boundary past the pause's cancelled turn, so the runner settles only the
+ * resumed turn. Returns the updated task, or undefined when the execution is
+ * not open or not paused.
+ */
+export function continueExecution(
+  task: TaskRecord,
+  executionId: string,
+  now: number,
+): TaskRecord | undefined {
+  const index = task.executions.findIndex(execution => execution.id === executionId)
+  if (index === -1) return undefined
+  const execution = task.executions[index]
+  if (execution.endedAt !== undefined || execution.pausedAt === undefined) return undefined
+  const { pausedAt: _paused, ...rest } = execution
+  const executions = [...task.executions]
+  executions[index] = { ...rest, watchFromAt: now }
+  return { ...task, updatedAt: now, executions }
 }

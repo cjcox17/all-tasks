@@ -44,6 +44,7 @@ function controllerFake(
   endpoints: readonly ExecutionEndpointOption[] = [],
   groups: readonly TaskGroupRecord[] = [],
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {},
+  workspacePaused: Record<string, number> = {},
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [taskRecord],
@@ -52,6 +53,7 @@ function controllerFake(
     selectedTaskId: taskRecord.id,
     executionOptions: { workspaces: [], presets: [], models, endpoints },
     workspaceDefaults,
+    workspacePaused,
     groups,
     pendingTaskIds: [],
   }

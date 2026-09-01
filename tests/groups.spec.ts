@@ -275,3 +275,14 @@ describe('execution policy helpers', () => {
     expect(nextRunnableMember(ordered, [t1, runningT2, t3, archivedT4])).toBeUndefined()
   })
 })
+
+describe('group paused flag persistence', () => {
+  it('normalizes a persisted paused flag and drops non-boolean values', () => {
+    const task = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
+    const paused = normalizeGroupRows([{ id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, paused: true, order: [] }], [task])
+    expect(paused[0]?.paused).toBe(true)
+    const absent = normalizeGroupRows([{ id: 'g2', name: 'G', mode: 'sequential', offPeakOnly: false, paused: 'yes', order: [] }], [task])
+    expect(absent[0]?.paused).toBeUndefined()
+    expect(absent[0]?.stopped).toBeUndefined()
+  })
+})

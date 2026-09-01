@@ -136,6 +136,12 @@ export interface ControllerSnapshot {
    * (Host-authoritative; the legacy seam keeps them in memory).
    */
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
+  /**
+   * When each workspace was paused (ms epoch); the empty-string key means the
+   * whole board. While paused, tasks pinned to the workspace launch nothing
+   * and open executions stay halted until continued.
+   */
+  workspacePaused: Record<string, number>
   boardOpen: boolean
   /** True when the board shows the archive view instead of the columns. */
   archiveView: boolean
@@ -181,6 +187,7 @@ export class BoardController {
   private tasks: TaskRecord[] = []
   private groups: TaskGroupRecord[] = []
   private workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {}
+  private workspacePaused: Record<string, number> = {}
   private boardOpen = false
   private archiveView = false
   private selectedTaskId: string | undefined
@@ -236,6 +243,7 @@ export class BoardController {
       tasks: this.tasks,
       groups: this.groups,
       workspaceDefaults: this.workspaceDefaults,
+      workspacePaused: { ...this.workspacePaused },
       boardOpen: this.boardOpen,
       archiveView: this.archiveView,
       selectedTaskId: this.selectedTaskId,
@@ -600,6 +608,27 @@ export class BoardController {
   }
 
   /**
+   * Pause one task's open execution: the session's active turn is cancelled
+   * but the session is kept alive, the run stays open marked paused, and
+   * nothing settles or launches for it until {@link continueTask} re-prompts
+   * the same session.
+   */
+  async pauseTask(id: string): Promise<boolean> {
+    const task = this.tasks.find(candidate => candidate.id === id)
+    if (task === undefined || task.archivedAt !== undefined) return false
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'pause', taskId: id }, id)
+  }
+
+  /** Continue a paused task: re-prompt its session so the agent resumes. */
+  async continueTask(id: string): Promise<boolean> {
+    const task = this.tasks.find(candidate => candidate.id === id)
+    if (task === undefined || task.archivedAt !== undefined) return false
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'continue', taskId: id }, id)
+  }
+
+  /**
    * Set a task's approval gate. An unapproved task can never be run by any
    * means (manual, cron, or group) until it is approved again; it stays fully
    * manageable (moves, edits, groups) either way.
@@ -650,6 +679,39 @@ export class BoardController {
   }
 
   /**
+   * Pause a whole group: every open member execution is paused (sessions kept
+   * alive, runs stay open) and the group is marked paused so no member
+   * launches until {@link continueGroup} re-prompts the paused sessions.
+   */
+  async pauseGroup(groupId: string): Promise<boolean> {
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'pause-group', groupId }, groupId)
+  }
+
+  /** Continue a paused group: re-prompt every paused member's session and clear the pause. */
+  async continueGroup(groupId: string): Promise<boolean> {
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'continue-group', groupId }, groupId)
+  }
+
+  /**
+   * Pause a whole workspace (or the whole board when `workspaceId` is the
+   * empty string): every open execution of tasks pinned to the workspace is
+   * paused and the workspace is marked paused so its tasks launch nothing
+   * until continued.
+   */
+  async pauseWorkspace(workspaceId: string): Promise<boolean> {
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'pause-workspace', workspaceId }, workspaceId === '' ? undefined : workspaceId)
+  }
+
+  /** Continue a paused workspace: re-prompt its paused sessions and clear the pause. */
+  async continueWorkspace(workspaceId: string): Promise<boolean> {
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'continue-workspace', workspaceId }, workspaceId === '' ? undefined : workspaceId)
+  }
+
+  /**
    * Request a Host execution for a whole group: every runnable member
    * (on-board, approved, backlog/todo, no open run) opens an execution, and
    * the router launches up to the group's capacity now, queuing the rest
@@ -659,7 +721,7 @@ export class BoardController {
    */
   async runGroup(groupId: string): Promise<boolean> {
     const group = this.groups.find(candidate => candidate.id === groupId)
-    if (group === undefined || group.stopped === true) return false
+    if (group === undefined || group.stopped === true || group.paused === true) return false
     if (this.deps.transport === undefined) return false
     return await this.commitRemote({ kind: 'run-group', groupId }, groupId)
   }
@@ -809,6 +871,7 @@ export class BoardController {
     this.groups = [...snapshot.groups]
     // Tolerant of pre-feature snapshots (an older Host without the field).
     this.workspaceDefaults = snapshot.workspaceDefaults ?? {}
+    this.workspacePaused = snapshot.workspacePaused ?? {}
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }
     this.transportError = undefined
     if (this.selectedTaskId !== undefined && !this.tasks.some(task => task.id === this.selectedTaskId)) {

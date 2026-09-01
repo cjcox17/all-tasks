@@ -271,9 +271,10 @@ export type RouteDecision =
     reasons: EndpointBlockReason[]
     /**
      * Why the run is held before launch: no eligible endpoint (the default),
-     * a group slot is occupied, or the group's allowed window is closed.
+     * a group slot is occupied, the group's allowed window is closed, or the
+     * task's workspace is paused.
      */
-    reason?: 'endpoint' | 'group' | 'window'
+    reason?: 'endpoint' | 'group' | 'window' | 'workspace'
   }
 
 /**

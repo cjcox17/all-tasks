@@ -80,6 +80,15 @@ export interface TaskGroupRecord {
    * stop-group action, which also cancels every open member execution.
    */
   stopped?: boolean
+  /**
+   * Whether the group is paused: every open member execution is halted (kept
+   * alive and resumable) and no member may launch until the group is
+   * continued. Set by the pause-group action, which pauses each member's
+   * session without settling it; continue-group re-prompts the paused members
+   * and clears the flag. A stopped group launches nothing either way, but stop
+   * settles members as cancelled while pause keeps them open.
+   */
+  paused?: boolean
   /** Optional group cron; when enabled members inherit it (their cron is ignored). */
   schedule?: GroupScheduleRule
   /** Member task ids in manual order (drives sequential starts and display). */
@@ -438,6 +447,7 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
       })()),
       offPeakOnly: row.offPeakOnly === true,
       ...(row.stopped === true ? { stopped: true } : {}),
+      ...(row.paused === true ? { paused: true } : {}),
       ...(schedule === undefined ? {} : { schedule }),
       order: normalizeGroupOrder(row.order, memberIdsByGroup.get(id) ?? []),
       createdAt,

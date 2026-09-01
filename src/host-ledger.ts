@@ -8,6 +8,7 @@ import {
   applyCreateGroup,
   applyDeleteGroup,
   applyUpdateGroup,
+  GROUP_FIELD_BOUND,
   normalizeGroupOrder,
   normalizeGroupRows,
   withGroupMembershipChange,
@@ -18,7 +19,7 @@ import {
   type TaskGroupRecord,
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
-import { canMoveManually, MANUAL_STATUSES, moveTaskBefore, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, continueExecution, MANUAL_STATUSES, moveTaskBefore, pauseExecution, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
@@ -48,6 +49,13 @@ interface LedgerDocument {
    * entry); absent records mean the runtime defaults apply.
    */
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
+  /**
+   * When each workspace was paused (ms epoch), keyed by workspace-list id;
+   * the empty string key means the whole board. While a workspace is paused
+   * its tasks launch nothing and open executions stay halted until the
+   * workspace is continued. Only explicitly paused workspaces are stored.
+   */
+  workspacePaused: Record<string, number>
   scheduler: PersistedScheduler
   recentRequests: PersistedRequest[]
 }
@@ -57,6 +65,7 @@ export interface LedgerState {
   tasks: TaskRecord[]
   groups: TaskGroupRecord[]
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
+  workspacePaused: Record<string, number>
   scheduler: TaskBoardSchedulerSnapshot
 }
 
@@ -75,6 +84,24 @@ export interface OpenedRun {
   execution: ExecutionRecord
 }
 
+/** One session to re-prompt after a `continue` action (the execution stays open). */
+export interface ResumeRun {
+  sessionId: string
+  /** The continued task (its prompt is re-sent to the same session). */
+  task: TaskRecord
+}
+
+/** The side effects one action request hands to the Host service. */
+export interface LedgerApplyResult {
+  state: LedgerState
+  run?: OpenedRun
+  runs?: OpenedRun[]
+  /** Sessions whose active turn must be cancelled (stop / pause actions). */
+  stopSessions?: string[]
+  /** Sessions to re-prompt with their task (continue actions). */
+  resumeRuns?: ResumeRun[]
+}
+
 /** Minimal value copy used by the Host session monitor. */
 export interface OpenExecutionReference {
   readonly taskId: string
@@ -87,6 +114,10 @@ export interface OpenExecutionReference {
   readonly endpointId?: string
   /** Set while the router is holding this run for an eligible endpoint. */
   readonly queuedAt?: number
+  /** Set while the run is paused (the monitor never settles it). */
+  readonly pausedAt?: number
+  /** Observation boundary: the monitor ignores turn/end events before it. */
+  readonly watchFromAt?: number
 }
 
 /** An open execution the router is holding for an eligible endpoint. */
@@ -94,10 +125,12 @@ export interface QueuedRunReference {
   readonly taskId: string
   readonly executionId: string
   readonly queuedAt: number
-  /** Why the run is held (endpoint eligibility, group slot, or group window). */
-  readonly queuedReason?: 'endpoint' | 'group' | 'window'
+  /** Why the run is held (endpoint eligibility, group slot, group window, or a paused workspace). */
+  readonly queuedReason?: 'endpoint' | 'group' | 'window' | 'workspace'
   /** Preferred endpoint while waiting (the first known candidate). */
   readonly endpointId?: string
+  /** Set while the run is paused (the router never launches it). */
+  readonly pausedAt?: number
   /** Task clone (read-only view; the router reads pins only). */
   readonly task: TaskRecord
 }
@@ -138,6 +171,8 @@ export interface GroupRuntimeView {
   readonly offPeakOnly: boolean
   /** Whether the group is stopped (no member launches until resumed). */
   readonly stopped: boolean
+  /** Whether the group is paused (member sessions halted, no launches until continued). */
+  readonly paused: boolean
   /** Whether the group's own cron is armed. */
   readonly scheduleEnabled: boolean
   /**
@@ -181,6 +216,21 @@ function cloneWorkspaceDefaults(defaults: Record<string, WorkspaceDefaultsRecord
 
 function hasOpenExecution(task: TaskRecord): boolean {
   return task.executions.some(execution => execution.endedAt === undefined)
+}
+
+/**
+ * Load and normalize the persisted per-workspace pause map: finite-number
+ * values are kept, everything else is dropped; a non-object payload collapses
+ * to empty. The empty-string key (the whole board) is kept like any other.
+ */
+function normalizeWorkspacePaused(value: unknown): Record<string, number> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const result: Record<string, number> = {}
+  for (const [key, pausedAt] of Object.entries(value as Record<string, unknown>)) {
+    if (key.length > GROUP_FIELD_BOUND) continue
+    if (typeof pausedAt === 'number' && Number.isFinite(pausedAt)) result[key] = pausedAt
+  }
+  return result
 }
 
 /**
@@ -427,6 +477,7 @@ export class HostTaskLedger {
       tasks: cloneTasks(this.document.tasks),
       groups: cloneGroups(this.document.groups),
       workspaceDefaults: cloneWorkspaceDefaults(this.document.workspaceDefaults),
+      workspacePaused: { ...this.document.workspacePaused },
       scheduler,
     }
   }
@@ -450,6 +501,23 @@ export class HostTaskLedger {
   }
 
   /**
+   * Whether a task's workspace is paused: its own workspace id, or the whole
+   * board (the empty-string key) which covers every task including unassigned
+   * ones. While paused the task launches nothing by any means.
+   */
+  workspacePausedFor(task: { workspaceId?: string }): boolean {
+    return this.document.workspacePaused[task.workspaceId ?? ''] !== undefined
+      || this.document.workspacePaused[''] !== undefined
+  }
+
+  /** Whether one open execution is paused (halted but resumable). */
+  executionPaused(taskId: string, executionId: string): boolean {
+    const task = this.document.tasks.find(candidate => candidate.id === taskId)
+    if (task === undefined) return false
+    return task.executions.some(entry => entry.id === executionId && entry.endedAt === undefined && entry.pausedAt !== undefined)
+  }
+
+  /**
    * Runtime-only projection for the 5 s Host poll. It copies just primitive
    * identifiers and timestamps, never the complete task/execution history or
    * an authoritative mutable object from the ledger.
@@ -469,6 +537,8 @@ export class HostTaskLedger {
           ...(task.groupId === undefined ? {} : { groupId: task.groupId }),
           ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
           ...(execution.queuedAt === undefined ? {} : { queuedAt: execution.queuedAt }),
+          ...(execution.pausedAt === undefined ? {} : { pausedAt: execution.pausedAt }),
+          ...(execution.watchFromAt === undefined ? {} : { watchFromAt: execution.watchFromAt }),
         })
       }
     }
@@ -487,6 +557,7 @@ export class HostTaskLedger {
           queuedAt: execution.queuedAt,
           ...(execution.queuedReason === undefined ? {} : { queuedReason: execution.queuedReason }),
           ...(execution.endpointId === undefined ? {} : { endpointId: execution.endpointId }),
+          ...(execution.pausedAt === undefined ? {} : { pausedAt: execution.pausedAt }),
           task: cloneTasks([task])[0],
         })
       }
@@ -498,7 +569,7 @@ export class HostTaskLedger {
    * Record that a run is queued for an eligible endpoint: no session is
    * created yet, so nothing is billed, and the run survives Host restarts.
    */
-  markQueued(taskId: string, executionId: string, endpointId: string | undefined, queuedAt: number, reason?: 'endpoint' | 'group' | 'window'): void {
+  markQueued(taskId: string, executionId: string, endpointId: string | undefined, queuedAt: number, reason?: 'endpoint' | 'group' | 'window' | 'workspace'): void {
     this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
       ...task,
       updatedAt: this.now(),
@@ -517,7 +588,7 @@ export class HostTaskLedger {
    * blocking reason changed while waiting). The original queuedAt is kept so
    * the max-wait window is measured from the first queue, not the last retry.
    */
-  requeue(taskId: string, executionId: string, endpointId: string | undefined, reason: 'endpoint' | 'group' | 'window' | undefined): void {
+  requeue(taskId: string, executionId: string, endpointId: string | undefined, reason: 'endpoint' | 'group' | 'window' | 'workspace' | undefined): void {
     this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
       ...task,
       updatedAt: this.now(),
@@ -557,6 +628,7 @@ export class HostTaskLedger {
           runnable: task.archivedAt === undefined
             && task.approved !== false
             && (task.status === 'backlog' || task.status === 'todo')
+            && !this.workspacePausedFor(task)
             && open === undefined,
           launched: open?.launched === true,
           queued: open?.queued === true,
@@ -575,6 +647,7 @@ export class HostTaskLedger {
         ...(group.allowedHours === undefined ? {} : { allowedHours: group.allowedHours }),
         offPeakOnly: group.offPeakOnly,
         stopped: group.stopped === true,
+        paused: group.paused === true,
         scheduleEnabled: group.schedule?.enabled === true,
         newestExecutionSettled: newest !== undefined && newest.endedAt !== undefined,
         order: [...group.order],
@@ -595,6 +668,9 @@ export class HostTaskLedger {
     // An unapproved member can never be launched by the group sequence
     // (defensive; the advance pass already treats it as not runnable).
     if (task.approved === false) return undefined
+    // A member pinned to a paused workspace is never launched (defensive; the
+    // advance pass already treats it as not runnable).
+    if (this.workspacePausedFor(task)) return undefined
     const opened = startExecution(task, now, crypto.randomUUID())
     this.document.tasks = this.document.tasks.map(item => item.id === taskId ? opened.task : item)
     this.commit()
@@ -607,8 +683,9 @@ export class HostTaskLedger {
     for (const group of this.document.groups) {
       const schedule = group.schedule
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
-      // A stopped group's cron is held; the schedule resumes on resume.
-      if (group.stopped === true) continue
+      // A stopped or paused group's cron is held; the schedule resumes on
+      // resume/continue.
+      if (group.stopped === true || group.paused === true) continue
       due.push({ groupId: group.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
     }
     return due
@@ -646,20 +723,20 @@ export class HostTaskLedger {
    * Return value-only references for task schedules due at the supplied Host
    * time. A task whose group has an enabled schedule is skipped: its own cron
    * is ignored while the group cron governs the sequence (members inherit it).
-   * A task whose group is stopped is skipped too: stopping the group holds
-   * every member cron until the group resumes.
+   * A task whose group is stopped or paused is skipped too: stopping/pausing
+   * the group holds every member cron until the group resumes/continues.
    */
   dueSchedules(now: number): DueScheduleReference[] {
     const groupScheduled = new Set<string>()
-    const stoppedGroups = new Set<string>()
+    const heldGroups = new Set<string>()
     for (const group of this.document.groups) {
       if (group.schedule?.enabled === true) groupScheduled.add(group.id)
-      if (group.stopped === true) stoppedGroups.add(group.id)
+      if (group.stopped === true || group.paused === true) heldGroups.add(group.id)
     }
     const due: DueScheduleReference[] = []
     for (const task of this.document.tasks) {
       if (task.archivedAt !== undefined) continue
-      if (task.groupId !== undefined && (groupScheduled.has(task.groupId) || stoppedGroups.has(task.groupId))) continue
+      if (task.groupId !== undefined && (groupScheduled.has(task.groupId) || heldGroups.has(task.groupId))) continue
       const schedule = task.schedule
       if (schedule === undefined || !schedule.enabled || schedule.nextRunAt === undefined || schedule.nextRunAt > now) continue
       due.push({ taskId: task.id, cron: schedule.cron, nextRunAt: schedule.nextRunAt })
@@ -695,7 +772,7 @@ export class HostTaskLedger {
     }
   }
 
-  applyRequest(requestId: string, action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; runs?: OpenedRun[]; stopSessions?: string[] } {
+  applyRequest(requestId: string, action: TaskBoardAction): LedgerApplyResult {
     const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex')
     const cached = this.requestCache.get(requestId)
     if (cached !== undefined) {
@@ -722,13 +799,15 @@ export class HostTaskLedger {
     if (task === undefined || task.archivedAt !== undefined) return undefined
     // A task whose group has an enabled schedule is governed by the group cron;
     // its own cron must never fire it (defensive; dueSchedules already skips).
-    if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && (group.schedule?.enabled === true || group.stopped === true))) {
+    if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && (group.schedule?.enabled === true || group.stopped === true || group.paused === true))) {
       return undefined
     }
     // An unapproved task's cron is held like a running task's: the occurrence
     // rolls forward without launching, so the schedule keeps its cadence and
-    // resumes firing at the next occurrence once the task is approved.
-    if (task.approved === false || task.status === 'running' || hasOpenExecution(task)) {
+    // resumes firing at the next occurrence once the task is approved. A task
+    // pinned to a paused workspace is held the same way until the workspace
+    // is continued.
+    if (task.approved === false || task.status === 'running' || hasOpenExecution(task) || this.workspacePausedFor(task)) {
       this.document.tasks = [...applyScheduleNextRun(this.document.tasks, taskId, nextRunAt, task.schedule?.lastTriggeredAt, triggeredAt)]
       this.commit()
       return undefined
@@ -801,11 +880,12 @@ export class HostTaskLedger {
     }
   }
 
-  private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; runs?: OpenedRun[]; stopSessions?: string[] } {
+  private apply(action: TaskBoardAction): LedgerApplyResult {
     const now = this.now()
     let run: OpenedRun | undefined
     let runs: OpenedRun[] | undefined
     const stopSessions: string[] = []
+    const resumeRuns: ResumeRun[] = []
     switch (action.kind) {
       case 'import': {
         const sources = new Set(this.document.scheduler.importedSources ?? [])
@@ -939,9 +1019,14 @@ export class HostTaskLedger {
         // An unapproved task can never be run by any means — manual runs and
         // reruns are refused here; crons and group auto-advance skip it too.
         if (task.approved === false) throw new Error('task is not approved')
-        if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && group.stopped === true)) {
-          throw new Error('group is stopped')
+        if (task.groupId !== undefined) {
+          const group = this.document.groups.find(candidate => candidate.id === task.groupId)
+          if (group?.stopped === true) throw new Error('group is stopped')
+          if (group?.paused === true) throw new Error('group is paused')
         }
+        // A task pinned to a paused workspace never launches by any means until
+        // the workspace is continued.
+        if (this.workspacePausedFor(task)) throw new Error('workspace is paused')
         const base = action.kind === 'rerun' ? withStatus(task, 'todo', now) : task
         run = startExecution(base, now, crypto.randomUUID())
         this.document.tasks = this.document.tasks.map(item => item.id === task.id ? run!.task : item)
@@ -968,9 +1053,103 @@ export class HostTaskLedger {
           if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
           return settleExecution(task, execution.id, 'cancelled', now, 'group stopped by user')
         })
-        this.document.groups = this.document.groups.map(group => group.id === action.groupId
-          ? { ...group, stopped: true, updatedAt: now }
-          : group)
+        this.document.groups = this.document.groups.map(group => {
+          if (group.id !== action.groupId) return group
+          // A stop settles every open member (paused or not) as cancelled, so a
+          // stale paused flag is cleared with the stop flag.
+          const { paused: _paused, ...rest } = group
+          return { ...rest, stopped: true, updatedAt: now }
+        })
+        break
+      }
+      case 'pause': {
+        const task = this.document.tasks.find(item => item.id === action.taskId)
+        if (task === undefined) throw new Error('task not found')
+        if (task.archivedAt !== undefined) throw new Error('archived task is read-only')
+        const execution = task.executions.find(entry => entry.endedAt === undefined)
+        if (execution === undefined) throw new Error('task is not running')
+        if (execution.pausedAt !== undefined) throw new Error('task is already paused')
+        if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
+        const paused = pauseExecution(task, execution.id, now)
+        if (paused === undefined) throw new Error('task is not running')
+        this.document.tasks = this.document.tasks.map(item => item.id === action.taskId ? paused : item)
+        break
+      }
+      case 'continue': {
+        const task = this.document.tasks.find(item => item.id === action.taskId)
+        if (task === undefined) throw new Error('task not found')
+        if (task.archivedAt !== undefined) throw new Error('archived task is read-only')
+        const execution = task.executions.find(entry => entry.endedAt === undefined)
+        if (execution === undefined || execution.pausedAt === undefined) throw new Error('task is not paused')
+        const continued = continueExecution(task, execution.id, now)
+        if (continued === undefined) throw new Error('task is not paused')
+        this.document.tasks = this.document.tasks.map(item => item.id === action.taskId ? continued : item)
+        if (execution.sessionId !== undefined) resumeRuns.push({ sessionId: execution.sessionId, task: continued })
+        break
+      }
+      case 'pause-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
+        if (group === undefined) throw new Error('group not found')
+        if (group.stopped === true) throw new Error('group is stopped')
+        if (group.paused === true) throw new Error('group is already paused')
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId !== action.groupId) return task
+          const execution = task.executions.find(entry => entry.endedAt === undefined)
+          if (execution === undefined || execution.pausedAt !== undefined) return task
+          if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
+          return pauseExecution(task, execution.id, now) ?? task
+        })
+        this.document.groups = this.document.groups.map(candidate => candidate.id === action.groupId
+          ? { ...candidate, paused: true, updatedAt: now }
+          : candidate)
+        break
+      }
+      case 'continue-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
+        if (group === undefined) throw new Error('group not found')
+        if (group.paused !== true) throw new Error('group is not paused')
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId !== action.groupId) return task
+          const execution = task.executions.find(entry => entry.endedAt === undefined && entry.pausedAt !== undefined)
+          if (execution === undefined) return task
+          const continued = continueExecution(task, execution.id, now)
+          if (continued === undefined) return task
+          if (execution.sessionId !== undefined) resumeRuns.push({ sessionId: execution.sessionId, task: continued })
+          return continued
+        })
+        this.document.groups = this.document.groups.map(candidate => {
+          if (candidate.id !== action.groupId) return candidate
+          const { paused: _paused, ...rest } = candidate
+          return { ...rest, updatedAt: now }
+        })
+        break
+      }
+      case 'pause-workspace': {
+        const workspaceId = action.workspaceId
+        this.document.workspacePaused = { ...this.document.workspacePaused, [workspaceId]: now }
+        this.document.tasks = this.document.tasks.map(task => {
+          if (workspaceId !== '' && task.workspaceId !== workspaceId) return task
+          const execution = task.executions.find(entry => entry.endedAt === undefined)
+          if (execution === undefined || execution.pausedAt !== undefined) return task
+          if (execution.sessionId !== undefined) stopSessions.push(execution.sessionId)
+          return pauseExecution(task, execution.id, now) ?? task
+        })
+        break
+      }
+      case 'continue-workspace': {
+        const workspaceId = action.workspaceId
+        if (this.document.workspacePaused[workspaceId] === undefined) throw new Error('workspace is not paused')
+        delete this.document.workspacePaused[workspaceId]
+        this.document.workspacePaused = { ...this.document.workspacePaused }
+        this.document.tasks = this.document.tasks.map(task => {
+          if (workspaceId !== '' && task.workspaceId !== workspaceId) return task
+          const execution = task.executions.find(entry => entry.endedAt === undefined && entry.pausedAt !== undefined)
+          if (execution === undefined) return task
+          const continued = continueExecution(task, execution.id, now)
+          if (continued === undefined) return task
+          if (execution.sessionId !== undefined) resumeRuns.push({ sessionId: execution.sessionId, task: continued })
+          return continued
+        })
         break
       }
       case 'set-approved': {
@@ -1006,6 +1185,7 @@ export class HostTaskLedger {
         const group = this.document.groups.find(candidate => candidate.id === action.groupId)
         if (group === undefined) throw new Error('group not found')
         if (group.stopped === true) throw new Error('group is stopped')
+        if (group.paused === true) throw new Error('group is paused')
         // Manual group start: open an execution for runnable members in group
         // order (on-board, approved, backlog/todo, no open run), up to the
         // group's launch capacity — sequential opens one member, parallel opens
@@ -1019,6 +1199,7 @@ export class HostTaskLedger {
             && task.archivedAt === undefined
             && task.approved !== false
             && (task.status === 'backlog' || task.status === 'todo')
+            && !this.workspacePausedFor(task)
             && !hasOpenExecution(task))
         if (runnable.length === 0) throw new Error('no runnable members')
         const capacity = group.mode === 'sequential' ? 1 : group.maxParallel ?? Number.POSITIVE_INFINITY
@@ -1101,6 +1282,7 @@ export class HostTaskLedger {
       ...(run === undefined ? {} : { run }),
       ...(runs === undefined || runs.length === 0 ? {} : { runs }),
       ...(stopSessions.length > 0 ? { stopSessions } : {}),
+      ...(resumeRuns.length > 0 ? { resumeRuns } : {}),
     }
   }
 
@@ -1214,6 +1396,7 @@ export class HostTaskLedger {
         tasks,
         groups,
         workspaceDefaults: normalizeWorkspaceDefaultsMap(parsed.workspaceDefaults),
+        workspacePaused: normalizeWorkspacePaused(parsed.workspacePaused),
         scheduler: {
           timeZone: timeZone(),
           ledgerId: typeof parsed.scheduler?.ledgerId === 'string' && parsed.scheduler.ledgerId !== '' ? parsed.scheduler.ledgerId : crypto.randomUUID(),
@@ -1241,6 +1424,7 @@ export class HostTaskLedger {
         tasks: [],
         groups: [],
         workspaceDefaults: {},
+        workspacePaused: {},
         scheduler: { timeZone: timeZone(), ledgerId: crypto.randomUUID(), ...(existed ? { error: `corrupt ledger was quarantined: ${error instanceof Error ? error.message : String(error)}` } : {}) },
         recentRequests: [],
       }

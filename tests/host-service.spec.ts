@@ -434,3 +434,138 @@ describe('TaskBoardHostService poll heartbeat', () => {
     service.dispose()
   })
 })
+
+describe('TaskBoardHostService pause gates', () => {
+  it('pause fires the session cancel RPC and the paused execution is never settled by reconcile', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    ledger.attachSession('task-a', opened.state.tasks[0].executions[0].id, 'session-a')
+    const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
+    // A session list that would settle the run if it were inspected (idle
+    // session + an aborted turn/end in history).
+    const history = vi.fn(async (request: { rpcId: unknown }) => ok(request, {
+      events: [{ event: { type: 'turn/end', seq: 5, time: now + 1000, data: { reason: { kind: 'aborted' } } } }],
+      hasMore: false,
+    }))
+    const api = { sessions: { cancel, list: vi.fn(), history } } as unknown as ApiProxy
+    const service = new TaskBoardHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    service.apply('pause-1', { kind: 'pause', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(cancel.mock.calls[0][0].payload).toMatchObject({ sessionId: 'session-a' })
+    // The poll would observe an idle session with an aborted turn; a paused
+    // execution must never be settled by it.
+    const sessions = [{ sessionId: 'session-a', running: false }]
+    await (service as unknown as { reconcileExecutions(sessions: readonly unknown[], executions: readonly unknown[]): Promise<void> })
+      .reconcileExecutions(sessions, ledger.runtimeView().openExecutions)
+    const execution = ledger.state().tasks[0].executions[0]
+    expect(execution.pausedAt).toBe(now)
+    expect(execution.endedAt).toBeUndefined()
+    expect(execution.result).toBeUndefined()
+    expect(history).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('holds a queued run of a paused workspace (no expiry) and launches it after continue', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: 'work', workspaceId: 'w1' },
+    })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, undefined, now - 1, 'endpoint')
+    const create = vi.fn(async (request: { rpcId: unknown }) => ok(request, { sessionId: 'session-a' }))
+    const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'A', seq: 1 }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = {
+      workspace: { list: vi.fn(async (request: { rpcId: unknown }) => ok(request, { items: [{ workspaceId: 'w1' }] })) },
+      sessions: { create, rename, prompt },
+    } as unknown as ApiProxy
+    const service = new TaskBoardHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      routerConfig: { endpointMaxWaitHours: 1, defaultEndpoints: [], endpoints: [] },
+    })
+    service.apply('pause-ws', { kind: 'pause-workspace', workspaceId: 'w1' })
+    // Far past the max-wait window: a paused queued run neither expires nor launches.
+    await (service as unknown as { routeQueued(): Promise<void> }).routeQueued()
+    let execution = ledger.state().tasks[0].executions[0]
+    expect(execution.pausedAt).toBe(now)
+    expect(execution.queuedAt).toBe(now - 1)
+    expect(execution.result).toBeUndefined()
+    expect(create).not.toHaveBeenCalled()
+    // Continue clears the pause and the queue re-check launches the run.
+    service.apply('continue-ws', { kind: 'continue-workspace', workspaceId: 'w1' })
+    await (service as unknown as { routeQueued(): Promise<void> }).routeQueued()
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    execution = ledger.state().tasks[0].executions[0]
+    expect(execution.pausedAt).toBeUndefined()
+    expect(execution.sessionId).toBe('session-a')
+    expect(create).toHaveBeenCalledOnce()
+    expect(prompt).toHaveBeenCalledOnce()
+    service.dispose()
+  })
+
+  it('pausing a workspace pauses its queued run (the router leaves it inert)', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: 'work', workspaceId: 'w1' },
+    })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, undefined, now, 'endpoint')
+    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      routerConfig: { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] },
+    })
+    service.apply('pause-ws', { kind: 'pause-workspace', workspaceId: 'w1' })
+    // The queued run of the paused workspace is itself paused: the queue pass
+    // leaves it untouched (no launch, no expiry, no reason churn).
+    const execution = ledger.state().tasks[0].executions[0]
+    expect(execution.pausedAt).toBe(now)
+    expect(execution.queuedAt).toBe(now)
+    await (service as unknown as { routeQueued(): Promise<void> }).routeQueued()
+    expect(ledger.state().tasks[0].executions[0].sessionId).toBeUndefined()
+    expect(ledger.state().tasks[0].executions[0].queuedReason).toBe('endpoint')
+    service.dispose()
+  })
+
+  it('cancels the freshly attached session when a run is paused mid-launch', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: 'work' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    const executionId = opened.state.tasks[0].executions[0].id
+    const create = vi.fn(async (request: { rpcId: unknown }) => ok(request, { sessionId: 'session-a' }))
+    const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'A', seq: 1 }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
+    const api = { sessions: { create, rename, prompt, cancel } } as unknown as ApiProxy
+    const service = new TaskBoardHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    // Pause while the launch is still in flight (no session attached yet).
+    service.apply('pause-1', { kind: 'pause', taskId: 'task-a' })
+    await (service as unknown as { launch(task: unknown, executionId: string): Promise<void> }).launch(
+      ledger.state().tasks[0], executionId,
+    )
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(create).toHaveBeenCalledOnce()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(cancel.mock.calls[0][0].payload).toMatchObject({ sessionId: 'session-a' })
+    expect(ledger.state().tasks[0].executions[0].pausedAt).toBe(now)
+    expect(ledger.state().tasks[0].executions[0].sessionId).toBe('session-a')
+    service.dispose()
+  })
+})
