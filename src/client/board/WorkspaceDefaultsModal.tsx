@@ -49,7 +49,9 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
   const [reasoningEffort, setReasoningEffort] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.model?.reasoningEffort ?? '')
   const [endpoints, setEndpoints] = useState<string[]>(() => [...(controller.getSnapshot().workspaceDefaults[workspaceId]?.endpoints ?? [])])
   const [permission, setPermission] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.permission ?? '')
-  const [unapproved, setUnapproved] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.approved === false)
+  // The approval default reads positively: on (the runtime default) means new
+  // tasks start approved; turning it off pins them to start unapproved.
+  const [approved, setApproved] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.approved !== false)
 
   const submit = async (): Promise<void> => {
     setPending(true)
@@ -62,7 +64,7 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
       model,
       endpoints: endpoints.length === 0 ? null : endpoints,
       permission: permission === '' ? null : permission as TaskPermission,
-      approved: unapproved ? false : null,
+      approved: approved ? null : false,
     }
     const accepted = await controller.setWorkspaceDefaults(workspaceId, patch)
     if (!accepted) {
@@ -134,11 +136,12 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
         </select>
       </label>
 
-      <label className={css.scheduleToggle} title={t('grid.approvedDefaultHint')}>
+      <label className={css.approvalToggle} title={t('grid.approvedDefaultHint')}>
         <input
           type="checkbox"
-          checked={unapproved}
-          onChange={event => { setUnapproved(event.target.checked) }}
+          role="switch"
+          checked={approved}
+          onChange={event => { setApproved(event.target.checked) }}
         />
         <span>{t('grid.approvedDefault')}</span>
       </label>

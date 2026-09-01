@@ -39,7 +39,9 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   const [endpoints, setEndpoints] = useState<string[]>(defaults?.endpoints ? [...defaults.endpoints] : [])
   const [groupId, setGroupId] = useState('')
   const [permission, setPermission] = useState(defaults?.permission ?? '')
-  const [unapproved, setUnapproved] = useState(defaults?.approved === false)
+  // Approval defaults to on (tasks start approved); the workspace default can
+  // pin them to start unapproved instead.
+  const [approved, setApproved] = useState(defaults?.approved !== false)
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleCron, setScheduleCron] = useState('')
   const [scheduleError, setScheduleError] = useState<string | undefined>(undefined)
@@ -81,9 +83,9 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       groupId: groupId === '' ? undefined : groupId,
       permission: permission === '' ? undefined : permission as TaskPermission,
       schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : undefined,
-      // Manual creation defaults to approved; the explicit toggle mints an
+      // Manual creation defaults to approved; turning the toggle off mints an
       // unapproved task (it cannot run until approved).
-      ...(unapproved ? { approved: false as const } : {}),
+      ...(approved ? {} : { approved: false as const }),
     })
     if (task === undefined) {
       setPending(false)
@@ -198,13 +200,14 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
           </select>
         </label>
 
-        <label className={css.scheduleToggle} title={t('new.unapprovedHint')}>
+        <label className={css.approvalToggle} title={t('new.approvedHint')}>
           <input
             type="checkbox"
-            checked={unapproved}
-            onChange={event => { setUnapproved(event.target.checked) }}
+            role="switch"
+            checked={approved}
+            onChange={event => { setApproved(event.target.checked) }}
           />
-          <span>{t('new.unapproved')}</span>
+          <span>{t('new.approved')}</span>
         </label>
 
         <section className={css.detailSection}>

@@ -1435,6 +1435,57 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   accent-color: var(--dsw-alias-state-business-primary);
 }
 
+/* --- approval toggle switch (checked = task starts approved) --- */
+.approvalToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.approvalToggle input {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-border-l2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.approvalToggle input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-base);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.approvalToggle input:hover:not(:checked) {
+  border-color: var(--dsw-alias-label-secondary);
+}
+
+.approvalToggle input:checked {
+  background: var(--dsw-alias-state-business-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.approvalToggle input:checked::after {
+  transform: translateX(16px);
+}
+
 .scheduleRow {
   display: flex;
   align-items: center;
@@ -1688,7 +1739,8 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .input,
   .select,
   .schedulePreset,
-  .scheduleToggle {
+  .scheduleToggle,
+  .approvalToggle {
     min-height: 44px;
   }
 
@@ -1802,7 +1854,8 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .input:focus-visible,
 .select:focus-visible,
 .schedulePreset:focus-visible,
-.scheduleToggle input:focus-visible {
+.scheduleToggle input:focus-visible,
+.approvalToggle input:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
@@ -1885,7 +1938,9 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .input,
   .select,
   .schedulePreset,
-  .scheduleToggle input {
+  .scheduleToggle input,
+  .approvalToggle input,
+  .approvalToggle input::after {
     transition: none;
   }
 
