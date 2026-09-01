@@ -854,6 +854,66 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   margin: 0 4px;
 }
 
+/* --- dashboard (summary strip above the landing list) ------------------------ */
+
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  flex: none;
+  max-width: 1080px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.dashCard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+}
+
+.dashLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashValue {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashSub {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashCard[data-tone='running'] .dashValue { color: var(--dsw-alias-state-warn-primary); }
+.dashCard[data-tone='success'] .dashValue { color: var(--dsw-alias-state-success-primary); }
+.dashCard[data-tone='failed'] .dashValue { color: var(--dsw-alias-state-error-primary); }
+.dashCard[data-tone='scheduled'] .dashValue { color: #8b5cf6; }
+.dashCard[data-tone='tokens'] .dashValue { color: var(--dsw-alias-state-business-primary); }
+.dashCard[data-tone='cost'] .dashValue { color: var(--dsw-alias-state-business-primary); }
+
 /* --- workspace overview directory (landing view) ----------------------------- */
 
 /* Scroll region; centers the board card below the header. */
@@ -869,7 +929,7 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
    so the table reads as columns rather than a full-bleed wall; it scrolls
    horizontally only if a very narrow view forces it to. */
 .directory {
-  --dir-columns: minmax(0, 1fr) repeat(6, 64px) 56px 60px;
+  --dir-columns: minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1018,6 +1078,18 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   font-weight: 700;
   color: var(--dsw-alias-label-primary);
 }
+
+/* Right-hand run/pause/stop controls (fixed track, right-aligned). */
+.directoryControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.directoryControls .iconButton[data-ctl='run'] { color: var(--dsw-alias-state-business-primary); }
+.directoryControls .iconButton[data-ctl='pause'] { color: var(--dsw-alias-state-warn-primary); }
+.directoryControls .iconButton[data-ctl='stop'] { color: var(--dsw-alias-state-error-primary); }
 
 /* Right-hand chevron + settings controls (fixed track, right-aligned). */
 .directoryActions {
@@ -1509,8 +1581,12 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: minmax(0, 1fr) repeat(6, 48px) 48px 56px;
+    --dir-columns: minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
     padding: 8px 10px 12px;
+  }
+
+  .dashboard {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
   .listAvatar {

@@ -671,3 +671,55 @@ describe('BoardController reorder', () => {
     expect(controller.getSnapshot().tasks.map(t => t.id)).toEqual(ids)
   })
 })
+
+describe('BoardController workspace fan-out', () => {
+  const OPEN = { id: 'e', sessionId: 's', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }
+
+  function hostTransport(seedTasks: TaskRecord[], seedGroups: TaskGroupRecord[], actions: TaskBoardAction[]): TaskBoardTransport {
+    const snap = (): TaskBoardSnapshot => ({
+      schemaVersion: 2, revision: 1, tasks: seedTasks, groups: seedGroups, workspaceDefaults: {},
+      scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
+      power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
+    })
+    return {
+      bootstrap: async () => snap(),
+      state: async () => snap(),
+      action: async action => { actions.push(action); return snap() },
+      subscribe: () => () => undefined,
+    }
+  }
+
+  it('runWorkspace starts todo (never backlog) ungrouped tasks plus non-stopped groups', async () => {
+    const todo = createTask({ title: 'todo', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-todo')
+    const backlog = { ...createTask({ title: 'backlog', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-backlog'), status: 'backlog' as const }
+    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
+    const member = createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1')
+    const actions: TaskBoardAction[] = []
+    const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([todo, backlog, member], [group], actions), now: () => NOW, uuid })
+    controller.start()
+    await controller.retryHostSync()
+
+    await controller.runWorkspace('ws-a')
+    expect(actions.map(action => action.kind === 'run' ? `run:${(action as Extract<TaskBoardAction, { kind: 'run' }>).taskId}` : action.kind === 'run-group' ? `run-group:${(action as Extract<TaskBoardAction, { kind: 'run-group' }>).groupId}` : action.kind))
+      .toEqual(['run:t-todo', 'run-group:g1'])
+    controller.dispose()
+  })
+
+  it('pauseWorkspace stops running groups; stopWorkspace cancels running ungrouped tasks and groups', async () => {
+    const runTask = { ...createTask({ title: 'run', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-run'), status: 'running' as const, executions: [OPEN] }
+    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
+    const member = { ...createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1'), status: 'running' as const, executions: [OPEN] }
+    const actions: TaskBoardAction[] = []
+    const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([runTask, member], [group], actions), now: () => NOW, uuid })
+    controller.start()
+    await controller.retryHostSync()
+
+    await controller.pauseWorkspace('ws-a')
+    expect(actions).toEqual([{ kind: 'stop-group', groupId: 'g1' }])
+
+    actions.length = 0
+    await controller.stopWorkspace('ws-a')
+    expect(actions).toEqual([{ kind: 'stop', taskId: 't-run' }, { kind: 'stop-group', groupId: 'g1' }])
+    controller.dispose()
+  })
+})

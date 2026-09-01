@@ -11,7 +11,7 @@
  */
 import { isValidCron } from './schedule.ts'
 import { normalizeEndpointList } from './endpoints.ts'
-import { isTaskPermission, isTaskStatus, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
+import { isTaskPermission, isTaskStatus, normalizeExecutionUsage, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
 
 /** Persistence seam for the task ledger. */
 export interface TaskStore {
@@ -158,6 +158,13 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     // Only the explicit unapproved state is persisted; `true` (the default)
     // and legacy absence both normalize to undefined (approved).
     task.approved = row.approved === false ? false : undefined
+    // Token usage is normalized like the schedule: a malformed or missing
+    // usage block clears to undefined (the adapter disclosed none) instead of
+    // dropping the row or leaking a damaged shape.
+    task.executions = task.executions.map(execution => ({
+      ...execution,
+      usage: normalizeExecutionUsage(execution.usage),
+    }))
     tasks.push(task)
   }
   return tasks

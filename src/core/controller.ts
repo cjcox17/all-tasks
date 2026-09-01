@@ -30,6 +30,7 @@ import { applyDeleteTask } from './use-cases/task-delete.ts'
 import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } from './use-cases/task-schedule.ts'
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
+import { planWorkspaceActions } from './workspace-actions.ts'
 import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '../protocol.ts'
 
 export interface TaskBoardTransport {
@@ -98,6 +99,12 @@ export interface ExecutionEndpointOption {
   name: string
 }
 
+/** Per-token pricing for the dashboard cost estimate (USD per 1M tokens). */
+export interface CostPricing {
+  inputPerMillion: number
+  outputPerMillion: number
+}
+
 /** The execution-target option sets the UI feeds into the controller. */
 export interface ExecutionOptionsSnapshot {
   workspaces: readonly ExecutionWorkspaceOption[]
@@ -143,6 +150,8 @@ export interface ControllerSnapshot {
   /** Picker option sets (workspace list + agent-preset roster). */
   executionOptions: ExecutionOptionsSnapshot
   pendingTaskIds: readonly string[]
+  /** Per-token pricing for the dashboard cost estimate (absent = not configured). */
+  pricing?: CostPricing
   transportError?: string
   host?: Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power'>
 }
@@ -191,6 +200,7 @@ export class BoardController {
   private readonly uuid: () => string
   private readonly pendingTaskIds = new Set<string>()
   private readonly taskQueues = new Map<string, Promise<void>>()
+  private pricing: CostPricing | undefined
   private transportError: string | undefined
   private hostState: Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
   private remoteSubscribed = false
@@ -241,6 +251,7 @@ export class BoardController {
       selectedTaskId: this.selectedTaskId,
       executionOptions: this.executionOptions,
       pendingTaskIds: [...this.pendingTaskIds],
+      ...(this.pricing === undefined ? {} : { pricing: this.pricing }),
       ...(this.transportError === undefined ? {} : { transportError: this.transportError }),
       ...(this.hostState === undefined ? {} : { host: this.hostState }),
     }
@@ -371,6 +382,12 @@ export class BoardController {
    */
   setExecutionOptions(patch: Partial<ExecutionOptionsSnapshot>): void {
     this.executionOptions = { ...this.executionOptions, ...patch }
+    this.notify()
+  }
+
+  /** Set the per-token pricing the dashboard's cost estimate uses (from settings). */
+  setPricing(pricing: CostPricing | undefined): void {
+    this.pricing = pricing
     this.notify()
   }
 
@@ -680,6 +697,36 @@ export class BoardController {
       task.groupId === groupId && task.archivedAt === undefined ? withStatus(task, status, this.now()) : task)
     this.persistAndNotify()
     return true
+  }
+
+  // --- workspace-level fan-out (the landing list's run / pause / stop) ---------
+
+  /**
+   * Start one workspace's ready work (or the whole board when `workspaceId` is
+   * undefined): every ungrouped, approved `todo` task with no open run, plus
+   * every non-stopped group with an in-scope member. Backlog tasks are
+   * deliberately left alone — they are started individually, not swept.
+   */
+  async runWorkspace(workspaceId?: string): Promise<void> {
+    if (this.deps.transport === undefined) return
+    const plan = planWorkspaceActions(this.tasks, this.groups, workspaceId)
+    for (const id of plan.todoTaskIds) await this.runTask(id)
+    for (const id of plan.runnableGroupIds) await this.runGroup(id)
+  }
+
+  /** Pause a workspace's running groups (each becomes stopped, resumable later). */
+  async pauseWorkspace(workspaceId?: string): Promise<void> {
+    if (this.deps.transport === undefined) return
+    const plan = planWorkspaceActions(this.tasks, this.groups, workspaceId)
+    for (const id of plan.pausableGroupIds) await this.stopGroup(id)
+  }
+
+  /** Stop a workspace's running work: cancel running ungrouped tasks and running groups. */
+  async stopWorkspace(workspaceId?: string): Promise<void> {
+    if (this.deps.transport === undefined) return
+    const plan = planWorkspaceActions(this.tasks, this.groups, workspaceId)
+    for (const id of plan.stoppableTaskIds) await this.stopTask(id)
+    for (const id of plan.stoppableGroupIds) await this.stopGroup(id)
   }
 
   // --- internals ---------------------------------------------------------------

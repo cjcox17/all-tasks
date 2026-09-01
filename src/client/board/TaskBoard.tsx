@@ -13,10 +13,12 @@
  */
 import { memo, useCallback, useEffect, useState, type DragEvent as ReactDragEvent } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
+import { computeDashboard } from '../../core/dashboard.ts'
 import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
 import { COLUMNS, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
+import { Dashboard } from './Dashboard.tsx'
 import { GroupModal } from './GroupModal.tsx'
 import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
@@ -832,16 +834,22 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
       )}
 
       {view === undefined && (
-        <WorkspaceList
-          tasks={snapshot.tasks}
-          workspaces={snapshot.executionOptions.workspaces}
-          groups={snapshot.groups}
-          pendingTaskIds={snapshot.pendingTaskIds}
-          onOpen={openWorkspace}
-          onOpenAll={openAll}
-          onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
-          onOpenTask={openTask}
-        />
+        <>
+          <Dashboard metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.pricing)} />
+          <WorkspaceList
+            tasks={snapshot.tasks}
+            workspaces={snapshot.executionOptions.workspaces}
+            groups={snapshot.groups}
+            pendingTaskIds={snapshot.pendingTaskIds}
+            onOpen={openWorkspace}
+            onOpenAll={openAll}
+            onSettings={workspaceId => { setDefaultsEditor({ workspaceId }) }}
+            onOpenTask={openTask}
+            onRun={workspaceId => { void controller.runWorkspace(workspaceId) }}
+            onPause={workspaceId => { void controller.pauseWorkspace(workspaceId) }}
+            onStop={workspaceId => { void controller.stopWorkspace(workspaceId) }}
+          />
+        </>
       )}
 
       {/* The task detail overlays the board from either view (landing or kanban). */}

@@ -10,8 +10,8 @@ import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runti
 import { useEffect, useState } from 'react'
 import type { TaskBoardPowerSnapshot } from '../protocol.ts'
 import { EndpointsEditor } from './EndpointsEditor.tsx'
-import { PluginSettingsCard, BooleanField } from './PluginSettingsCard.tsx'
-import { CardForm, booleanField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
+import { PluginSettingsCard, BooleanField, ValueField } from './PluginSettingsCard.tsx'
+import { CardForm, booleanField, numberField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
 /** The task-board fields this card edits (the namespace's full schema). */
 export interface TaskBoardSettings {
@@ -23,6 +23,10 @@ export interface TaskBoardSettings {
   preventIdleSleep?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
+  /** Cost estimate: USD per 1M input tokens (0 = not configured). */
+  costPerMillionInputTokens?: number
+  /** Cost estimate: USD per 1M output tokens (0 = not configured). */
+  costPerMillionOutputTokens?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
@@ -43,6 +47,10 @@ export interface TaskBoardSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
+  /** Cost estimate: USD per 1M input tokens. */
+  costPerMillionInputTokens: CardFieldState
+  /** Cost estimate: USD per 1M output tokens. */
+  costPerMillionOutputTokens: CardFieldState
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -64,6 +72,8 @@ export class TaskBoardSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('preventIdleSleep'),
+      numberField('costPerMillionInputTokens', { min: 0 }),
+      numberField('costPerMillionOutputTokens', { min: 0 }),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -74,6 +84,8 @@ export class TaskBoardSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
+      costPerMillionInputTokens: this.form.field('costPerMillionInputTokens'),
+      costPerMillionOutputTokens: this.form.field('costPerMillionOutputTokens'),
     }
   }
 
@@ -177,6 +189,28 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         {...state.preventIdleSleep}
         onEdit={(text) => { props.edit('preventIdleSleep', text) }}
         onReset={() => { props.resetField('preventIdleSleep') }}
+      />
+      <ValueField
+        id="settings-task-board-cost-input"
+        numeric
+        label={t('settings.costInput')}
+        hint={t('settings.costHint')}
+        placeholder="0.00"
+        {...fieldProps}
+        {...state.costPerMillionInputTokens}
+        onEdit={(text) => { props.edit('costPerMillionInputTokens', text) }}
+        onReset={() => { props.resetField('costPerMillionInputTokens') }}
+      />
+      <ValueField
+        id="settings-task-board-cost-output"
+        numeric
+        label={t('settings.costOutput')}
+        hint={t('settings.costHint')}
+        placeholder="0.00"
+        {...fieldProps}
+        {...state.costPerMillionOutputTokens}
+        onEdit={(text) => { props.edit('costPerMillionOutputTokens', text) }}
+        onReset={() => { props.resetField('costPerMillionOutputTokens') }}
       />
       <EndpointsEditor t={t} disabled={disabled} />
       <p>

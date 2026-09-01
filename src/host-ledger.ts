@@ -18,7 +18,7 @@ import {
   type TaskGroupRecord,
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
-import { canMoveManually, MANUAL_STATUSES, moveTaskBefore, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, MANUAL_STATUSES, moveTaskBefore, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
@@ -67,6 +67,7 @@ export interface SettlementEvent {
   outcome: 'succeeded' | 'failed' | 'cancelled'
   error?: string
   summary?: string
+  usage?: ExecutionUsage
   sessionId?: string
 }
 
@@ -780,13 +781,13 @@ export class HostTaskLedger {
     this.commit()
   }
 
-  settle(taskId: string, executionId: string, outcome: 'succeeded' | 'failed' | 'cancelled', error?: string, summary?: string): void {
+  settle(taskId: string, executionId: string, outcome: 'succeeded' | 'failed' | 'cancelled', error?: string, summary?: string, usage?: ExecutionUsage): void {
     const open = this.document.tasks
       .find(task => task.id === taskId)
       ?.executions.find(execution => execution.id === executionId)
     const wasOpen = open !== undefined && open.endedAt === undefined
     this.document.tasks = this.document.tasks.map(task => task.id === taskId
-      ? settleExecution(task, executionId, outcome, this.now(), error, summary)
+      ? settleExecution(task, executionId, outcome, this.now(), error, summary, usage)
       : task)
     this.commit()
     if (wasOpen) {
@@ -796,6 +797,7 @@ export class HostTaskLedger {
         outcome,
         ...(error === undefined ? {} : { error }),
         ...(summary === undefined ? {} : { summary }),
+        ...(usage === undefined ? {} : { usage }),
         ...(open?.sessionId === undefined ? {} : { sessionId: open.sessionId }),
       })
     }

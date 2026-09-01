@@ -1,7 +1,8 @@
 import type { ApiProxy, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { CommandResult } from '@deepseek-ai/dsh-commands/types'
+import { extractUsage } from './core/execution-usage.ts'
 import { extractSummary } from './core/result-summary.ts'
-import type { TaskRecord } from './core/tasks.ts'
+import type { ExecutionUsage, TaskRecord } from './core/tasks.ts'
 
 function request<T>(payload: T) {
   return { rpcId: `task-board-${crypto.randomUUID()}` as RpcId, payload }
@@ -32,8 +33,8 @@ export interface SessionCommandDispatcher {
 
 export type ExecutionInspection =
   | { outcome: 'pending' }
-  | { outcome: 'succeeded'; summary?: string }
-  | { outcome: 'failed'; error: string; summary?: string }
+  | { outcome: 'succeeded'; summary?: string; usage?: ExecutionUsage }
+  | { outcome: 'failed'; error: string; summary?: string; usage?: ExecutionUsage }
   | { outcome: 'cancelled'; error: string }
 
 /** A post-create launch failure that still identifies the session to the ledger. */
@@ -232,8 +233,16 @@ export class HostExecutionRunner {
     this.scanMemos.delete(sessionId)
     const outcome = turnEndOutcome(turnEnd.event.data)
     const answer = extractSummary(events, startedAt)
-    if (outcome === 'failed') return { outcome: 'failed', error: 'agent turn ended with an error', ...(answer === undefined ? {} : { summary: answer }) }
+    const usage = extractUsage(events, startedAt)
+    if (outcome === 'failed') {
+      return {
+        outcome: 'failed',
+        error: 'agent turn ended with an error',
+        ...(answer === undefined ? {} : { summary: answer }),
+        ...(usage === undefined ? {} : { usage }),
+      }
+    }
     if (outcome === 'cancelled') return { outcome: 'cancelled', error: 'execution was stopped' }
-    return { outcome: 'succeeded', ...(answer === undefined ? {} : { summary: answer }) }
+    return { outcome: 'succeeded', ...(answer === undefined ? {} : { summary: answer }), ...(usage === undefined ? {} : { usage }) }
   }
 }

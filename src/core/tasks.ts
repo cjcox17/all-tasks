@@ -10,6 +10,46 @@ import { normalizeEndpointList } from './endpoints.ts'
 export type TaskStatus = 'backlog' | 'todo' | 'running' | 'done' | 'failed'
 
 /**
+ * Token accounting for one execution, captured from the session's
+ * `assistant/message` events at settlement. Counts are DISJOINT: `inputTokens`
+ * is uncached input only; cached input is reported separately as
+ * `cacheReadTokens`/`cacheWriteTokens`. Absent on runs the adapter reported no
+ * usage for (and on runs that settled before usage capture shipped).
+ */
+export interface ExecutionUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
+/**
+ * Normalize an unknown persisted usage value: a structurally valid usage
+ * object with finite non-negative token counts, or undefined. Malformed
+ * (non-object, missing, or non-numeric counts) collapses to undefined so a
+ * future or damaged ledger never drops the task row over a usage shape.
+ */
+export function normalizeExecutionUsage(value: unknown): ExecutionUsage | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.inputTokens !== 'number' || !Number.isFinite(record.inputTokens) || record.inputTokens < 0) return undefined
+  if (typeof record.outputTokens !== 'number' || !Number.isFinite(record.outputTokens) || record.outputTokens < 0) return undefined
+  const optional = (field: string): number | undefined => {
+    const candidate = record[field]
+    return typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0 ? candidate : undefined
+  }
+  const usage: ExecutionUsage = { inputTokens: record.inputTokens, outputTokens: record.outputTokens }
+  const cacheReadTokens = optional('cacheReadTokens')
+  const cacheWriteTokens = optional('cacheWriteTokens')
+  const reasoningTokens = optional('reasoningTokens')
+  if (cacheReadTokens !== undefined) usage.cacheReadTokens = cacheReadTokens
+  if (cacheWriteTokens !== undefined) usage.cacheWriteTokens = cacheWriteTokens
+  if (reasoningTokens !== undefined) usage.reasoningTokens = reasoningTokens
+  return usage
+}
+
+/**
  * One real execution attempt: the run's own id, the dsh session that ran it
  * (filled once the session is created), and the settled outcome once the
  * session's turn ended.
@@ -32,6 +72,11 @@ export interface ExecutionRecord {
    * actions and downstream steps. Absent when the run produced no visible text.
    */
   summary?: string
+  /**
+   * Token accounting captured at settlement (see {@link ExecutionUsage}).
+   * Absent when the adapter reported none.
+   */
+  usage?: ExecutionUsage
   /**
    * When the router queued this run waiting for an eligible endpoint. A queued
    * run has no session yet (nothing billed), keeps the task in 'running', and
@@ -437,12 +482,20 @@ export function settleExecution(
   now: number,
   error: string | undefined,
   summary?: string,
+  usage?: ExecutionUsage,
 ): TaskRecord {
   const index = task.executions.findIndex(execution => execution.id === executionId)
   if (index === -1) return task
   const execution = task.executions[index]
   if (execution.endedAt !== undefined) return task
-  const settled: ExecutionRecord = { ...execution, endedAt: now, result: outcome, error, ...(summary === undefined ? {} : { summary }) }
+  const settled: ExecutionRecord = {
+    ...execution,
+    endedAt: now,
+    result: outcome,
+    error,
+    ...(summary === undefined ? {} : { summary }),
+    ...(usage === undefined ? {} : { usage }),
+  }
   const executions = [...task.executions]
   executions[index] = settled
   const status: TaskStatus = outcome === 'succeeded' ? 'done' : 'failed'
