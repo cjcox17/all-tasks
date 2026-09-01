@@ -690,6 +690,12 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .groupHeader {
   display: flex;
   align-items: center;
+  /* A narrow column (the grid minimum is 220px) cannot fit the whole banner
+     on one line: name, mode badge, live status pills, count, and up to four
+     action buttons exceed it, and with the default nowrap the trailing
+     controls (notably the Manage gear) overflow the group box and paint
+     outside it. Wrapping keeps every control inside the dashed group section. */
+  flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px;
   flex: none;
