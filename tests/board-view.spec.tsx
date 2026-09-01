@@ -803,6 +803,7 @@ describe('TaskBoard approval', () => {
     const card = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(candidate => candidate.textContent?.includes('Pending'))
     expect(card).not.toBeNull()
     expect(card!.textContent).toContain(t('card.unapproved'))
+    expect(card!.textContent).not.toContain(t('card.approved'))
     const approve = container.querySelector(`button[aria-label="${t('card.approve')}"]`) as HTMLButtonElement
     expect(approve).not.toBeNull()
     await act(async () => { approve.click() })
@@ -831,6 +832,7 @@ describe('TaskBoard approval', () => {
     expect(container.querySelector(`button[aria-label="${t('card.approve')}"]`)).toBeNull()
     const card = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(candidate => candidate.textContent?.includes('Fine'))
     expect(card!.textContent).not.toContain(t('card.unapproved'))
+    expect(card!.textContent).toContain(t('card.approved'))
   })
 
   it('filters the board to unapproved tasks only', async () => {

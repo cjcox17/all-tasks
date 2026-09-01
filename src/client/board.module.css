@@ -777,11 +777,23 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   background: var(--dsw-specific-input-major);
 }
 
-/* An unapproved task's badge on the card meta row. */
+/* Approval-state pills on the card meta row: unapproved pops (warning tint),
+   approved stays quiet (success-tinted outline) so waiting tasks stand out. */
 .cardUnapproved {
   flex: none;
   font-size: 11px;
-  color: var(--dsw-alias-state-warning-primary, #b8860b);
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.cardApproved {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-state-success-primary);
   background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
