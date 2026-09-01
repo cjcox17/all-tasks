@@ -11,6 +11,8 @@ import {
   effectiveEndpointIds,
   groupCapacityFull,
   groupCompactsBetween,
+  groupFinalStepBlocked,
+  groupFinalStepReady,
   groupRuntimeStatus,
   groupSequenceStarted,
   groupSharesSession,
@@ -101,6 +103,16 @@ describe('membership and order', () => {
     const moved = withGroupMembershipChange(withMember, 't1', 'g-a', 'g-b', NOW + 2)
     expect(moved.find(g => g.id === 'g-a')!.order).toEqual([])
     expect(moved.find(g => g.id === 'g-b')!.order).toEqual(['t1'])
+  })
+
+  it('clears the final-step designation when the designated member leaves the group', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const withMember = withGroupOrder([group], 'g1', ['t1', 't2'], ['t1', 't2'], NOW)[0]!
+    const designated = applyUpdateGroup([withMember], 'g1', { finalStepTaskId: 't2' }, NOW + 1).groups[0]!
+    expect(designated.finalStepTaskId).toBe('t2')
+    const removed = withGroupMembershipChange([designated], 't2', 'g1', undefined, NOW + 2)
+    expect(removed[0]!.finalStepTaskId).toBeUndefined()
+    expect(removed[0]!.order).toEqual(['t1'])
   })
 
   it('normalizes an order to exactly the members (listed first, rest appended)', () => {
@@ -197,6 +209,22 @@ describe('group update', () => {
     const rolled = withGroupScheduleRoll(armed.groups, 'g1', NOW + 86_400_000, NOW + 1, NOW + 1)
     expect(rolled[0]!.schedule).toMatchObject({ nextRunAt: NOW + 86_400_000, lastTriggeredAt: NOW + 1 })
   })
+
+  it('sets and clears the final step through the update patch, requiring a member', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const withMember = withGroupOrder([group], 'g1', ['t1', 't2'], ['t1', 't2'], NOW)[0]!
+    const designated = applyUpdateGroup([withMember], 'g1', { finalStepTaskId: 't2', finalStepRequireSuccess: true }, NOW + 1)
+    expect(designated.applied).toBe(true)
+    expect(designated.groups[0]).toMatchObject({ finalStepTaskId: 't2', finalStepRequireSuccess: true })
+
+    // A non-member designation rejects the whole patch.
+    expect(applyUpdateGroup([withMember], 'g1', { finalStepTaskId: 'stranger' }, NOW + 1).applied).toBe(false)
+
+    const cleared = applyUpdateGroup(designated.groups, 'g1', { finalStepTaskId: null, finalStepRequireSuccess: false }, NOW + 2)
+    expect(cleared.applied).toBe(true)
+    expect(cleared.groups[0]!.finalStepTaskId).toBeUndefined()
+    expect(cleared.groups[0]!.finalStepRequireSuccess).toBeUndefined()
+  })
 })
 
 describe('group deletion and persisted rows', () => {
@@ -233,6 +261,20 @@ describe('group deletion and persisted rows', () => {
     // A malformed maxParallel is dropped with the group kept.
     expect(groups[2]!.id).toBe('g5')
     expect(groups[2]!.maxParallel).toBeUndefined()
+  })
+
+  it('normalizes the final-step designation from persisted rows and drops dangling references', () => {
+    const withMember = task('t1', { groupId: 'g1' })
+    const rows = [
+      { id: 'g1', name: 'G', mode: 'parallel', offPeakOnly: false, order: ['t1'], finalStepTaskId: 't1', finalStepRequireSuccess: true },
+      { id: 'g2', name: 'Dangling', mode: 'parallel', offPeakOnly: false, order: ['t1'], finalStepTaskId: 'stranger', finalStepRequireSuccess: true },
+    ]
+    const groups = normalizeGroupRows(rows, [withMember])
+    expect(groups[0]!.finalStepTaskId).toBe('t1')
+    expect(groups[0]!.finalStepRequireSuccess).toBe(true)
+    // A reference that is not a member of the group's scope is dropped.
+    expect(groups[1]!.finalStepTaskId).toBeUndefined()
+    expect(groups[1]!.finalStepRequireSuccess).toBeUndefined()
   })
 })
 
@@ -409,6 +451,125 @@ describe('execution policy helpers', () => {
     }] })
     expect(groupSequenceStarted(group, [fresh, other])).toBe(false)
   })
+
+  it('never auto-starts the group final step through the regular chain', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const ordered = withGroupOrder([group], 'g1', ['t1', 't2', 'final'], ['t1', 't2', 'final'], NOW)[0]!
+    const designated = applyUpdateGroup([ordered], 'g1', { finalStepTaskId: 'final' }, NOW + 1).groups[0]!
+    const t1 = task('t1', { groupId: 'g1', status: 'todo' })
+    const t2 = task('t2', { groupId: 'g1', status: 'todo' })
+    const finalStep = task('final', { groupId: 'g1', status: 'todo' })
+    expect(nextRunnableMember(designated, [t1, t2, finalStep])?.id).toBe('t1')
+    // Only the final step left: the chain advances nothing.
+    const doneT1 = { ...t1, status: 'done' as const }
+    const doneT2 = { ...t2, status: 'done' as const }
+    expect(nextRunnableMember(designated, [doneT1, doneT2, finalStep])).toBeUndefined()
+  })
+})
+
+describe('group final step gate', () => {
+  /** A parallel group with members a+b and 'final' designated as the final step. */
+  function gateGroup(): { group: TaskGroupRecord; tasks: TaskRecord[] } {
+    const group = createGroup({ name: 'FanIn', mode: 'parallel' }, NOW, 'g1')!
+    const ordered = withGroupOrder([group], 'g1', ['a', 'b', 'final'], ['a', 'b', 'final'], NOW)[0]!
+    const designated = applyUpdateGroup([ordered], 'g1', { finalStepTaskId: 'final' }, NOW + 1).groups[0]!
+    const tasks = [
+      task('a', { groupId: 'g1', status: 'todo' }),
+      task('b', { groupId: 'g1', status: 'todo' }),
+      task('final', { groupId: 'g1', status: 'todo' }),
+    ]
+    return { group: designated, tasks }
+  }
+
+  /** A member that settled (done or failed) with one settled execution. */
+  function settled(id: string, status: 'done' | 'failed'): TaskRecord {
+    return {
+      ...task(id, { groupId: 'g1', status }),
+      executions: [{
+        id: `e-${id}`, sessionId: 's', startedAt: NOW, endedAt: NOW + 1,
+        result: status === 'done' ? 'succeeded' as const : 'failed' as const, error: undefined,
+      }],
+    }
+  }
+
+  it('is blocked while any member is unfinished and open once all settle', () => {
+    const { group, tasks } = gateGroup()
+    expect(groupFinalStepBlocked(group, tasks)).toBe(true)
+    expect(groupFinalStepReady(group, tasks)).toBe(false)
+
+    const midway = [settled('a', 'done'), tasks[1]!, tasks[2]!]
+    expect(groupFinalStepBlocked(group, midway)).toBe(true)
+
+    const allDone = [settled('a', 'done'), settled('b', 'done'), tasks[2]!]
+    expect(groupFinalStepBlocked(group, allDone)).toBe(false)
+    expect(groupFinalStepReady(group, allDone)).toBe(true)
+  })
+
+  it('treats a failed member as settled by default, but blocks under finalStepRequireSuccess', () => {
+    const { group, tasks } = gateGroup()
+    const oneFailed = [settled('a', 'done'), settled('b', 'failed'), tasks[2]!]
+    expect(groupFinalStepBlocked(group, oneFailed)).toBe(false)
+    expect(groupFinalStepReady(group, oneFailed)).toBe(true)
+
+    const strict = applyUpdateGroup([group], 'g1', { finalStepRequireSuccess: true }, NOW + 1).groups[0]!
+    expect(groupFinalStepBlocked(strict, oneFailed)).toBe(true)
+    expect(groupFinalStepReady(strict, oneFailed)).toBe(false)
+    // A successful rerun opens the gate again.
+    const rerunSucceeded = [settled('a', 'done'), settled('b', 'done'), tasks[2]!]
+    expect(groupFinalStepReady(strict, rerunSucceeded)).toBe(true)
+  })
+
+  it('a member with an open execution blocks the gate', () => {
+    const { group, tasks } = gateGroup()
+    const runningB = {
+      ...tasks[1]!,
+      status: 'running' as const,
+      executions: [{ id: 'e-b', sessionId: 's', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }],
+    }
+    const state = [settled('a', 'done'), runningB, tasks[2]!]
+    expect(groupFinalStepBlocked(group, state)).toBe(true)
+    expect(groupFinalStepReady(group, state)).toBe(false)
+  })
+
+  it('archived members are out of the sequence and never block', () => {
+    const { group, tasks } = gateGroup()
+    const archivedB = { ...tasks[1]!, archivedAt: NOW }
+    const state = [settled('a', 'done'), archivedB, tasks[2]!]
+    expect(groupFinalStepBlocked(group, state)).toBe(false)
+    expect(groupFinalStepReady(group, state)).toBe(true)
+  })
+
+  it('a settled final step itself is not ready again (one launch per cycle)', () => {
+    const { group, tasks } = gateGroup()
+    const ranFinal = settled('final', 'done')
+    const state = [settled('a', 'done'), settled('b', 'done'), ranFinal]
+    expect(groupFinalStepReady(group, state)).toBe(false)
+    // Reset to a pre-execution column: ready for the next cycle.
+    const resetFinal = { ...ranFinal, status: 'todo' as const }
+    expect(groupFinalStepReady(group, [settled('a', 'done'), settled('b', 'done'), resetFinal])).toBe(true)
+  })
+
+  it('an unapproved, held, or open final step is not ready', () => {
+    const { group, tasks } = gateGroup()
+    const others = [settled('a', 'done'), settled('b', 'done')]
+    expect(groupFinalStepReady(group, [...others, { ...tasks[2]!, approved: false }])).toBe(false)
+    expect(groupFinalStepReady(group, [...others, { ...tasks[2]!, deferAutoStart: true }])).toBe(false)
+    const openFinal = {
+      ...tasks[2]!,
+      status: 'running' as const,
+      executions: [{ id: 'e-f', sessionId: 's', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }],
+    }
+    expect(groupFinalStepReady(group, [...others, openFinal])).toBe(false)
+  })
+
+  it('a group with only the final step is ready as soon as it can run', () => {
+    const group = createGroup({ name: 'Only' }, NOW, 'g1')!
+    const ordered = withGroupOrder([group], 'g1', ['final'], ['final'], NOW)[0]!
+    const designated = applyUpdateGroup([ordered], 'g1', { finalStepTaskId: 'final' }, NOW + 1).groups[0]!
+    const finalStep = task('final', { groupId: 'g1', status: 'todo' })
+    expect(groupFinalStepBlocked(designated, [finalStep])).toBe(false)
+    expect(groupFinalStepReady(designated, [finalStep])).toBe(true)
+  })
 })
 
 describe('group runtime status', () => {
@@ -430,14 +591,14 @@ describe('group runtime status', () => {
   it('reports nothing for a group without open executions (or members)', () => {
     const member = task('t1', { groupId: 'g1', status: 'todo' })
     const ungrouped = task('t2', { status: 'todo' })
-    expect(groupRuntimeStatus(group, [member, ungrouped])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
-    expect(groupRuntimeStatus(group, [])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
+    expect(groupRuntimeStatus(group, [member, ungrouped])).toEqual({ running: 0, pending: 0, pendingReasons: [], finalStepWaiting: false })
+    expect(groupRuntimeStatus(group, [])).toEqual({ running: 0, pending: 0, pendingReasons: [], finalStepWaiting: false })
   })
 
   it('counts launched members as running', () => {
     const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's1' })] })
     const t2 = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's2' })] })
-    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 2, pending: 0, pendingReasons: [] })
+    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 2, pending: 0, pendingReasons: [], finalStepWaiting: false })
   })
 
   it('counts queued members as pending and collects their reasons in first-seen order', () => {
@@ -448,30 +609,48 @@ describe('group runtime status', () => {
       running: 0,
       pending: 3,
       pendingReasons: ['group', 'window', 'endpoint'],
+      finalStepWaiting: false,
     })
   })
 
   it('deduplicates pending reasons', () => {
     const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'window' })] })
     const t2 = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'window' })] })
-    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 0, pending: 2, pendingReasons: ['window'] })
+    expect(groupRuntimeStatus(group, [t1, t2])).toEqual({ running: 0, pending: 2, pendingReasons: ['window'], finalStepWaiting: false })
   })
 
   it('treats an open pre-route execution without a reason as pending', () => {
     const t1 = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution()] })
-    expect(groupRuntimeStatus(group, [t1])).toEqual({ running: 0, pending: 1, pendingReasons: [] })
+    expect(groupRuntimeStatus(group, [t1])).toEqual({ running: 0, pending: 1, pendingReasons: [], finalStepWaiting: false })
   })
 
   it('ignores settled executions and other groups', () => {
     const settled = task('t1', { groupId: 'g1', status: 'done', executions: [openExecution({ sessionId: 's1', endedAt: NOW + 1, result: 'succeeded' })] })
     const elsewhere = task('t2', { status: 'running', executions: [openExecution({ sessionId: 's9' })] })
-    expect(groupRuntimeStatus(group, [settled, elsewhere])).toEqual({ running: 0, pending: 0, pendingReasons: [] })
+    expect(groupRuntimeStatus(group, [settled, elsewhere])).toEqual({ running: 0, pending: 0, pendingReasons: [], finalStepWaiting: false })
   })
 
   it('mixes running and pending members (sequential hand-off)', () => {
     const launched = task('t1', { groupId: 'g1', status: 'running', executions: [openExecution({ sessionId: 's1' })] })
     const queued = task('t2', { groupId: 'g1', status: 'running', executions: [openExecution({ queuedAt: NOW, queuedReason: 'endpoint' })] })
-    expect(groupRuntimeStatus(group, [launched, queued])).toEqual({ running: 1, pending: 1, pendingReasons: ['endpoint'] })
+    expect(groupRuntimeStatus(group, [launched, queued])).toEqual({ running: 1, pending: 1, pendingReasons: ['endpoint'], finalStepWaiting: false })
+  })
+
+  it('flags the final step as waiting while other members are unfinished', () => {
+    const withFinalStep = (() => {
+      const g = createGroup({ name: 'G' }, NOW, 'g2')!
+      const ordered = withGroupOrder([g], 'g2', ['t1', 't2'], ['t1', 't2'], NOW)[0]!
+      return applyUpdateGroup([ordered], 'g2', { finalStepTaskId: 't2' }, NOW + 1).groups[0]!
+    })()
+    const t1 = task('t1', { groupId: 'g2', status: 'todo' })
+    const t2 = task('t2', { groupId: 'g2', status: 'todo' })
+    expect(groupRuntimeStatus(withFinalStep, [t1, t2]).finalStepWaiting).toBe(true)
+    const settledT1 = {
+      ...t1,
+      status: 'done' as const,
+      executions: [{ id: 'e1', sessionId: 's1', startedAt: NOW, endedAt: NOW + 1, result: 'succeeded' as const, error: undefined }],
+    }
+    expect(groupRuntimeStatus(withFinalStep, [settledT1, t2]).finalStepWaiting).toBe(false)
   })
 })
 

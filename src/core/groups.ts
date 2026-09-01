@@ -123,6 +123,22 @@ export interface TaskGroupRecord {
    * within the context window without losing the conversation.
    */
   compactBetween?: boolean
+  /**
+   * Optional group final step: the id of the member task that runs only after
+   * every other member has settled — the fan-in / merge step of a parallel
+   * group. The final step is excluded from the parallel burst and from
+   * auto-advance until the gate opens ({@link groupFinalStepReady}); it then
+   * launches once per cycle (the advance pass starts it, or an explicit
+   * run-group / manual run / group cron once the members are settled).
+   */
+  finalStepTaskId?: string
+  /**
+   * Only meaningful with `finalStepTaskId`: when true, the final step waits
+   * until every other member is in the done column (any failure blocks it);
+   * when false (the default), any settled outcome (done or failed) opens the
+   * gate. Archived members never block either way.
+   */
+  finalStepRequireSuccess?: boolean
   /** Optional group cron; when enabled members inherit it (their cron is ignored). */
   schedule?: GroupScheduleRule
   /** Member task ids in manual order (drives sequential starts and display). */
@@ -299,9 +315,14 @@ export function withMemberRemoved(
   taskId: string,
   now: number,
 ): TaskGroupRecord[] {
-  return groups.map(group => group.id !== groupId || !group.order.includes(taskId)
-    ? group
-    : { ...group, order: group.order.filter(id => id !== taskId), updatedAt: now })
+  return groups.map(group => {
+    if (group.id !== groupId || !group.order.includes(taskId)) return group
+    const next: TaskGroupRecord = { ...group, order: group.order.filter(id => id !== taskId), updatedAt: now }
+    // The group's final step must be a member; removing the designated member
+    // clears the designation (the fan-in step cannot outlive its task).
+    if (next.finalStepTaskId === taskId) delete next.finalStepTaskId
+    return next
+  })
 }
 
 /**
@@ -336,6 +357,10 @@ export interface GroupUpdatePatch {
   maintainSession?: boolean
   /** Sequential only (with maintainSession): run /compact on the shared session between members. */
   compactBetween?: boolean
+  /** Designate one member (a member task id) as the group's final step; `null` clears it. */
+  finalStepTaskId?: string | null
+  /** Only with a final step: require every other member to succeed (done) before it runs. */
+  finalStepRequireSuccess?: boolean
   /** Stop (true) or resume (false) the group: no member launches while stopped. */
   stopped?: boolean
   /** `null` removes the schedule rule; an object sets it (cron validated when enabled). */
@@ -384,6 +409,14 @@ export function applyUpdateGroup(
   if ('allowedHours' in patch && patch.allowedHours !== null && patch.allowedHours !== undefined && allowedHours === undefined) {
     return { groups, applied: false }
   }
+  // The final step must be a current member (the order covers exactly the
+  // members); a null/blank value clears the designation.
+  if ('finalStepTaskId' in patch && patch.finalStepTaskId !== null && patch.finalStepTaskId !== undefined) {
+    const finalStepTaskId = patch.finalStepTaskId.trim()
+    if (finalStepTaskId === '' || finalStepTaskId.length > GROUP_FIELD_BOUND || !group.order.includes(finalStepTaskId)) {
+      return { groups, applied: false }
+    }
+  }
   let schedule = group.schedule
   if ('schedule' in patch) {
     if (patch.schedule === null) {
@@ -421,6 +454,17 @@ export function applyUpdateGroup(
   if ('compactBetween' in patch) {
     if (patch.compactBetween === true) next.compactBetween = true
     else delete next.compactBetween
+  }
+  if ('finalStepTaskId' in patch) {
+    const finalStepTaskId = patch.finalStepTaskId === null || patch.finalStepTaskId === undefined
+      ? undefined
+      : patch.finalStepTaskId.trim()
+    if (finalStepTaskId === undefined || finalStepTaskId === '') delete next.finalStepTaskId
+    else next.finalStepTaskId = finalStepTaskId
+  }
+  if ('finalStepRequireSuccess' in patch) {
+    if (patch.finalStepRequireSuccess === true) next.finalStepRequireSuccess = true
+    else delete next.finalStepRequireSuccess
   }
   if ('maxParallel' in patch) {
     if (maxParallel !== undefined) next.maxParallel = maxParallel
@@ -522,6 +566,14 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
       const member = tasks.find(candidate => candidate.id === taskId)
       return member !== undefined && member.workspaceId === workspaceId
     })
+    // The final-step designation must point at a member of the group's scope;
+    // a dangling or foreign reference is dropped (like the order normalization).
+    const finalStepTaskId = typeof row.finalStepTaskId === 'string'
+      && row.finalStepTaskId.trim() !== ''
+      && row.finalStepTaskId.length <= GROUP_FIELD_BOUND
+      && memberIds.includes(row.finalStepTaskId)
+      ? row.finalStepTaskId
+      : undefined
     groups.push({
       id,
       name,
@@ -544,6 +596,10 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
       ...(row.paused === true ? { paused: true } : {}),
       ...(row.maintainSession === true ? { maintainSession: true } : {}),
       ...(row.compactBetween === true ? { compactBetween: true } : {}),
+      ...(finalStepTaskId === undefined ? {} : { finalStepTaskId }),
+      // `finalStepRequireSuccess` is only meaningful with a valid designation;
+      // a dropped (dangling) reference drops it too.
+      ...(finalStepTaskId === undefined || row.finalStepRequireSuccess !== true ? {} : { finalStepRequireSuccess: true }),
       ...(schedule === undefined ? {} : { schedule }),
       order: normalizeGroupOrder(row.order, memberIds),
       createdAt,
@@ -637,10 +693,13 @@ export function groupSequenceStarted(group: TaskGroupRecord, tasks: readonly Tas
  * and is not held from auto-advance ({@link TaskRecord.deferAutoStart}).
  * Done/failed/archived/running/held members are skipped — auto-advance never
  * re-runs settled work, races a running one, or starts a member that joined
- * the group after its sequence began.
+ * the group after its sequence began. The group's final step is skipped too:
+ * it runs only through its own gate ({@link groupFinalStepReady}), never as
+ * part of the regular chain.
  */
 export function nextRunnableMember(group: TaskGroupRecord, tasks: readonly TaskRecord[]): TaskRecord | undefined {
   for (const id of group.order) {
+    if (id === group.finalStepTaskId) continue
     const task = tasks.find(candidate => candidate.id === id)
     if (task === undefined || task.archivedAt !== undefined) continue
     if (task.status !== 'backlog' && task.status !== 'todo') continue
@@ -691,6 +750,11 @@ export interface GroupRuntimeStatus {
    * 'window' | 'endpoint' | 'workspace'); empty when nothing is pending.
    */
   pendingReasons: readonly ExecutionQueuedReason[]
+  /**
+   * Whether the group's final step is gated on unsettled members (the banner
+   * shows a waiting pill so the merge step is never mistaken for an idle one).
+   */
+  finalStepWaiting: boolean
 }
 
 /** Derive one group's runtime status from its member tasks (see the interface). */
@@ -712,7 +776,12 @@ export function groupRuntimeStatus(group: TaskGroupRecord, tasks: readonly TaskR
       }
     }
   }
-  return { running, pending, pendingReasons }
+  return {
+    running,
+    pending,
+    pendingReasons,
+    finalStepWaiting: groupFinalStepBlocked(group, tasks),
+  }
 }
 
 /**
@@ -731,4 +800,47 @@ export function groupSharesSession(group: Pick<TaskGroupRecord, 'mode' | 'mainta
  */
 export function groupCompactsBetween(group: Pick<TaskGroupRecord, 'mode' | 'maintainSession' | 'compactBetween'>): boolean {
   return groupSharesSession(group) && group.compactBetween === true
+}
+
+/**
+ * Whether a group's final step is blocked from launching: any non-final
+ * member is still unfinished — it has an open execution (running/queued/
+ * paused) or it is not in a settled status. Archived members are out of the
+ * sequence and never block. With `finalStepRequireSuccess`, only the done
+ * column counts as finished (a failed member blocks the gate); otherwise any
+ * settled outcome (done or failed) opens it. A group without a designated
+ * final step is never blocked.
+ */
+export function groupFinalStepBlocked(group: TaskGroupRecord, tasks: readonly TaskRecord[]): boolean {
+  const finalStepTaskId = group.finalStepTaskId
+  if (finalStepTaskId === undefined) return false
+  for (const member of orderedGroupMembers(group, tasks)) {
+    if (member.id === finalStepTaskId) continue
+    if (member.archivedAt !== undefined) continue
+    if (member.executions.some(execution => execution.endedAt === undefined)) return true
+    if (group.finalStepRequireSuccess === true) {
+      if (member.status !== 'done') return true
+    } else if (member.status !== 'done' && member.status !== 'failed') {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Whether the group's final step may launch right now: every other member is
+ * settled ({@link groupFinalStepBlocked} passes) and the final step itself is
+ * on-board, approved, not held from auto-advance, in backlog/todo, and has no
+ * open execution — so it launches once per cycle and never re-runs after
+ * settling until it is reset to a pre-execution column.
+ */
+export function groupFinalStepReady(group: TaskGroupRecord, tasks: readonly TaskRecord[]): boolean {
+  if (group.finalStepTaskId === undefined) return false
+  if (groupFinalStepBlocked(group, tasks)) return false
+  const member = tasks.find(candidate => candidate.id === group.finalStepTaskId)
+  if (member === undefined || member.archivedAt !== undefined) return false
+  if (member.approved === false || member.deferAutoStart === true) return false
+  if (member.status !== 'backlog' && member.status !== 'todo') return false
+  if (member.executions.some(execution => execution.endedAt === undefined)) return false
+  return true
 }

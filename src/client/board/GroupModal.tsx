@@ -46,6 +46,8 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
   const [offPeakOnly, setOffPeakOnly] = useState(group?.offPeakOnly ?? false)
   const [maintainSession, setMaintainSession] = useState(group?.maintainSession === true)
   const [compactBetween, setCompactBetween] = useState(group?.compactBetween === true)
+  const [finalStepTaskId, setFinalStepTaskId] = useState(group?.finalStepTaskId ?? '')
+  const [finalStepRequireSuccess, setFinalStepRequireSuccess] = useState(group?.finalStepRequireSuccess === true)
   const [scheduleEnabled, setScheduleEnabled] = useState(group?.schedule?.enabled ?? false)
   const [scheduleCron, setScheduleCron] = useState(group?.schedule?.cron ?? '')
   const [error, setError] = useState<string | undefined>(undefined)
@@ -62,6 +64,9 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
   // Archived members cannot be ungrouped or reordered through update-task
   // (archived tasks are read-only), so keep them out of the order editor.
   const members = editing ? controller.groupMembers(group.id).filter(member => member.archivedAt === undefined) : []
+  // The final step must be a current member: a designation that outlived its
+  // member (removed mid-edit) collapses to "none" instead of failing the save.
+  const effectiveFinalStep = members.some(member => member.id === finalStepTaskId) ? finalStepTaskId : ''
 
   const scheduleNextRun = scheduleEnabled && scheduleCron.trim() !== '' && isValidCron(scheduleCron)
     ? nextRunAtMs(scheduleCron, Date.now())
@@ -102,6 +107,8 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
         offPeakOnly,
         maintainSession: mode === 'sequential' && maintainSession,
         compactBetween: mode === 'sequential' && maintainSession && compactBetween,
+        finalStepTaskId: effectiveFinalStep === '' ? null : effectiveFinalStep,
+        finalStepRequireSuccess,
         schedule: scheduleEnabled ? { enabled: true, cron: scheduleCron.trim() } : null,
       })
       : (await controller.createGroupConfirmed({
@@ -348,6 +355,39 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
       )}
       {editing && members.length === 0 && (
         <p className={css.detailText}>{t('group.emptyMembers')}</p>
+      )}
+
+      {editing && members.length > 0 && (
+        <section className={css.detailSection}>
+          <h4>{t('group.finalStep')}</h4>
+          <label className={css.field}>
+            <span className={css.fieldLabel}>{t('group.finalStep')}</span>
+            <select
+              className={css.select}
+              value={effectiveFinalStep}
+              onChange={event => { setFinalStepTaskId(event.target.value) }}
+            >
+              <option value="">{t('group.finalStepNone')}</option>
+              {members.map(member => (
+                <option key={member.id} value={member.id}>{member.title}</option>
+              ))}
+            </select>
+            <span className={css.detailText}>{t('group.finalStepHint')}</span>
+          </label>
+          {effectiveFinalStep !== '' && (
+            <>
+              <label className={css.scheduleToggle}>
+                <input
+                  type="checkbox"
+                  checked={finalStepRequireSuccess}
+                  onChange={event => { setFinalStepRequireSuccess(event.target.checked) }}
+                />
+                <span>{t('group.finalStepRequireSuccess')}</span>
+              </label>
+              <p className={css.detailText}>{t('group.finalStepRequireSuccessHint')}</p>
+            </>
+          )}
+        </section>
       )}
 
       {editing && (

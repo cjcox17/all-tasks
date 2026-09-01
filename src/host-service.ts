@@ -424,24 +424,39 @@ export class AllTasksHostService {
         if (groupCapacityFull(group, launched)) break
         const task = this.ledger.taskById(member.taskId)
         if (task === undefined) continue
-        const decision = this.routeFor(task)
-        // Auto-advance never queues: a member that cannot launch now is left
-        // in place and the next pass (tick/settle/config) retries it.
-        if (decision.mode === 'wait') continue
-        const opened = this.ledger.openExecution(member.taskId, now.getTime())
-        if (opened === undefined) continue
-        launched += 1
-        if (decision.mode === 'routed') {
-          this.ledger.attachEndpoint(opened.task.id, opened.execution.id, decision.endpoint.id)
-        }
-        this.launching.add(opened.execution.id)
-        void this.launch(opened.task, opened.execution.id, decision.mode === 'routed' ? decision.selection : undefined)
-          .catch(error => {
-            console.error('[dsh-all-tasks] group advance launch failed', error)
-          })
-          .finally(() => { this.launching.delete(opened.execution.id) })
+        if (this.advanceLaunchMember(task, now)) launched += 1
+      }
+      // The group's final step (the fan-in) opens only once every other member
+      // has settled — the view computes the gate — and it never queues: a
+      // final step that cannot launch now is retried on the next pass, exactly
+      // like the regular chain.
+      if (view.finalStepReady && view.finalStepTaskId !== undefined) {
+        const task = this.ledger.taskById(view.finalStepTaskId)
+        if (task !== undefined) this.advanceLaunchMember(task, now)
       }
     }
+  }
+
+  /**
+   * Route + open + launch one member through the auto-advance pass. Never
+   * queues: a member that cannot launch now is left in place and the next pass
+   * (tick/settle/config) retries it. Returns whether an execution was opened.
+   */
+  private advanceLaunchMember(task: TaskRecord, now: Date): boolean {
+    const decision = this.routeFor(task)
+    if (decision.mode === 'wait') return false
+    const opened = this.ledger.openExecution(task.id, now.getTime())
+    if (opened === undefined) return false
+    if (decision.mode === 'routed') {
+      this.ledger.attachEndpoint(opened.task.id, opened.execution.id, decision.endpoint.id)
+    }
+    this.launching.add(opened.execution.id)
+    void this.launch(opened.task, opened.execution.id, decision.mode === 'routed' ? decision.selection : undefined)
+      .catch(error => {
+        console.error('[dsh-all-tasks] group advance launch failed', error)
+      })
+      .finally(() => { this.launching.delete(opened.execution.id) })
+    return true
   }
 
   /** Launched-and-unsettled executions of one group's members (capacity accounting). */

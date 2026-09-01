@@ -148,6 +148,9 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const workspaceScope = workspaceId === '' ? undefined : workspaceId
   const scopeGroups = groups.filter(group => group.workspaceId === workspaceScope)
   const groupKnown = groupId === '' || scopeGroups.some(group => group.id === groupId)
+  // The task's own group designates it as the group's final step (the merge
+  // step): the detail shows the role so the gate is never a surprise.
+  const isFinalStep = groups.some(group => group.id === groupId && group.finalStepTaskId === task.id)
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
   const modelKnown = model === undefined || options.models.some(item => item.provider === model.provider && item.model === model.model)
@@ -193,6 +196,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             <option key={group.id} value={group.id}>{group.name}</option>
           ))}
         </select>
+        {isFinalStep && <p className={css.detailText}>{t('card.finalStepHint')}</p>}
       </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.workspace')}</span>

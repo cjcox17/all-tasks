@@ -332,6 +332,149 @@ describe('AllTasksHostService group routing', () => {
     h.service.dispose()
   })
 
+  it('a parallel group with a final step never runs it in the burst, then auto-launches it after all members settle', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'FanIn', ['a', 'b'], { mode: 'parallel', maxParallel: 2 })
+    h.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b' } })
+
+    // The burst opens only the parallel member — the final step stays put.
+    h.service.apply('run-group', { kind: 'run-group', groupId: 'g1' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+    expect(h.ledger.state().tasks.find(task => task.id === 'a')!.status).toBe('running')
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // A settles: the advance pass launches the final step (its gate just opened).
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+    const b = h.ledger.state().tasks.find(task => task.id === 'b')!
+    expect(b.status).toBe('running')
+    expect(b.executions[0]!.sessionId).toBe('session-x')
+    h.service.dispose()
+  })
+
+  it('a never-run member blocks the final step until it settles', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'FanIn', ['a', 'c', 'b'], { mode: 'parallel', maxParallel: 2 })
+    h.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b' } })
+
+    // a and c run in parallel; the final step b is never part of the burst.
+    h.service.apply('run-group', { kind: 'run-group', groupId: 'g1' })
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // a settles but c is still running: the final step stays gated.
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // c settles: the gate opens and the final step launches.
+    const c = h.ledger.state().tasks.find(task => task.id === 'c')!
+    h.ledger.settle('c', c.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(3)
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    h.service.dispose()
+  })
+
+  it('refuses a manual run of a gated final step and launches it once the members settle', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'FanIn', ['a', 'b'], { mode: 'parallel', maxParallel: 2 })
+    h.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b' } })
+
+    expect(() => h.ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })).toThrow('final step waits for all group members to settle')
+
+    // run-group while the gate is closed opens only the parallel member —
+    // never the gated final step.
+    h.service.apply('run-group-2', { kind: 'run-group', groupId: 'g1' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+    expect(h.ledger.state().tasks.find(task => task.id === 'a')!.status).toBe('running')
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // Once the parallel member settles, the advance pass starts the final step.
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    const b = h.ledger.state().tasks.find(task => task.id === 'b')!
+    expect(b.status).toBe('running')
+    expect(h.ledger.state().tasks.find(task => task.id === 'a')!.executions).toHaveLength(1)
+    h.service.dispose()
+  })
+
+  it('a failed member opens the gate by default but blocks it under finalStepRequireSuccess', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'Lenient', ['a', 'b'], { mode: 'parallel', maxParallel: 2 })
+    h.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b' } })
+
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'failed')
+    h.advanceGroups()
+    await flush()
+    // Default: any settled outcome opens the gate.
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    h.service.dispose()
+  })
+
+  it('a failed member blocks the final step under finalStepRequireSuccess until it succeeds', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'Strict', ['a', 'b'], { mode: 'parallel', maxParallel: 2 })
+    h.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b', finalStepRequireSuccess: true } })
+
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'failed')
+    h.advanceGroups()
+    await flush()
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // A successful rerun of a opens the gate; the final step launches.
+    h.service.apply('rerun-a', { kind: 'rerun', taskId: 'a' })
+    await flush()
+    const rerun = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', rerun.executions.at(-1)!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    h.service.dispose()
+  })
+
+  it('keeps the final-step designation across a Host restart', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const config = routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })])
+    {
+      const first = harness(dir, config, () => now)
+      seedGroup(first, 'g1', 'Persist', ['a', 'b'], { mode: 'parallel', maxParallel: 2 })
+      first.ledger.applyRequest('designate', { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: 'b', finalStepRequireSuccess: true } })
+      first.service.dispose()
+    }
+    const second = harness(dir, config, () => now)
+    expect(second.ledger.state().groups[0]).toMatchObject({ id: 'g1', finalStepTaskId: 'b', finalStepRequireSuccess: true })
+    second.service.dispose()
+  })
+
   it('skips a member own cron while its group schedule is armed, and resumes it after', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()

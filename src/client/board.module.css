@@ -773,6 +773,10 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-state-business-primary);
 }
 
+.groupStatus[data-kind='finalstep'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
 /* The tiny spinner inside the Running pill (reuses the card spinner's spin). */
 .groupStatusSpinner {
   width: 8px;
@@ -950,6 +954,31 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-state-business-primary);
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
   border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* Final-step pill on the card meta row: this member is the group's designated
+   merge step — it runs only after every other member has settled. The waiting
+   variant pops while other members are still unfinished. */
+.cardFinalStep {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.cardFinalStepWaiting {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
   border-radius: 999px;
   padding: 1px 8px;
 }

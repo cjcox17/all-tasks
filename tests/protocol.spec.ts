@@ -254,6 +254,30 @@ describe('group action gate', () => {
     expect(parsed.action.patch.compactBetween).toBe(true)
   })
 
+  it('accepts and sanitizes the final-step fields in a group update patch', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'update-group',
+      action: { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: ' member-b ', finalStepRequireSuccess: true } },
+    })
+    expect(parsed?.action.kind).toBe('update-group')
+    if (parsed?.action.kind !== 'update-group') throw new Error('expected update-group')
+    expect(parsed.action.patch.finalStepTaskId).toBe('member-b')
+    expect(parsed.action.patch.finalStepRequireSuccess).toBe(true)
+
+    // A blank designation collapses to no final step; null clears it.
+    const blank = parseActionEnvelope({
+      requestId: 'update-group-blank',
+      action: { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: '   ' } },
+    })
+    expect(blank?.action.kind).toBe('update-group')
+    if (blank?.action.kind !== 'update-group') throw new Error('expected update-group')
+    expect(blank.action.patch.finalStepTaskId).toBeUndefined()
+    expect(parseActionEnvelope({
+      requestId: 'update-group-null',
+      action: { kind: 'update-group', groupId: 'g1', patch: { finalStepTaskId: null } },
+    })).toMatchObject({ action: { patch: { finalStepTaskId: null } } })
+  })
+
   it('rejects malformed group update patches', () => {
     for (const patch of [
       { name: '' },
@@ -263,6 +287,8 @@ describe('group action gate', () => {
       { allowedHours: { start: '24:00', end: '00:00' } },
       { maintainSession: 'yes' },
       { compactBetween: 'no' },
+      { finalStepTaskId: 5 },
+      { finalStepRequireSuccess: 'yes' },
       { schedule: { enabled: 'yes', cron: '0 9 * * *' } },
       { unknown: 1 },
     ]) {
