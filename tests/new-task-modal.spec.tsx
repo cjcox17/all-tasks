@@ -289,3 +289,64 @@ describe('NewTaskModal workspace defaults', () => {
     }
   })
 })
+
+describe('NewTaskModal endpoint-constrained model picker', () => {
+  const SERVING_ENDPOINTS: readonly ExecutionEndpointOption[] = [
+    { id: 'deepseek-official', name: 'DeepSeek Official', provider: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+    { id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'], defaultModel: 'qwen/qwen3.8-27b' },
+  ]
+
+  it('offers the full catalog when no endpoints are pinned', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'), SERVING_ENDPOINTS)
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    expect(selectOf(container, chatKey)).toBeDefined()
+    expect(selectOf(container, reasonerKey)).toBeDefined()
+  })
+
+  it('offers only models the pinned endpoints serve once an endpoint is pinned', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'), SERVING_ENDPOINTS)
+    const add = container.querySelector(`select[aria-label="${t('endpoint.add')}"]`) as HTMLSelectElement
+    await act(async () => { setSelect(add, 'deepseek-official') })
+
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    expect(selectOf(container, chatKey)).toBeDefined()
+    // deepseek-reasoner is not on the endpoint's model list, so it must vanish.
+    expect([...container.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
+  })
+
+  it('keeps a pinned model outside the endpoint list as a stale row with a hint', async () => {
+    const { container } = await renderModal(
+      async input => createTask(input, Date.now(), 't-new'),
+      SERVING_ENDPOINTS,
+      [],
+      [],
+      [],
+      { defaults: { model: { provider: 'deepseek', model: 'deepseek-reasoner' }, endpoints: ['deepseek-official'] } },
+    )
+    const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    const select = selectOf(container, reasonerKey)
+    expect(select).toBeDefined()
+    const staleOption = [...select.querySelectorAll('option')].find(option => option.value === reasonerKey)
+    expect(staleOption?.textContent).toContain(t('exec.model.notServed'))
+    expect(container.textContent).toContain(t('exec.model.endpointHint'))
+  })
+
+  it('submits a model served by the pinned endpoints', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed, SERVING_ENDPOINTS)
+    const add = container.querySelector(`select[aria-label="${t('endpoint.add')}"]`) as HTMLSelectElement
+    await act(async () => { setSelect(add, 'deepseek-official') })
+
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    await act(async () => { setSelect(selectOf(container, chatKey), chatKey) })
+
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed.mock.calls[0][0]).toMatchObject({
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      endpoints: ['deepseek-official'],
+    })
+  })
+})

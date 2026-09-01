@@ -6,8 +6,8 @@
  * WorkspaceDefaultsModal editor).
  */
 import { useEffect, useState } from 'react'
-import type { BoardController, ExecutionModelOption } from '../../core/controller.ts'
-import { groupExecutionModelOptions } from '../../core/controller.ts'
+import type { BoardController } from '../../core/controller.ts'
+import { filterModelsByEndpoints } from '../../core/endpoints.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsRecord } from '../../core/workspace-defaults.ts'
@@ -98,6 +98,25 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
     ? nextRunAtMs(scheduleCron, Date.now())
     : undefined
 
+  // The model dropdown is constrained by the pinned endpoints: only models at
+  // least one pinned endpoint serves are offered (a blank pin = deployment
+  // default, which the router resolves to the endpoint's default model). A
+  // current value that survives the filter keeps its normal option; one that
+  // does not stays selectable as a stale row — "not served by pinned
+  // endpoints" when the catalog still knows it, "removed" when it is gone —
+  // so the user sees exactly what the task will ask for instead of a silent
+  // substitution.
+  const servableModels = filterModelsByEndpoints(options.models, options.endpoints, endpoints)
+  const modelInCatalog = modelKey === '' || options.models.some(model =>
+    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
+  const modelServable = modelKey === '' || servableModels.some(model =>
+    modelSelectionKey({ provider: model.provider, model: model.model }) === modelKey)
+  const modelStale = modelKey !== '' && !modelServable
+  const modelStaleLabel = modelStale
+    ? (modelInCatalog ? t('exec.model.notServed') : t('exec.model.removed'))
+    : undefined
+  const modelStaleHint = modelStale && modelInCatalog ? t('exec.model.endpointHint') : undefined
+
   return (
     <ModalShell
       ariaLabel={t('board.new')}
@@ -169,7 +188,13 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
 
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('new.model')}</span>
-          <ModelPicker models={options.models} value={modelKey} onChange={setModelKey} />
+          <ModelPicker
+            models={servableModels}
+            value={modelKey}
+            onChange={setModelKey}
+            staleLabel={modelStaleLabel}
+            staleHint={modelStaleHint}
+          />
         </label>
 
         {modelKey !== '' && (

@@ -313,3 +313,48 @@ export function pickEndpoint(
   if (known === 0) return { mode: 'unrouted' }
   return { mode: 'wait', endpointId: preferred, reasons }
 }
+
+/** The minimal endpoint facts the model-servability filter needs. */
+export interface EndpointServeFacts {
+  id: string
+  provider?: string
+  models?: readonly string[]
+  defaultModel?: string
+}
+
+/**
+ * Whether one endpoint can serve one catalog model. Mirrors the router's own
+ * serve rule in {@link resolveEndpointSelection}: the provider route must
+ * match, and the endpoint either serves every model of its provider (empty
+ * list) or the model id is on its narrowed list (the endpoint's own default
+ * model counts as served too, because the router falls back to it).
+ */
+export function endpointServesModel(endpoint: EndpointServeFacts, provider: string, model: string): boolean {
+  if (endpoint.provider !== provider) return false
+  const models = endpoint.models ?? []
+  return models.length === 0 || models.includes(model) || endpoint.defaultModel === model
+}
+
+/**
+ * Filter a model catalog to the models at least one pinned endpoint can
+ * serve, in catalog order. An empty pinned list (or a list whose ids all
+ * resolve to nothing — including rows without a provider, which the router
+ * drops during normalization) returns the catalog unchanged: the router falls
+ * back to the direct model pin in that case, so no endpoint constraint
+ * applies. This is the picker-side mirror of the router's serve rule: it
+ * keeps the model dropdown from offering a model no pinned endpoint can
+ * actually serve.
+ */
+export function filterModelsByEndpoints<T extends { provider: string; model: string }>(
+  models: readonly T[],
+  endpoints: readonly EndpointServeFacts[],
+  pinnedIds: readonly string[],
+): readonly T[] {
+  if (pinnedIds.length === 0) return models
+  const byId = new Map(endpoints.map(endpoint => [endpoint.id, endpoint]))
+  const pinned = pinnedIds
+    .map(id => byId.get(id))
+    .filter((endpoint): endpoint is EndpointServeFacts => endpoint !== undefined && endpoint.provider !== undefined)
+  if (pinned.length === 0) return models
+  return models.filter(model => pinned.some(endpoint => endpointServesModel(endpoint, model.provider, model.model)))
+}
