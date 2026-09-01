@@ -1079,11 +1079,12 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 /* The Monday.com-style board table: one surface card, a column-header row, and
-   workspace rows whose counts line up in aligned columns. The width is capped
-   so the table reads as columns rather than a full-bleed wall; it scrolls
-   horizontally only if a very narrow view forces it to. */
+   workspace rows whose counts line up in aligned columns. The first column
+   holds the leading expand/collapse chevron; the width is capped so the table
+   reads as columns rather than a full-bleed wall; it scrolls horizontally only
+   if a very narrow view forces it to. */
 .directory {
-  --dir-columns: minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
+  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1124,6 +1125,11 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .headCount,
 .headTotal {
   text-align: right;
+}
+
+/* Empty leading cell in the header that mirrors the row chevron column. */
+.headChevron {
+  width: 26px;
 }
 
 /* One workspace (or the All-tasks row): a table row plus an expandable body. */
@@ -1257,7 +1263,8 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .directoryControls .iconButton[data-ctl='pause'] { color: var(--dsw-alias-state-warn-primary); }
 .directoryControls .iconButton[data-ctl='stop'] { color: var(--dsw-alias-state-error-primary); }
 
-/* Right-hand chevron + settings controls (fixed track, right-aligned). */
+/* Right-hand workspace pause/continue + settings controls (fixed track,
+   right-aligned). */
 .directoryActions {
   display: flex;
   align-items: center;
@@ -1265,7 +1272,8 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   gap: 2px;
 }
 
-/* Chevron toggles the inline directory; rotates to point down when open. */
+/* The leading chevron toggles the inline directory; rotates to point down when
+   open. */
 .listChevron {
   align-self: center;
   font-size: 12px;
@@ -1804,7 +1812,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
+    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
     padding: 8px 10px 12px;
   }
 

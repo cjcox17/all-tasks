@@ -122,7 +122,7 @@ async function mountKanban(controller: BoardController): Promise<HTMLElement> {
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === '') as HTMLElement | undefined
   expect(wrap, 'All-tasks card').toBeDefined()
-  await act(async () => { wrap!.querySelector('button')!.click() })
+  await act(async () => { wrap!.querySelector('button[data-dsh-part="workspace-name"]')!.click() })
   return container
 }
 

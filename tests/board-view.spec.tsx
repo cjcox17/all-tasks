@@ -97,7 +97,7 @@ async function openAllTasks(container: HTMLElement): Promise<void> {
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === '') as HTMLElement | undefined
   expect(wrap, 'All-tasks card').toBeDefined()
-  const card = wrap!.querySelector('button') as HTMLButtonElement
+  const card = wrap!.querySelector('button[data-dsh-part="workspace-name"]') as HTMLButtonElement
   await act(async () => { card.click() })
 }
 
@@ -106,7 +106,7 @@ async function openWorkspace(container: HTMLElement, workspaceId: string): Promi
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === workspaceId) as HTMLElement | undefined
   expect(wrap, `workspace card ${workspaceId}`).toBeDefined()
-  const card = wrap!.querySelector('button') as HTMLButtonElement
+  const card = wrap!.querySelector('button[data-dsh-part="workspace-name"]') as HTMLButtonElement
   await act(async () => { card.click() })
 }
 
@@ -1188,6 +1188,19 @@ describe('AllTasks workspace directory (expandable landing)', () => {
     // Still on the landing directory, not the kanban columns.
     expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
     expect(container.querySelector('section[data-status]')).toBeNull()
+  })
+
+  it('leads every workspace row with the expand chevron, before the avatar', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', workspaceId: 'ws-a' })],
+      groups: [],
+      executionOptions: ALPHA_ONLY,
+    })
+    const row = rowOf(container, 'ws-a')
+    // The hide/show chevron is the first element of the row, so it sits to the
+    // left of the workspace avatar and title.
+    const innerRow = row.firstElementChild as HTMLElement
+    expect(innerRow.firstElementChild).toBe(chevronOf(row))
   })
 })
 

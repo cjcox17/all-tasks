@@ -2,8 +2,9 @@
  * Workspace overview (the board's landing view): a Monday.com-style board
  * table. A column-header row labels the aligned count columns (To do / Pending
  * / Working / Scheduled / Finished / Failed / Total); each workspace is one
- * table row (color-coded avatar + name, right-aligned tabular counts, and the
- * run / pause / stop + expand + settings controls) that expands inline into
+ * table row (a leading expand/collapse chevron, color-coded avatar + name,
+ * right-aligned tabular counts, and the run / pause / stop + pause-workspace +
+ * settings controls) that expands inline into
  * its groups — colored section headers with a name pill, mode badge, member
  * count, and a per-group collapse toggle — and its task rows (status dot,
  * title, aligned status label and badges). Workspace rows are expanded by
@@ -193,7 +194,17 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
         <div className={css.directoryRow}>
           <button
             type="button"
+            className={`${css.iconButton} ${css.listChevron}`}
+            aria-expanded={open}
+            aria-label={open ? t('list.collapse') : t('list.expand')}
+            onClick={() => { toggle(entry.workspaceId) }}
+          >
+            ▸
+          </button>
+          <button
+            type="button"
             className={css.directoryName}
+            data-dsh-part="workspace-name"
             title={isAll ? t('grid.allTasksHint') : undefined}
             onClick={isAll ? onOpenAll : () => { onOpen(entry.workspaceId) }}
           >
@@ -277,15 +288,6 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
                 ⏸
               </button>
             )}
-            <button
-              type="button"
-              className={`${css.iconButton} ${css.listChevron}`}
-              aria-expanded={open}
-              aria-label={open ? t('list.collapse') : t('list.expand')}
-              onClick={() => { toggle(entry.workspaceId) }}
-            >
-              ▸
-            </button>
             {!isAll && (
               <button
                 type="button"
@@ -316,6 +318,7 @@ export function WorkspaceList({ tasks, workspaces, groups, onOpen, onOpenAll, on
     <div className={css.list} data-dsh-part="workspace-list">
       <div className={css.directory}>
         <div className={css.directoryHead}>
+          <span className={css.headChevron} />
           <span className={css.headName}>{t('list.workspace')}</span>
           {COUNT_COLUMNS.map(column => (
             <span key={column.col} className={css.headCount} data-col={column.col}>{t(column.key)}</span>
