@@ -51,13 +51,16 @@ export function formatTime(ms: number, timeZone?: string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
+function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpinner }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
   onClick: () => void
   /** Board-level drag hook: payload + the source rect (for the custom ghost). */
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  /** The parent overlays its own action circle on this card, so the card's
+   *  meta-row spinner is suppressed (the circle's ring shows the same state). */
+  hideSpinner?: boolean
 }) {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
@@ -131,7 +134,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
             ⏸ {t('card.paused')}
           </span>
         )}
-        {!archived && !paused && (task.status === 'running' || pending) && <span className={css.cardSpinner} aria-hidden="true" />}
+        {!archived && !paused && !hideSpinner && (task.status === 'running' || pending) && <span className={css.cardSpinner} aria-hidden="true" />}
       </span>
       {!archived && pending && <span className={css.cardRunningLabel}>{t('board.pending')}…</span>}
       {!archived && latest !== undefined && executionLabel(latest) === 'running' && (

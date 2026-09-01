@@ -84,7 +84,7 @@ function canStartTask(task: TaskRecord): boolean {
   return !task.executions.some(execution => execution.endedAt === undefined)
 }
 
-/** The per-card start button (sits beside the card, like stop/approve). */
+/** The per-card start button for standalone (ungrouped) cards: sits beside the card, like approve. */
 function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) => void }) {
   return (
     <button
@@ -105,15 +105,16 @@ function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) 
  * re-renders only when its own task changes — not when a sibling card status,
  * the filter, or the selection moves.
  */
-const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart }: {
+const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
   onOpen: (id: string) => void
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string) => void
+  hideSpinner?: boolean
 }) {
   const onClick = useCallback(() => { onOpen(task.id) }, [task.id, onOpen])
-  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} />
+  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} hideSpinner={hideSpinner} />
 })
 
 /** Human hint for a pending group: the reason(s) its held members wait. */
@@ -274,11 +275,15 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
 
 /**
  * One group's section inside a column: the banner plus its member cards.
- * Every running/queued member gets a per-card pause + stop button (so a group
- * can be paused or stopped member-by-member from the board, without opening a
- * session); a paused member gets continue + stop instead.
+ * Every member card carries one contextual action circle on its right edge,
+ * inside the card: stop for a running/queued member (so a group can be stopped
+ * member-by-member from the board, without opening a session), approve for an
+ * unapproved member, or run for a runnable one. The circle's ring doubles as
+ * the running/pending indicator while the task is open or an action is in
+ * flight. Single-member pause/continue stays available through the group
+ * banner (Pause group) and the task detail's open-execution row.
  */
-function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onPauseMember, onContinueMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Open-execution status of the whole group (running/queued members). */
@@ -290,8 +295,6 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   onOpen: (id: string) => void
   onManage: () => void
   onRunMember: (id: string) => void
-  onPauseMember: (id: string) => void
-  onContinueMember: (id: string) => void
   onStopMember: (id: string) => void
   onApproveMember: (id: string) => void
   onStartGroup: () => void
@@ -321,58 +324,42 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
       />
       {members.length === 0 && <p className={css.groupEmpty}>{t('group.emptyMembers')}</p>}
       {members.map(task => {
-        const open = task.executions.find(execution => execution.endedAt === undefined)
-        const memberPaused = task.status === 'running' && open?.pausedAt !== undefined
+        // One contextual action per member, shown as a circle on the card's
+        // right edge (inside the card — the card itself is a button, so the
+        // action stays a sibling in the DOM and is overlaid by the wrapper).
+        const action = task.status === 'running'
+          ? { kind: 'stop' as const, label: t('group.stopMember'), glyph: '⏹', onAct: () => { onStopMember(task.id) } }
+          : task.approved === false
+            ? { kind: 'approve' as const, label: t('card.approve'), glyph: '✓', onAct: () => { onApproveMember(task.id) } }
+            : canStartTask(task)
+              ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
+              : undefined
+        // While the task is running or an action is pending, the circle's ring
+        // spins — the pending indicator merged around the action icon.
+        const active = action !== undefined && (task.status === 'running' || pendingIds.includes(task.id))
         return (
-          <div key={task.id} className={css.groupMember}>
-            <MemoTaskCard task={task} pending={pendingIds.includes(task.id)} timeZone={timeZone} onOpen={onOpen} onDragStart={onDragStart} />
-            {task.status === 'running' && (
-              <>
-                {memberPaused ? (
-                  <button
-                    type="button"
-                    className={css.continueButton}
-                    aria-label={t('group.continueMember')}
-                    title={t('group.continueMember')}
-                    onClick={() => { onContinueMember(task.id) }}
-                  >
-                    ▶
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className={css.pauseButton}
-                    aria-label={t('group.pauseMember')}
-                    title={t('group.pauseMember')}
-                    onClick={() => { onPauseMember(task.id) }}
-                  >
-                    ⏸
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className={css.stopButton}
-                  aria-label={t('group.stopMember')}
-                  title={t('group.stopMember')}
-                  onClick={() => { onStopMember(task.id) }}
-                >
-                  ⏹
-                </button>
-              </>
-            )}
-            {task.approved === false ? (
+          <div key={task.id} className={css.groupMember} data-action={action?.kind}>
+            <MemoTaskCard
+              task={task}
+              pending={pendingIds.includes(task.id)}
+              timeZone={timeZone}
+              onOpen={onOpen}
+              onDragStart={onDragStart}
+              hideSpinner={action !== undefined}
+            />
+            {action !== undefined && (
               <button
                 type="button"
-                className={css.approveButton}
-                aria-label={t('card.approve')}
-                title={t('card.approve')}
-                onClick={() => { onApproveMember(task.id) }}
+                className={css.cardAction}
+                data-action={action.kind}
+                data-active={active || undefined}
+                aria-label={action.label}
+                title={action.label}
+                onClick={action.onAct}
               >
-                ✓
+                {action.glyph}
               </button>
-            ) : canStartTask(task) ? (
-              <RunTaskButton task={task} onRun={onRunMember} />
-            ) : null}
+            )}
           </div>
         )
       })}
@@ -731,8 +718,6 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onOpen={openTask}
                 onManage={() => { setGroupEditor({ group }) }}
                 onRunMember={id => { void controller.runTask(id) }}
-                onPauseMember={id => { void controller.pauseTask(id) }}
-                onContinueMember={id => { void controller.continueTask(id) }}
                 onStopMember={id => { void controller.stopTask(id) }}
                 onApproveMember={id => { controller.setApproved(id, true) }}
                 onStartGroup={() => { void controller.runGroup(group.id) }}

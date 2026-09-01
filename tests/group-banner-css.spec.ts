@@ -31,6 +31,8 @@ describe('group banner status css', () => {
     // Inside the reduced-motion media query the spinner animation is stripped.
     const media = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
     expect(media).toContain('.groupStatusSpinner')
-    expect(media).toMatch(/\.groupStatusSpinner\s*\{\s*animation: none;\s*\}/)
+    // The spinner is disabled inside a shared selector list with the card
+    // spinner and the action-circle ring (all three animations are stripped).
+    expect(media).toMatch(/\.groupStatusSpinner[\s\S]*?animation: none;\s*\}/)
   })
 })
