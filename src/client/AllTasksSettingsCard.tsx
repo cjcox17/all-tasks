@@ -23,6 +23,8 @@ export interface AllTasksSettings {
   preventIdleSleep?: boolean
   /** Show message/tool times and per-turn token counts in the session view. */
   sessionTimestamps?: boolean
+  /** Auto-generate a task title from the run prompt in the new-task dialog. */
+  autoTitle?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
   /** Cost estimate: USD per 1M input tokens (0 = not configured). */
@@ -55,6 +57,8 @@ export interface AllTasksSettingsCardState extends CardShell {
   costPerMillionOutputTokens: CardFieldState
   /** Session-view timestamp/token flag. */
   sessionTimestamps: CardFieldState
+  /** Auto-generated-title flag. */
+  autoTitle: CardFieldState
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -79,6 +83,7 @@ export class AllTasksSettingsCardController {
       numberField('costPerMillionInputTokens', { min: 0 }),
       numberField('costPerMillionOutputTokens', { min: 0 }),
       booleanField('sessionTimestamps'),
+      booleanField('autoTitle'),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -92,6 +97,7 @@ export class AllTasksSettingsCardController {
       costPerMillionInputTokens: this.form.field('costPerMillionInputTokens'),
       costPerMillionOutputTokens: this.form.field('costPerMillionOutputTokens'),
       sessionTimestamps: this.form.field('sessionTimestamps'),
+      autoTitle: this.form.field('autoTitle'),
     }
   }
 
@@ -229,6 +235,18 @@ export function AllTasksSettingsCard(props: AllTasksSettingsCardProps) {
         {...state.sessionTimestamps}
         onEdit={(text) => { props.edit('sessionTimestamps', text) }}
         onReset={() => { props.resetField('sessionTimestamps') }}
+      />
+      <BooleanField
+        id="settings-all-tasks-auto-title"
+        label={t('settings.autoTitle')}
+        hint={t('settings.autoTitleHint')}
+        inheritLabel={t('settings.inherit')}
+        onLabel={t('settings.on')}
+        offLabel={t('settings.off')}
+        {...fieldProps}
+        {...state.autoTitle}
+        onEdit={(text) => { props.edit('autoTitle', text) }}
+        onReset={() => { props.resetField('autoTitle') }}
       />
       <EndpointsEditor t={t} disabled={disabled} />
       <p>

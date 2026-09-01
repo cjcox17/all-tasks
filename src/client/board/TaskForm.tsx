@@ -63,6 +63,7 @@ export function TaskContentFields({
   onTitleChange,
   onDescriptionChange,
   onPromptChange,
+  titleHint,
 }: {
   title: string
   description: string
@@ -71,6 +72,8 @@ export function TaskContentFields({
   onTitleChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onPromptChange: (value: string) => void
+  /** Optional hint rendered under the title field (the new-task dialog's auto-generation status). */
+  titleHint?: ReactNode
 }) {
   return (
     <>
@@ -84,6 +87,7 @@ export function TaskContentFields({
           onChange={event => onTitleChange(event.target.value)}
         />
       </label>
+      {titleHint}
 
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.description')}</span>

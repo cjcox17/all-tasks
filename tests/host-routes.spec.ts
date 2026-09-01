@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeAllTasksRoutes } from '../src/host-routes.ts'
 import type { AllTasksHostService } from '../src/host-service.ts'
 import type { AllTasksSnapshot } from '../src/protocol.ts'
+import type { TitleSuggestionRequest } from '../src/title-suggest.ts'
 
 const snapshot: AllTasksSnapshot = {
   schemaVersion: 2,
@@ -145,6 +146,58 @@ describe('all-tasks HTTP routes', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer')
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('serves title suggestions through the same fence and validates the request', async () => {
+    const suggestTitle = vi.fn(async (_request: TitleSuggestionRequest): Promise<string | undefined> => 'Generated title')
+    const service = {
+      snapshot: () => snapshot,
+      apply,
+      subscribe: () => () => undefined,
+      suggestTitle,
+    } as unknown as AllTasksHostService
+    const routes = makeAllTasksRoutes(service)
+    const titleServer = createServer((req, res) => {
+      const route = routes.find(candidate => candidate.path === new URL(req.url ?? '/', 'http://local').pathname)
+      if (route === undefined) { res.writeHead(404); res.end(); return }
+      void route.handler(req, res)
+    })
+    await new Promise<void>(resolve => { titleServer.listen(0, '127.0.0.1', resolve) })
+    const address = titleServer.address()
+    if (address === null || typeof address === 'string') throw new Error('title test server did not bind')
+    const url = `http://127.0.0.1:${address.port}/api/all-tasks/title-suggest`
+    const jsonHeaders = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }
+    try {
+      const ok = await fetch(url, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ prompt: 'Fix the login bug' }) })
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toEqual({ title: 'Generated title' })
+      expect(suggestTitle).toHaveBeenCalledOnce()
+      expect(suggestTitle.mock.calls[0][0]).toEqual({ prompt: 'Fix the login bug' })
+
+      // The request is validated before the service is consulted.
+      expect((await fetch(url, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ prompt: 'x', surprise: 1 }) })).status).toBe(400)
+      expect((await fetch(url, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ prompt: '', description: '' }) })).status).toBe(400)
+      expect((await fetch(url, {
+        method: 'POST', headers: jsonHeaders, body: JSON.stringify({ prompt: 'x'.repeat(70 * 1024) }),
+      })).status).toBe(413)
+
+      // Same-origin / method / content-type fence as the other routes.
+      expect((await fetch(url, { headers: jsonHeaders })).status).toBe(405)
+      expect((await fetch(url, {
+        method: 'POST', headers: { 'content-type': 'text/plain', 'sec-fetch-site': 'same-origin' }, body: 'x',
+      })).status).toBe(415)
+      expect((await fetch(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'x' }),
+      })).status).toBe(403)
+
+      // A generation that yields no title answers 422; the browser falls back.
+      suggestTitle.mockResolvedValueOnce(undefined)
+      const none = await fetch(url, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ prompt: 'x' }) })
+      expect(none.status).toBe(422)
+      expect(await none.json()).toEqual({ ok: false, error: 'title-unavailable' })
+    } finally {
+      await new Promise<void>((resolve, reject) => { titleServer.close(error => { if (error) reject(error); else resolve() }) })
+    }
   })
 
   it('pushes an event frame with revision/scheduler/power and no task list', async () => {

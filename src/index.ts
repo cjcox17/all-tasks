@@ -60,6 +60,12 @@ export interface Config {
   enabled?: boolean
   /** Prevent idle system sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
+  /**
+   * Auto-generate a task title from the run prompt in the new-task dialog:
+   * a backend session suggests one, and the prompt's first line is the
+   * fallback so creation never blocks on the LLM.
+   */
+  autoTitle?: boolean
   /** Canonical reverse-proxy Host authorities admitted with a server-side token. */
   trustedProxyHosts?: string[]
   /** Environment variable whose value the authenticated proxy injects upstream. */
@@ -139,6 +145,7 @@ export const Config: z<Config> = z.object({
   announceToAgent: z.boolean().default(false),
   enabled: z.boolean().default(true),
   preventIdleSleep: z.boolean().default(false),
+  autoTitle: z.boolean().default(true),
   trustedProxyHosts: z.array(z.string()).default([]),
   proxyTokenEnv: z.string().min(1).default(DEFAULT_PROXY_TOKEN_ENV),
   endpointMaxWaitHours: z.number().min(0).default(24),

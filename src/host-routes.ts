@@ -7,6 +7,7 @@ import type { AllTasksHostService } from './host-service.ts'
 import { writeJson } from './http.ts'
 import { isLoopbackAddress, isLoopbackRequest } from './loopback.ts'
 import { parseActionEnvelope, ALL_TASKS_API_PREFIX } from './protocol.ts'
+import { parseTitleSuggestionRequest } from './title-suggest.ts'
 
 const ACTION_LIMIT = 64 * 1024
 const IMPORT_LIMIT = 2 * 1024 * 1024
@@ -224,7 +225,36 @@ export function makeAllTasksRoutes(service: AllTasksHostService, access: AllTask
       }
     },
   }
-  return [state, action, events, endpoints]
+  const titleSuggest: WebRoute = {
+    kind: 'exact',
+    path: `${ALL_TASKS_API_PREFIX}/title-suggest`,
+    handler: async (req, res): Promise<void> => {
+      if (req.method !== 'POST') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
+      if (!guard(req, res)) return
+      if (!(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+        return writeJson(res, 415, { ok: false, error: 'json-required' }, { 'cache-control': 'no-store' })
+      }
+      try {
+        const body = await readBody(req)
+        if (Buffer.byteLength(body.raw) > ACTION_LIMIT) {
+          return writeJson(res, 413, { ok: false, error: 'body-too-large' }, { 'cache-control': 'no-store' })
+        }
+        const request = parseTitleSuggestionRequest(body.value)
+        if (request === undefined) {
+          return writeJson(res, 400, { ok: false, error: 'invalid-title-request' }, { 'cache-control': 'no-store' })
+        }
+        const title = await service.suggestTitle(request)
+        if (title === undefined) {
+          return writeJson(res, 422, { ok: false, error: 'title-unavailable' }, { 'cache-control': 'no-store' })
+        }
+        writeJson(res, 200, { title }, { 'cache-control': 'no-store' })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        writeJson(res, message === 'body-too-large' ? 413 : 400, { ok: false, error: message }, { 'cache-control': 'no-store' })
+      }
+    },
+  }
+  return [state, action, events, endpoints, titleSuggest]
 }
 
 const EVENT_COOLDOWN_MS = 60_000

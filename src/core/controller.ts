@@ -166,6 +166,12 @@ export interface ControllerSnapshot {
   pendingTaskIds: readonly string[]
   /** Per-token pricing for the dashboard cost estimate (absent = not configured). */
   pricing?: CostPricing
+  /**
+   * Whether the new-task dialog auto-generates a title from the run prompt
+   * (the `autoTitle` setting pushed from the client wiring; absent on legacy
+   * snapshots means enabled).
+   */
+  autoTitle?: boolean
   transportError?: string
   host?: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'>
 }
@@ -216,6 +222,7 @@ export class BoardController {
   private readonly pendingTaskIds = new Set<string>()
   private readonly taskQueues = new Map<string, Promise<void>>()
   private pricing: CostPricing | undefined
+  private autoTitle = true
   private transportError: string | undefined
   private hostState: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
   private remoteSubscribed = false
@@ -268,6 +275,7 @@ export class BoardController {
       executionOptions: this.executionOptions,
       pendingTaskIds: [...this.pendingTaskIds],
       ...(this.pricing === undefined ? {} : { pricing: this.pricing }),
+      autoTitle: this.autoTitle,
       ...(this.transportError === undefined ? {} : { transportError: this.transportError }),
       ...(this.hostState === undefined ? {} : { host: this.hostState }),
     }
@@ -433,6 +441,17 @@ export class BoardController {
   /** Set the per-token pricing the dashboard's cost estimate uses (from settings). */
   setPricing(pricing: CostPricing | undefined): void {
     this.pricing = pricing
+    this.notify()
+  }
+
+  /**
+   * Set whether the new-task dialog auto-generates a title from the run
+   * prompt (the `autoTitle` setting pushed from the client wiring). When off,
+   * the dialog still derives a title from the prompt's first line at submit,
+   * so creation never blocks on the LLM.
+   */
+  setAutoTitle(enabled: boolean): void {
+    this.autoTitle = enabled
     this.notify()
   }
 

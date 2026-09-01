@@ -232,6 +232,15 @@ export function apply(ctx: ClientContext): void {
     }
     pushPricing()
     disposers.push(settingsScope.subscribe(pushPricing))
+    // Auto-title generation for the new-task dialog (default on): a blank
+    // title is generated from the run prompt through a backend session; the
+    // prompt-line fallback still applies at submit when the setting is off.
+    const pushAutoTitle = (): void => {
+      const settings = settingsScope.getSnapshot()
+      controller.setAutoTitle(settings.status !== 'ready' || (settings.value?.autoTitle ?? true))
+    }
+    pushAutoTitle()
+    disposers.push(settingsScope.subscribe(pushAutoTitle))
     const pushModelOptions = async (): Promise<void> => {
       try {
         const response = await connection.api.llm.models({})

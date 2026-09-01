@@ -374,3 +374,99 @@ describe('NewTaskModal endpoint-constrained model picker', () => {
     })
   })
 })
+
+describe('NewTaskModal auto-generated title', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  function setTextareaValue(element: HTMLTextAreaElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+    setter?.call(element, value)
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  /** Flush the mocked-fetch microtask chain after the debounce fires. */
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => { await Promise.resolve() })
+    }
+  }
+
+  it('shows a generating hint, fills a generated title, and submits it', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ title: 'Fix the login bug' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container, onClose } = await renderModal(createTaskConfirmed)
+
+    const titleInput = container.querySelector('input') as HTMLInputElement
+    const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
+    await act(async () => { setTextareaValue(prompt, 'Fix the login bug, users are locked out') })
+    expect(titleInput.value).toBe('')
+    expect(container.textContent).toContain(t('new.titleGenerating'))
+
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await flush()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(titleInput.value).toBe('Fix the login bug')
+    expect(container.textContent).toContain(t('new.titleRegenerate'))
+
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    expect(createTaskConfirmed.mock.calls[0][0].title).toBe('Fix the login bug')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('never overwrites a manual title with a late generation', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ title: 'Generated' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed)
+
+    const titleInput = container.querySelector('input') as HTMLInputElement
+    setFieldValue(titleInput, 'My manual title')
+    const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
+    setTextareaValue(prompt, 'Fix the login bug')
+
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await flush()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(titleInput.value).toBe('My manual title')
+  })
+
+  it('falls back to the prompt first line when generation fails', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('host offline') }))
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed)
+
+    const titleInput = container.querySelector('input') as HTMLInputElement
+    const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
+    setTextareaValue(prompt, '- Fix the login bug\n\nMore details')
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await flush()
+    expect(titleInput.value).toBe('Fix the login bug')
+  })
+
+  it('submits the prompt-line fallback when the user creates before generation lands', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed)
+
+    const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
+    setTextareaValue(prompt, 'Draft the release notes')
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    expect(createTaskConfirmed.mock.calls[0][0].title).toBe('Draft the release notes')
+  })
+})
