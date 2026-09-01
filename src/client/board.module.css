@@ -713,6 +713,48 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   background: var(--dsw-specific-input-major);
 }
 
+/* An unapproved task's badge on the card meta row. */
+.cardUnapproved {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-state-warning-primary, #b8860b);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* Wrapper for an unapproved standalone card: the card plus its inline
+   approve button (the card itself is a <button>, so the action sits beside it). */
+.cardWrap {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.cardWrap .card {
+  flex: 1;
+  min-width: 0;
+}
+
+.approveButton {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-state-success-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.approveButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
 .groupSection .card {
   margin: 0 4px;
 }

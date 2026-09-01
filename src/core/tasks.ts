@@ -145,6 +145,23 @@ export interface TaskRecord {
    * absent means on-board.
    */
   archivedAt?: number
+  /**
+   * Approval gate: an unapproved task (explicit `false`) can never be run by
+   * any means — manual runs, reruns, task crons, and group auto-advance are
+   * all refused until it is approved. Absent or `true` means approved (the
+   * default; only the explicit `false` is persisted, mirroring the group
+   * `stopped` flag). Manual board moves and edits stay allowed, so unapproved
+   * tasks remain fully manageable.
+   */
+  approved?: boolean
+}
+
+/**
+ * Whether a task may be run: everything except an explicit `false` approval
+ * gate. Absent (legacy records) and `true` are both approved.
+ */
+export function isTaskApproved(task: Pick<TaskRecord, 'approved'>): boolean {
+  return task.approved !== false
 }
 
 /** Statuses a settled task may be archived from. */
@@ -245,6 +262,13 @@ export interface NewTaskInput {
    * case arms it only when enabled and the expression is valid.
    */
   schedule?: { enabled: boolean; cron: string }
+  /**
+   * Approval state at creation: `false` mints the task unapproved (it cannot
+   * run until approved). Absent or `true` (the manual/new-task default) mints
+   * it approved. Programmatic creators (the protocol `create` action) may set
+   * this; the board's manual dialog never does.
+   */
+  approved?: boolean
 }
 
 /** The five kanban columns, in display order. */
@@ -300,6 +324,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     endpoints: normalizeEndpointList(input.endpoints),
     groupId: normalizeTargetId(input.groupId),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
+    ...(input.approved === false ? { approved: false } : {}),
   }
 }
 

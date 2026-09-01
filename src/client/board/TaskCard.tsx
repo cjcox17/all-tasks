@@ -62,6 +62,11 @@ function TaskCardInner({ task, pending, timeZone, onClick }: { task: TaskRecord;
       {task.description !== '' && <span className={css.cardExcerpt}>{task.description}</span>}
       <span className={css.cardMeta}>
         <span className={css.cardTime}>{t('board.updated')} {formatTime(task.updatedAt)}</span>
+        {!archived && task.approved === false && (
+          <span className={css.cardUnapproved} title={t('card.unapprovedHint')}>
+            {t('card.unapproved')}
+          </span>
+        )}
         {!archived && task.schedule?.enabled === true && (
           <span
             className={css.cardSchedule}

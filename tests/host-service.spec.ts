@@ -218,6 +218,27 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     expect(cancel).not.toHaveBeenCalled()
     service.dispose()
   })
+
+  it('cancels a queued run whose task is unapproved while it waits', async () => {
+    const ledger = new HostTaskLedger(root(), () => 0)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
+    ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
+    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => 0,
+      routerConfig: { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] },
+    })
+    // The task is unapproved while the run waits; the next queue pass cancels
+    // the held run instead of launching it (unapproved can never run).
+    ledger.applyRequest('unapprove', { kind: 'set-approved', taskId: 'task-a', approved: false })
+    await (service as unknown as { routeQueued(): Promise<void> }).routeQueued()
+    const task = ledger.state().tasks[0]
+    expect(task.executions[0]!.result).toBe('cancelled')
+    expect(task.status).toBe('failed')
+    service.dispose()
+  })
 })
 
 describe('TaskBoardHostService poll heartbeat', () => {

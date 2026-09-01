@@ -75,6 +75,7 @@ function fakeController(
     stopGroup: async () => true,
     resumeGroup: async () => true,
     moveGroup: async () => true,
+    setApproved: () => {},
     ...overrides,
   } as unknown as BoardController
 }
@@ -542,5 +543,80 @@ describe('TaskBoard workspace scoping', () => {
     expect(memberTitles.some(text => text.includes('Member A'))).toBe(true)
     expect(memberTitles.some(text => text.includes('Member U'))).toBe(true)
     expect(memberTitles.some(text => text.includes('Member B'))).toBe(false)
+  })
+})
+
+describe('TaskBoard approval', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    return { container }
+  }
+
+  function hasCard(container: HTMLElement, title: string): boolean {
+    return Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).some(card => (card.textContent ?? '').includes(title))
+  }
+
+  it('shows a Not-approved badge and a one-click approve button on an unapproved ungrouped card', async () => {
+    const approveCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Pending', status: 'todo', approved: false })],
+    }, {
+      setApproved: (id: string, approved: boolean) => { if (approved) approveCalls.push(id) },
+    })
+
+    const card = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(candidate => candidate.textContent?.includes('Pending'))
+    expect(card).not.toBeNull()
+    expect(card!.textContent).toContain(t('card.unapproved'))
+    const approve = container.querySelector(`button[aria-label="${t('card.approve')}"]`) as HTMLButtonElement
+    expect(approve).not.toBeNull()
+    await act(async () => { approve.click() })
+    expect(approveCalls).toEqual(['t1'])
+  })
+
+  it('offers a per-member approve button inside a group section', async () => {
+    const approveCalls: string[] = []
+    const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member', status: 'todo', groupId: 'g1', approved: false })],
+      groups: [GROUP],
+    }, {
+      setApproved: (id: string, approved: boolean) => { if (approved) approveCalls.push(id) },
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    const approve = section!.querySelector(`button[aria-label="${t('card.approve')}"]`) as HTMLButtonElement
+    expect(approve).not.toBeNull()
+    await act(async () => { approve.click() })
+    expect(approveCalls).toEqual(['t1'])
+  })
+
+  it('does not render an approve button for an approved task', async () => {
+    const { container } = await renderBoard({ tasks: [task({ id: 't1', title: 'Fine', status: 'todo' })] })
+    expect(container.querySelector(`button[aria-label="${t('card.approve')}"]`)).toBeNull()
+    const card = Array.from(container.querySelectorAll('button[data-dsh-part="card"]')).find(candidate => candidate.textContent?.includes('Fine'))
+    expect(card!.textContent).not.toContain(t('card.unapproved'))
+  })
+
+  it('filters the board to unapproved tasks only', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Pending', status: 'todo', approved: false }),
+        task({ id: 't2', title: 'Approved task', status: 'todo' }),
+      ],
+    })
+    expect(hasCard(container, 'Approved task')).toBe(true)
+    expect(hasCard(container, 'Pending')).toBe(true)
+
+    const toggle = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('board.unapprovedFilter'))) as HTMLButtonElement
+    expect(toggle).not.toBeNull()
+    await act(async () => { toggle.click() })
+    expect(hasCard(container, 'Approved task')).toBe(false)
+    expect(hasCard(container, 'Pending')).toBe(true)
+    await act(async () => { toggle.click() })
+    expect(hasCard(container, 'Approved task')).toBe(true)
   })
 })

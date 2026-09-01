@@ -65,6 +65,7 @@ export type TaskBoardAction =
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
   | { kind: 'stop'; taskId: string }
+  | { kind: 'set-approved'; taskId: string; approved: boolean }
   | { kind: 'create-group'; id: string; input: GroupCreateInput }
   | { kind: 'update-group'; groupId: string; patch: GroupUpdatePatch }
   | { kind: 'delete-group'; groupId: string }
@@ -175,14 +176,16 @@ function importedTask(value: unknown): TaskRecord | undefined {
     ...(task.model === undefined ? {} : { model: task.model }),
     ...(task.endpoints === undefined ? {} : { endpoints: task.endpoints }),
     ...(task.archivedAt === undefined ? {} : { archivedAt: task.archivedAt }),
+    ...(task.approved === false ? { approved: false } : {}),
   }
 }
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
+  if (input.approved !== undefined && typeof input.approved !== 'boolean') return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
   // A malformed endpoint list (non-array, oversized, or non-string entries)
   // rejects the whole create instead of silently dropping the pin; an empty
@@ -353,6 +356,11 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
     case 'stop':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
       return taskId === undefined ? undefined : { requestId: envelope.requestId, action: { kind: 'stop', taskId } }
+    case 'set-approved':
+      if (!exactKeys(action, ['kind', 'taskId', 'approved'])) return undefined
+      return taskId !== undefined && typeof action.approved === 'boolean'
+        ? { requestId: envelope.requestId, action: { kind: 'set-approved', taskId, approved: action.approved } }
+        : undefined
     case 'stop-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== ''

@@ -231,6 +231,26 @@ describe('BoardController routes use-cases (external contract)', () => {
     expect(controller.getSnapshot().selectedTaskId).toBeUndefined()
     expect(controller.getSnapshot().tasks).toHaveLength(0)
   })
+
+  it('setApproved gates and ungates a task without removing it from the board', () => {
+    const { controller } = makeController()
+    const task = controller.createTask({ title: 'T', description: '', prompt: '' })!
+    expect(controller.getSnapshot().tasks[0].approved).toBeUndefined()
+    controller.setApproved(task.id, false)
+    expect(controller.getSnapshot().tasks[0].approved).toBe(false)
+    // The task stays on the board and movable while unapproved.
+    controller.moveTask(task.id, 'backlog')
+    expect(controller.getSnapshot().tasks[0].status).toBe('backlog')
+    controller.setApproved(task.id, true)
+    expect(controller.getSnapshot().tasks[0].approved).toBeUndefined()
+  })
+
+  it('createTask carries an explicit unapproved request', () => {
+    const { controller } = makeController()
+    const task = controller.createTask({ title: 'U', description: '', prompt: '', approved: false })!
+    expect(task.approved).toBe(false)
+    expect(controller.getSnapshot().tasks[0].approved).toBe(false)
+  })
 })
 
 describe('use-case: update model pin', () => {

@@ -544,6 +544,9 @@ export class BoardController {
   async runTask(id: string): Promise<boolean> {
     const task = this.tasks.find(candidate => candidate.id === id)
     if (task === undefined || task.archivedAt !== undefined || task.status === 'running') return false
+    // An unapproved task can never run by any means; refuse before the wire
+    // round-trip (the Host ledger enforces the same gate).
+    if (task.approved === false) return false
     if (this.deps.transport === undefined) return false
     return await this.commitRemote({ kind: 'run', taskId: id }, id)
   }
@@ -552,6 +555,7 @@ export class BoardController {
   async rerunTask(id: string): Promise<void> {
     const task = this.tasks.find(candidate => candidate.id === id)
     if (task === undefined || task.archivedAt !== undefined) return
+    if (task.approved === false) return
     if (this.deps.transport === undefined) return
     await this.commitRemote({ kind: 'rerun', taskId: id }, id)
   }
@@ -562,6 +566,26 @@ export class BoardController {
     if (task === undefined || task.archivedAt !== undefined) return false
     if (this.deps.transport === undefined) return false
     return await this.commitRemote({ kind: 'stop', taskId: id }, id)
+  }
+
+  /**
+   * Set a task's approval gate. An unapproved task can never be run by any
+   * means (manual, cron, or group) until it is approved again; it stays fully
+   * manageable (moves, edits, groups) either way.
+   * @param id - the task to approve or unapprove.
+   * @param approved - `true` clears the gate (default state); `false` gates it.
+   */
+  setApproved(id: string, approved: boolean): void {
+    if (this.deps.transport !== undefined) {
+      void this.commitRemote({ kind: 'set-approved', taskId: id, approved }, id)
+      return
+    }
+    this.tasks = this.tasks.map(task => {
+      if (task.id !== id) return task
+      const { approved: _current, ...rest } = task
+      return approved ? { ...rest, updatedAt: this.now() } : { ...rest, approved: false, updatedAt: this.now() }
+    })
+    this.persistAndNotify()
   }
 
   /** Stop a whole group: cancel every open member execution and mark it stopped. */

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, modelSelectionKey, normalizeModelSelection,
+  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, modelSelectionKey, normalizeModelSelection,
   parseModelSelectionKey, retainRecentExecutions, settleExecution, startExecution, withSchedule, withStatus,
 } from '../src/core/tasks.ts'
 
@@ -314,5 +314,21 @@ describe('group membership on createTask', () => {
     expect(blank.groupId).toBeUndefined()
     const absent = createTask({ title: 'C', description: '', prompt: '' }, 1, 't-3')
     expect(absent.groupId).toBeUndefined()
+  })
+})
+
+describe('task approval', () => {
+  it('mints tasks approved by default (no explicit flag persisted)', () => {
+    const task = createTask({ title: 'A', description: '', prompt: '' }, 1, 't-1')
+    expect(task.approved).toBeUndefined()
+    expect(isTaskApproved(task)).toBe(true)
+    expect(isTaskApproved(createTask({ title: 'B', description: '', prompt: '', approved: true }, 1, 't-2'))).toBe(true)
+  })
+
+  it('mints an unapproved task from an explicit false', () => {
+    const task = createTask({ title: 'U', description: '', prompt: '', approved: false }, 1, 't-u')
+    expect(task.approved).toBe(false)
+    expect(isTaskApproved(task)).toBe(false)
+    expect(isTaskApproved({ approved: false } as never)).toBe(false)
   })
 })

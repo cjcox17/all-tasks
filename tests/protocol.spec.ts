@@ -272,6 +272,33 @@ describe('group action gate', () => {
     expect(parseActionEnvelope({ requestId: 'move-group-bad2', action: { kind: 'move-group', groupId: 'g1' } })).toBeUndefined()
   })
 
+  it('gates set-approved and the create approved flag', () => {
+    expect(parseActionEnvelope({ requestId: 'approve', action: { kind: 'set-approved', taskId: 't1', approved: true } })).toMatchObject({ action: { kind: 'set-approved', taskId: 't1', approved: true } })
+    expect(parseActionEnvelope({ requestId: 'unapprove', action: { kind: 'set-approved', taskId: 't1', approved: false } })).toMatchObject({ action: { kind: 'set-approved', taskId: 't1', approved: false } })
+    expect(parseActionEnvelope({ requestId: 'approve-bad', action: { kind: 'set-approved', taskId: 't1', approved: 'yes' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'approve-bad2', action: { kind: 'set-approved', taskId: 't1' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'approve-bad3', action: { kind: 'set-approved', approved: true } })).toBeUndefined()
+    const unapproved = parseActionEnvelope({
+      requestId: 'create-unapproved',
+      action: { kind: 'create', id: 'task-u', input: { title: 'U', description: '', prompt: '', approved: false } },
+    })
+    expect(unapproved?.action.kind).toBe('create')
+    if (unapproved?.action.kind !== 'create') throw new Error('expected create')
+    expect(unapproved.action.input.approved).toBe(false)
+    expect(parseActionEnvelope({
+      requestId: 'create-unapproved-bad',
+      action: { kind: 'create', id: 'task-u', input: { title: 'U', description: '', prompt: '', approved: 'yes' } },
+    })).toBeUndefined()
+  })
+
+  it('carries the unapproved state through import', () => {
+    const task = createTask({ title: 'U', description: '', prompt: '', approved: false }, 1, 'task-u')
+    const parsed = parseActionEnvelope({ requestId: 'import-approval', action: { kind: 'import', sourceId: 'browser', tasks: [task] } })
+    expect(parsed?.action.kind).toBe('import')
+    if (parsed?.action.kind !== 'import') throw new Error('expected import')
+    expect(parsed.action.tasks[0]?.approved).toBe(false)
+  })
+
   it('accepts the stopped flag on a group update patch', () => {
     const stop = parseActionEnvelope({ requestId: 'stop-g', action: { kind: 'update-group', groupId: 'g1', patch: { stopped: true } } })
     expect(stop?.action.kind).toBe('update-group')

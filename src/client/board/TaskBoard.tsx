@@ -105,7 +105,7 @@ function GroupBanner({ group, count, running, onStop, onResume, onManage }: {
  * Every running/queued member gets a per-card stop button (so a group can be
  * stopped member-by-member from the board, without opening a session).
  */
-function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen, onManage, onStopMember, onStopGroup, onResume }: {
+function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen, onManage, onStopMember, onApproveMember, onStopGroup, onResume }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Whether any board-wide member has a running execution (enables stop-group). */
@@ -115,6 +115,7 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
   onOpen: (id: string) => void
   onManage: () => void
   onStopMember: (id: string) => void
+  onApproveMember: (id: string) => void
   onStopGroup: () => void
   onResume: () => void
 }) {
@@ -143,6 +144,17 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
               ⏹
             </button>
           )}
+          {task.approved === false && (
+            <button
+              type="button"
+              className={css.approveButton}
+              aria-label={t('card.approve')}
+              title={t('card.approve')}
+              onClick={() => { onApproveMember(task.id) }}
+            >
+              ✓
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -158,6 +170,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
   )
   const [filter, setFilter] = useState('')
   const [workspaceFilter, setWorkspaceFilter] = useState<string | undefined>(undefined)
+  const [unapprovedOnly, setUnapprovedOnly] = useState(false)
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const selected = selectedTaskOf(snapshot)
@@ -165,10 +178,13 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
   // Archived tasks leave the columns; the archive view shows them instead.
   // The workspace scoping applies to both views: filtered views keep the
   // workspace's pinned tasks plus the unassigned remainder (never hidden).
+  // The unapproved-only filter narrows to tasks waiting for approval (their
+  // gate blocks every run path until approved).
   const visible = snapshot.tasks.filter(task =>
     (archiveView ? task.archivedAt !== undefined : task.archivedAt === undefined)
     && matchesFilter(task, filter)
-    && matchesWorkspace(task, workspaceFilter),
+    && matchesWorkspace(task, workspaceFilter)
+    && (!unapprovedOnly || task.approved === false),
   )
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
 
@@ -218,6 +234,15 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
             <option value={workspaceFilter}>{workspaceFilter}</option>
           )}
         </select>
+        <button
+          type="button"
+          className={unapprovedOnly ? css.primaryButton : css.ghostButton}
+          aria-pressed={unapprovedOnly}
+          title={t('board.unapprovedHint')}
+          onClick={() => { setUnapprovedOnly(value => !value) }}
+        >
+          {t('board.unapprovedFilter')}
+        </button>
         <button
           type="button"
           className={archiveView ? css.primaryButton : css.ghostButton}
@@ -319,7 +344,20 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                 </header>
                 <div className={css.cards}>
                   {ungrouped.map(task => (
-                    <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                    <div key={task.id} className={task.approved === false ? css.cardWrap : undefined}>
+                      <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                      {task.approved === false && (
+                        <button
+                          type="button"
+                          className={css.approveButton}
+                          aria-label={t('card.approve')}
+                          title={t('card.approve')}
+                          onClick={() => { controller.setApproved(task.id, true) }}
+                        >
+                          ✓
+                        </button>
+                      )}
+                    </div>
                   ))}
                   {workspaceFilter !== undefined && unassignedFlat.length > 0 && (
                     <div className={css.unassignedSection} data-dsh-part="unassigned">
@@ -328,7 +366,20 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                         <span className={css.groupCount}>{unassignedFlat.length}</span>
                       </header>
                       {unassignedFlat.map(task => (
-                        <MemoTaskCard key={task.id} task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                        <div key={task.id} className={task.approved === false ? css.cardWrap : undefined}>
+                          <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                          {task.approved === false && (
+                            <button
+                              type="button"
+                              className={css.approveButton}
+                              aria-label={t('card.approve')}
+                              title={t('card.approve')}
+                              onClick={() => { controller.setApproved(task.id, true) }}
+                            >
+                              ✓
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -343,6 +394,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                       onOpen={openTask}
                       onManage={() => { setGroupEditor({ group }) }}
                       onStopMember={id => { void controller.stopTask(id) }}
+                      onApproveMember={id => { controller.setApproved(id, true) }}
                       onStopGroup={() => { void controller.stopGroup(group.id) }}
                       onResume={() => { void controller.resumeGroup(group.id) }}
                     />
@@ -358,6 +410,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
                       onOpen={openTask}
                       onManage={() => { setGroupEditor({ group }) }}
                       onStopMember={id => { void controller.stopTask(id) }}
+                      onApproveMember={id => { controller.setApproved(id, true) }}
                       onStopGroup={() => { void controller.stopGroup(group.id) }}
                       onResume={() => { void controller.resumeGroup(group.id) }}
                     />

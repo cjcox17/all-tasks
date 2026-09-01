@@ -293,6 +293,13 @@ export class TaskBoardHostService {
     const now = this.now()
     const maxWaitMs = this.routerConfig.endpointMaxWaitHours * HOUR_MS
     for (const queued of this.ledger.queuedRuns()) {
+      // The task may have been unapproved while the run waited for an
+      // endpoint/slot/window; an unapproved task can never run, so the held
+      // run is cancelled (it lands in failed, like any stop).
+      if (queued.task.approved === false) {
+        this.ledger.settle(queued.taskId, queued.executionId, 'cancelled', 'task is not approved')
+        continue
+      }
       if (now - queued.queuedAt > maxWaitMs) {
         this.ledger.settle(queued.taskId, queued.executionId, 'failed', 'run never became eligible to launch within the max-wait window')
         continue

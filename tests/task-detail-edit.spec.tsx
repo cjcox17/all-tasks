@@ -58,6 +58,7 @@ function controllerFake(
     restoreTask: vi.fn(),
     rerunTask: vi.fn(async () => {}),
     stopTask: vi.fn(async () => true),
+    setApproved: vi.fn(),
     setSchedule: vi.fn(() => true),
     isHostBacked: () => false,
   } as unknown as BoardController
@@ -178,5 +179,44 @@ describe('task content editing before execution (issue #1110)', () => {
     await act(async () => { save.click() })
     expect(container.textContent).toContain('task has already been executed')
     expect(container.querySelector('[role="dialog"][aria-label="编辑任务"]')).not.toBeNull()
+  })
+
+  it('shows the approval gate: an unapproved task disables Run and offers Approve', async () => {
+    const setApproved = vi.fn()
+    const { controller, snapshot } = controllerFake(task({ approved: false }))
+    const fake = { ...controller, setApproved } as unknown as BoardController
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskDetail controller={fake} task={snapshot.tasks[0]!} />) })
+
+    expect(container.textContent).toContain(t('detail.approval.unapprovedHint'))
+    const run = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('detail.run'))) as HTMLButtonElement
+    expect(run).not.toBeNull()
+    expect(run.disabled).toBe(true)
+    const approve = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('detail.approve'))) as HTMLButtonElement
+    expect(approve).not.toBeNull()
+    await act(async () => { approve.click() })
+    expect(setApproved).toHaveBeenCalledWith('t1', true)
+  })
+
+  it('shows the Unapprove control for an approved task', async () => {
+    const setApproved = vi.fn()
+    const { controller, snapshot } = controllerFake(task())
+    const fake = { ...controller, setApproved } as unknown as BoardController
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskDetail controller={fake} task={snapshot.tasks[0]!} />) })
+
+    expect(container.textContent).toContain(t('detail.approval.approvedHint'))
+    const unapprove = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('detail.unapprove'))) as HTMLButtonElement
+    expect(unapprove).not.toBeNull()
+    await act(async () => { unapprove.click() })
+    expect(setApproved).toHaveBeenCalledWith('t1', false)
+    const run = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(t('detail.run'))) as HTMLButtonElement
+    expect(run.disabled).toBe(false)
   })
 })

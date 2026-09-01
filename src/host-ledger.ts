@@ -504,6 +504,7 @@ export class HostTaskLedger {
         members.push({
           taskId: task.id,
           runnable: task.archivedAt === undefined
+            && task.approved !== false
             && (task.status === 'backlog' || task.status === 'todo')
             && open === undefined,
           launched: open?.launched === true,
@@ -540,6 +541,9 @@ export class HostTaskLedger {
     const task = this.document.tasks.find(item => item.id === taskId)
     if (task === undefined || task.archivedAt !== undefined) return undefined
     if (task.status === 'running' || hasOpenExecution(task)) return undefined
+    // An unapproved member can never be launched by the group sequence
+    // (defensive; the advance pass already treats it as not runnable).
+    if (task.approved === false) return undefined
     const opened = startExecution(task, now, crypto.randomUUID())
     this.document.tasks = this.document.tasks.map(item => item.id === taskId ? opened.task : item)
     this.commit()
@@ -660,7 +664,10 @@ export class HostTaskLedger {
     if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && (group.schedule?.enabled === true || group.stopped === true))) {
       return undefined
     }
-    if (task.status === 'running' || hasOpenExecution(task)) {
+    // An unapproved task's cron is held like a running task's: the occurrence
+    // rolls forward without launching, so the schedule keeps its cadence and
+    // resumes firing at the next occurrence once the task is approved.
+    if (task.approved === false || task.status === 'running' || hasOpenExecution(task)) {
       this.document.tasks = [...applyScheduleNextRun(this.document.tasks, taskId, nextRunAt, task.schedule?.lastTriggeredAt, triggeredAt)]
       this.commit()
       return undefined
@@ -828,6 +835,9 @@ export class HostTaskLedger {
         const task = this.document.tasks.find(item => item.id === action.taskId)
         if (task?.archivedAt !== undefined) throw new Error('archived task is read-only')
         if (task === undefined || task.status === 'running' || hasOpenExecution(task)) throw new Error('task is already running or missing')
+        // An unapproved task can never be run by any means — manual runs and
+        // reruns are refused here; crons and group auto-advance skip it too.
+        if (task.approved === false) throw new Error('task is not approved')
         if (task.groupId !== undefined && this.document.groups.some(group => group.id === task.groupId && group.stopped === true)) {
           throw new Error('group is stopped')
         }
@@ -860,6 +870,21 @@ export class HostTaskLedger {
         this.document.groups = this.document.groups.map(group => group.id === action.groupId
           ? { ...group, stopped: true, updatedAt: now }
           : group)
+        break
+      }
+      case 'set-approved': {
+        const task = this.document.tasks.find(item => item.id === action.taskId)
+        if (task === undefined) throw new Error('task not found')
+        if (task.archivedAt !== undefined) throw new Error('archived task is read-only')
+        // Approving clears the explicit flag (approved is the default);
+        // unapproving persists the explicit `false` gate. The task stays
+        // fully manageable (moves, edits, groups) either way.
+        const approved = action.approved === true
+        this.document.tasks = this.document.tasks.map(item => {
+          if (item.id !== action.taskId) return item
+          const { approved: _current, ...rest } = item
+          return approved ? { ...rest, updatedAt: now } : { ...rest, approved: false, updatedAt: now }
+        })
         break
       }
       case 'move-group': {

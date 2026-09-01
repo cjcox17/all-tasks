@@ -171,6 +171,21 @@ describe('parseLedger', () => {
     const repaired = parseLedger(JSON.stringify([{ ...base, status: 'done', archivedAt: 'yesterday' }]))
     expect(repaired[0].archivedAt).toBeUndefined()
   })
+
+  it('keeps only the explicit unapproved state (approved is the default)', () => {
+    const base = {
+      id: 't1', title: 'a', description: '', prompt: 'a',
+      createdAt: NOW, updatedAt: NOW, executions: [],
+    }
+    const unapproved = parseLedger(JSON.stringify([{ ...base, approved: false }]))
+    expect(unapproved[0].approved).toBe(false)
+    const approved = parseLedger(JSON.stringify([{ ...base, approved: true }]))
+    expect(approved[0].approved).toBeUndefined()
+    const legacy = parseLedger(JSON.stringify([{ ...base }]))
+    expect(legacy[0].approved).toBeUndefined()
+    const malformed = parseLedger(JSON.stringify([{ ...base, approved: 'yes' }]))
+    expect(malformed).toEqual([])
+  })
   it('round-trips execution targets and repairs broken ones', () => {
     const pinned = createTask(
       { title: 'pinned', description: '', prompt: '', workspaceId: 'ws-1', mode: 'anchored', permission: 'read-only' },
@@ -203,6 +218,8 @@ describe('isTaskRecord', () => {
     expect(isTaskRecord(task)).toBe(true)
     expect(isTaskRecord({ ...task, status: 'bogus' })).toBe(false)
     expect(isTaskRecord({ ...task, executions: [{ id: 3 }] })).toBe(false)
+    expect(isTaskRecord({ ...task, approved: false })).toBe(true)
+    expect(isTaskRecord({ ...task, approved: 'yes' })).toBe(false)
     expect(isTaskRecord(null)).toBe(false)
     expect(isTaskRecord('x')).toBe(false)
   })

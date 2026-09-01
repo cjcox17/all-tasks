@@ -396,6 +396,27 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
             </>
           )}
 
+          {!archived && (
+            <section className={css.detailSection}>
+              <h4>{t('detail.approval')}</h4>
+              <p className={css.detailText}>
+                {current.approved === false
+                  ? t('detail.approval.unapprovedHint')
+                  : t('detail.approval.approvedHint')}
+              </p>
+              <div className={css.moveRow}>
+                <button
+                  type="button"
+                  className={current.approved === false ? css.primaryButton : css.ghostButton}
+                  disabled={pending}
+                  onClick={() => { controller.setApproved(current.id, current.approved === false) }}
+                >
+                  {current.approved === false ? t('detail.approve') : t('detail.unapprove')}
+                </button>
+              </div>
+            </section>
+          )}
+
           <section className={css.detailSection}>
             <h4>{t('detail.execution')}</h4>
             {current.executions.length === 0 ? (
@@ -461,7 +482,8 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
             <button
               type="button"
               className={css.primaryButton}
-              disabled={running || pending}
+              disabled={running || pending || current.approved === false}
+              title={current.approved === false ? t('detail.approval.unapprovedHint') : undefined}
               onClick={() => {
                 void controller.rerunTask(current.id).then(() => {
                   if (controller.getSnapshot().transportError === undefined) controller.closeTask()

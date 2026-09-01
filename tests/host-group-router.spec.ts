@@ -446,4 +446,41 @@ describe('TaskBoardHostService group routing', () => {
     expect(state.tasks.find(task => task.id === 'b')!.status).toBe('backlog')
     h.service.dispose()
   })
+
+  it('auto-advance and the group cron skip unapproved members until they are approved', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    h.ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Approval', mode: 'sequential' } })
+    h.ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
+    h.ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1', approved: false } })
+    h.ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: 'work', groupId: 'g1' } })
+
+    // A runs; when it settles, the sequence skips the unapproved B and starts C.
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.status).toBe('running')
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.executions).toHaveLength(0)
+
+    // A due group cron likewise skips the unapproved member.
+    h.ledger.applyRequest('schedule', { kind: 'update-group', groupId: 'g1', patch: { schedule: { enabled: true, cron: '0 9 * * *' } } })
+    h.ledger.settle('c', h.ledger.state().tasks.find(task => task.id === 'c')!.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+
+    // Approving B lets the sequence pick it up next.
+    h.ledger.applyRequest('approve', { kind: 'set-approved', taskId: 'b', approved: true })
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(3)
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    h.service.dispose()
+  })
 })

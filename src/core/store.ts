@@ -65,6 +65,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
   if (record.permission !== undefined && typeof record.permission !== 'string') return false
   if (record.endpoints !== undefined && !Array.isArray(record.endpoints)) return false
   if (record.groupId !== undefined && typeof record.groupId !== 'string') return false
+  if (record.approved !== undefined && typeof record.approved !== 'boolean') return false
   if (!Array.isArray(record.executions)) return false
   for (const execution of record.executions) {
     if (typeof execution !== 'object' || execution === null) return false
@@ -154,6 +155,9 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     task.groupId = normalizeTargetId(row.groupId)
     task.archivedAt = typeof row.archivedAt === 'number' && Number.isFinite(row.archivedAt) ? row.archivedAt : undefined
     task.permission = isTaskPermission(row.permission) ? row.permission as TaskPermission : undefined
+    // Only the explicit unapproved state is persisted; `true` (the default)
+    // and legacy absence both normalize to undefined (approved).
+    task.approved = row.approved === false ? false : undefined
     tasks.push(task)
   }
   return tasks

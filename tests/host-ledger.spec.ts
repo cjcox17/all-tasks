@@ -633,4 +633,69 @@ describe('HostTaskLedger', () => {
     ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
     expect(() => ledger.applyRequest('move-group-2', { kind: 'move-group', groupId: 'g1', status: 'backlog' })).toThrow('group has running tasks')
   })
+
+  it('refuses to run an unapproved task until set-approved clears the gate', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', approved: false } })
+    expect(ledger.state().tasks[0]!.approved).toBe(false)
+    expect(() => ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })).toThrow('task is not approved')
+    expect(() => ledger.applyRequest('rerun', { kind: 'rerun', taskId: 'task-a' })).toThrow('task is not approved')
+    // Manual moves and edits stay allowed while unapproved.
+    ledger.applyRequest('move', { kind: 'move', taskId: 'task-a', status: 'backlog' })
+    expect(ledger.state().tasks[0]!.status).toBe('backlog')
+    ledger.applyRequest('update', { kind: 'update', taskId: 'task-a', patch: { description: 'still editable' } })
+    expect(ledger.state().tasks[0]!.description).toBe('still editable')
+    // Approving clears the explicit flag (approved is the default); runs work again.
+    const approved = ledger.applyRequest('approve', { kind: 'set-approved', taskId: 'task-a', approved: true })
+    expect(approved.state.tasks[0]!.approved).toBeUndefined()
+    expect(ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' }).state.tasks[0]!.status).toBe('running')
+  })
+
+  it('unapproves a task through set-approved and refuses every run path', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    const gated = ledger.applyRequest('unapprove', { kind: 'set-approved', taskId: 'task-a', approved: false })
+    expect(gated.state.tasks[0]!.approved).toBe(false)
+    expect(() => ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })).toThrow('task is not approved')
+    // Re-approving is idempotent: the explicit flag stays absent.
+    const approved = ledger.applyRequest('approve-2', { kind: 'set-approved', taskId: 'task-a', approved: true })
+    expect(approved.state.tasks[0]!.approved).toBeUndefined()
+    // Unapproved tasks cannot be archived (archived tasks are read-only),
+    // but they can be deleted.
+    ledger.applyRequest('unapprove-2', { kind: 'set-approved', taskId: 'task-a', approved: false })
+    expect(() => ledger.applyRequest('archive', { kind: 'archive', taskId: 'task-a' })).toThrow('cannot be archived')
+    ledger.applyRequest('delete', { kind: 'delete', taskId: 'task-a' })
+    expect(ledger.state().tasks).toEqual([])
+  })
+
+  it('holds an unapproved task\'s cron without launching and resumes the cadence on approval', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    const due = withSchedule({ ...task('scheduled'), approved: false }, {
+      enabled: true, cron: '* * * * *', nextRunAt: NOW, lastTriggeredAt: undefined,
+    }, NOW)
+    ledger.applyRequest('import', { kind: 'import', sourceId: 'source', tasks: [due] })
+    // The occurrence rolls forward without opening an execution.
+    expect(ledger.openScheduled('scheduled', NOW + 60_000, NOW)).toBeUndefined()
+    expect(ledger.state().tasks[0].executions).toEqual([])
+    expect(ledger.state().tasks[0].schedule?.nextRunAt).toBe(NOW + 60_000)
+    // Once approved, the next due occurrence launches normally.
+    ledger.applyRequest('approve', { kind: 'set-approved', taskId: 'scheduled', approved: true })
+    const opened = ledger.openScheduled('scheduled', NOW + 120_000, NOW + 60_000)
+    expect(opened).toBeDefined()
+    expect(ledger.state().tasks[0].status).toBe('running')
+  })
+
+  it('excludes unapproved members from the group runtime runnable set', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1', approved: false } })
+    const view = ledger.groupRuntimeViews()[0]!
+    expect(view.members.find(member => member.taskId === 'a')!.runnable).toBe(true)
+    expect(view.members.find(member => member.taskId === 'b')!.runnable).toBe(false)
+    // openExecution (the auto-advance seam) also refuses an unapproved member.
+    expect(ledger.openExecution('b', NOW)).toBeUndefined()
+    expect(ledger.openExecution('a', NOW)).toBeDefined()
+  })
 })
