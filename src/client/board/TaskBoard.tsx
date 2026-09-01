@@ -1,11 +1,11 @@
 /**
  * Board view: the two-level task board.
  *
- * Landing: a workspace overview grid (one card per workspace with live task
- * counts) is the first view. Opening a card switches to that workspace's
+ * Landing: a workspace overview list (one row per workspace with live task
+ * counts) is the first view. Opening a row switches to that workspace's
  * kanban — the multi-column board is always workspace-scoped now; the back
- * button in the header returns to the workspace grid and the old workspace
- * dropdown is gone. An "All tasks" card opens the unscoped kanban (the
+ * button in the header returns to the workspace list and the old workspace
+ * dropdown is gone. An "All tasks" row opens the unscoped kanban (the
  * general overview, including unassigned tasks).
  *
  * Cards open the task detail (never execute directly); the kanban header
@@ -23,7 +23,7 @@ import { STATUS_KEY } from './status-key.ts'
 import { TaskCard } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
 import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
-import { WorkspaceGrid } from './WorkspaceGrid.tsx'
+import { WorkspaceList } from './WorkspaceList.tsx'
 import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
 
 /** Case-insensitive title/description match. */
@@ -532,7 +532,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
     () => controller.subscribe(() => setSnapshot(controller.getSnapshot())),
     [controller],
   )
-  /** undefined = the workspace landing grid; otherwise the open kanban. */
+  /** undefined = the workspace landing list; otherwise the open kanban. */
   const [view, setView] = useState<{ workspaceId: string | undefined } | undefined>(undefined)
   const [showNew, setShowNew] = useState(false)
   const [defaultsEditor, setDefaultsEditor] = useState<{ workspaceId: string } | undefined>(undefined)
@@ -603,7 +603,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
       )}
 
       {view === undefined && (
-        <WorkspaceGrid
+        <WorkspaceList
           tasks={snapshot.tasks}
           workspaces={snapshot.executionOptions.workspaces}
           onOpen={openWorkspace}

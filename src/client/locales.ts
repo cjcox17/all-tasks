@@ -29,7 +29,7 @@ export const zh = {
   'board.status.running': '进行中',
   'board.status.done': '已完成',
   'board.status.failed': '已失败',
-  // 工作区总览网格。
+  // 工作区总览列表。
   'grid.allTasks': '全部任务',
   'grid.allTasksHint': '所有工作区的任务总览（含未分配的任务）',
   'grid.workspaceSettings': '工作区默认设置',
@@ -277,7 +277,7 @@ export const en: Record<keyof typeof zh, string> = {
   'board.status.running': 'In Progress',
   'board.status.done': 'Done',
   'board.status.failed': 'Failed',
-  // Workspace overview grid.
+  // Workspace overview list.
   'grid.allTasks': 'All tasks',
   'grid.allTasksHint': 'Every task across all workspaces (including unassigned)',
   'grid.workspaceSettings': 'Workspace defaults',

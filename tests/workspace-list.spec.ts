@@ -1,10 +1,10 @@
 /**
- * Workspace overview grid: the pure per-workspace count projection and the
- * grid-entry builder (runtime workspaces + vanished-workspace fallback).
+ * Workspace overview list: the pure per-workspace count projection and the
+ * list-entry builder (runtime workspaces + vanished-workspace fallback).
  */
 import { describe, expect, it } from 'vitest'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
-import { countWorkspaceTasks, workspaceGridEntries } from '../src/client/board/workspace-grid.ts'
+import { countWorkspaceTasks, workspaceListEntries } from '../src/client/board/workspace-list.ts'
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -52,14 +52,14 @@ describe('countWorkspaceTasks', () => {
   })
 })
 
-describe('workspaceGridEntries', () => {
+describe('workspaceListEntries', () => {
   it('orders entries by the runtime workspace list and appends vanished pinned workspaces', () => {
     const tasks = [
       task({ workspaceId: 'ws-a' }),
       task({ workspaceId: 'ws-gone' }),
       task({ workspaceId: 'ws-b' }),
     ]
-    const entries = workspaceGridEntries(tasks, [
+    const entries = workspaceListEntries(tasks, [
       { workspaceId: 'ws-b', title: 'Beta' },
       { workspaceId: 'ws-a', title: 'Alpha' },
     ])

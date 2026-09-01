@@ -86,7 +86,7 @@ function fakeController(
   } as unknown as BoardController
 }
 
-/** Open the All-tasks kanban from the landing grid (the grid is the first view). */
+/** Open the All-tasks kanban from the landing list (the list is the first view). */
 async function openAllTasks(container: HTMLElement): Promise<void> {
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === '') as HTMLElement | undefined
@@ -95,7 +95,7 @@ async function openAllTasks(container: HTMLElement): Promise<void> {
   await act(async () => { card.click() })
 }
 
-/** Open one workspace's kanban from the landing grid. */
+/** Open one workspace's kanban from the landing list. */
 async function openWorkspace(container: HTMLElement, workspaceId: string): Promise<void> {
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === workspaceId) as HTMLElement | undefined
@@ -117,8 +117,8 @@ describe('TaskBoard L2 semantic attributes (#506)', () => {
     expect(board!.getAttribute('data-dsh-plugin')).toBe('task-board')
     expect(board!.querySelector('button[data-dsh-center-view-back]')).not.toBeNull()
 
-    // The board lands on the workspace grid; the kanban opens behind a card.
-    expect(container.querySelector('[data-dsh-part="workspace-grid"]')).not.toBeNull()
+    // The board lands on the workspace list; the kanban opens behind a row.
+    expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
     await openAllTasks(container)
 
     const columns = container.querySelectorAll('section[data-status]')
@@ -332,7 +332,7 @@ describe('TaskBoard group sections', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
-    // The kanban lives behind the workspace grid; open the All-tasks view.
+    // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
   }
@@ -501,7 +501,7 @@ describe('TaskBoard start buttons', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
-    // The kanban lives behind the workspace grid; open the All-tasks view.
+    // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
   }
@@ -549,7 +549,7 @@ describe('TaskBoard start buttons', () => {
   })
 })
 
-describe('TaskBoard workspace landing grid', () => {
+describe('TaskBoard workspace landing list', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -564,14 +564,14 @@ describe('TaskBoard workspace landing grid', () => {
     { workspaceId: 'ws-b', title: 'Beta' },
   ]
 
-  function gridCards(container: HTMLElement): HTMLElement[] {
+  function listRows(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]')) as HTMLElement[]
   }
 
-  function gridCard(container: HTMLElement, workspaceId: string): HTMLElement {
-    const card = gridCards(container).find(candidate => candidate.getAttribute('data-workspace') === workspaceId)
-    expect(card, `workspace card ${workspaceId}`).toBeDefined()
-    return card!
+  function listRow(container: HTMLElement, workspaceId: string): HTMLElement {
+    const row = listRows(container).find(candidate => candidate.getAttribute('data-workspace') === workspaceId)
+    expect(row, `workspace row ${workspaceId}`).toBeDefined()
+    return row!
   }
 
   function cardsOf(container: HTMLElement): string[] {
@@ -589,7 +589,7 @@ describe('TaskBoard workspace landing grid', () => {
     return /(\d+)\s*$/.exec(text.slice(0, index))?.[1]
   }
 
-  it('lands on the workspace grid first: an All-tasks card plus one card per workspace, each with live counts', async () => {
+  it('lands on the workspace list first: an All-tasks row plus one row per workspace, each with live counts', async () => {
     const { container } = await renderBoard({
       tasks: [
         task({ id: 't1', title: 'Do', status: 'todo', workspaceId: 'ws-a' }),
@@ -603,20 +603,20 @@ describe('TaskBoard workspace landing grid', () => {
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
     })
 
-    // The first view is the grid, not the kanban: no status columns yet.
-    expect(container.querySelector('[data-dsh-part="workspace-grid"]')).not.toBeNull()
+    // The first view is the list, not the kanban: no status columns yet.
+    expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
     expect(container.querySelector('section[data-status]')).toBeNull()
 
-    const cards = gridCards(container)
-    expect(cards.map(card => card.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
+    const rows = listRows(container)
+    expect(rows.map(row => row.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
 
-    const all = gridCard(container, '')
+    const all = listRow(container, '')
     expect(all.textContent).toContain(t('grid.allTasks'))
     // All counts every on-board task: 7 total (Cron is also scheduled).
     expect(all.textContent).toContain(t('grid.count.todo'))
     expect(all.textContent).toContain('7')
 
-    const alpha = gridCard(container, 'ws-a')
+    const alpha = listRow(container, 'ws-a')
     expect(alpha.textContent).toContain('Alpha')
     // ws-a: total 6, todo 2 (Do + Cron), pending 1, working 1, scheduled 1, finished 1, failed 1.
     expect(alpha.textContent).toContain(t('grid.total', { count: '6' }))
@@ -670,7 +670,7 @@ describe('TaskBoard workspace landing grid', () => {
     expect(container.querySelector('[data-dsh-part="unassigned"]')).toBeNull()
   })
 
-  it('the kanban back button returns to the workspace grid and no workspace dropdown exists', async () => {
+  it('the kanban back button returns to the workspace list and no workspace dropdown exists', async () => {
     const { container } = await renderBoard({
       tasks: [task({ id: 't-a', title: 'Pinned A', status: 'todo', workspaceId: 'ws-a' })],
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
@@ -683,8 +683,8 @@ describe('TaskBoard workspace landing grid', () => {
     const back = container.querySelector('button[data-dsh-center-view-back]') as HTMLButtonElement
     expect(back).not.toBeNull()
     await act(async () => { back.click() })
-    // Back on the landing grid; the columns are gone.
-    expect(container.querySelector('[data-dsh-part="workspace-grid"]')).not.toBeNull()
+    // Back on the landing list; the columns are gone.
+    expect(container.querySelector('[data-dsh-part="workspace-list"]')).not.toBeNull()
     expect(container.querySelector('section[data-status]')).toBeNull()
     expect(container.textContent).toContain('Alpha')
   })
@@ -724,7 +724,7 @@ describe('TaskBoard workspace landing grid', () => {
       tasks: [task({ id: 't-g', title: 'Ghost pinned', status: 'todo', workspaceId: 'ws-gone' })],
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
     })
-    const ghost = gridCard(container, 'ws-gone')
+    const ghost = listRow(container, 'ws-gone')
     expect(ghost.textContent).toContain('ws-gone')
     expect(ghost.textContent).toContain(t('grid.count.todo'))
     await openWorkspace(container, 'ws-gone')
@@ -739,7 +739,7 @@ describe('TaskBoard workspace landing grid', () => {
     }, {
       setWorkspaceDefaults,
     })
-    const alpha = gridCard(container, 'ws-a')
+    const alpha = listRow(container, 'ws-a')
     const settings = alpha.querySelector(`button[aria-label="${t('grid.workspaceSettings')}"]`) as HTMLButtonElement
     expect(settings).not.toBeNull()
     await act(async () => { settings.click() })
@@ -775,7 +775,7 @@ describe('TaskBoard approval', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
-    // The kanban lives behind the workspace grid; open the All-tasks view.
+    // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
   }

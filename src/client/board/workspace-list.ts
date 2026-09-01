@@ -1,5 +1,5 @@
 /**
- * Workspace overview grid: per-workspace task counts and the grid entries.
+ * Workspace overview list: per-workspace task counts and the list entries.
  *
  * Pure functions so the landing view is unit-testable without a DOM. The
  * "All tasks" entry (workspaceId undefined) counts every on-board task
@@ -8,7 +8,7 @@
  */
 import type { TaskRecord } from '../../core/tasks.ts'
 
-/** Per-workspace (or All) on-board task counts for the landing grid. */
+/** Per-workspace (or All) on-board task counts for the landing list. */
 export interface WorkspaceCounts {
   /** Every on-board task (the sum of the status buckets; scheduled overlaps). */
   total: number
@@ -26,9 +26,9 @@ export interface WorkspaceCounts {
   failed: number
 }
 
-/** One landing-grid card: a workspace and its counts (the All card is separate). */
-export interface WorkspaceGridEntry {
-  /** Workspace-list id (always defined; the All overview card is built by the grid). */
+/** One landing-list row: a workspace and its counts (the All row is separate). */
+export interface WorkspaceListEntry {
+  /** Workspace-list id (always defined; the All overview row is built by the list). */
   workspaceId: string
   /** Display title (runtime workspace title, or the id for a vanished workspace). */
   title: string
@@ -67,12 +67,12 @@ export function countWorkspaceTasks(
  * pinned tasks ever disappear from the overview. The "All tasks" entry is
  * the caller's concern (it carries localized copy).
  */
-export function workspaceGridEntries(
+export function workspaceListEntries(
   tasks: readonly TaskRecord[],
   workspaces: readonly { workspaceId: string; title: string }[],
-): WorkspaceGridEntry[] {
+): WorkspaceListEntry[] {
   const seen = new Set<string>()
-  const entries: WorkspaceGridEntry[] = []
+  const entries: WorkspaceListEntry[] = []
   for (const workspace of workspaces) {
     seen.add(workspace.workspaceId)
     entries.push({
