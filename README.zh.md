@@ -33,6 +33,7 @@
 - **确定性恢复**：已有 session id 的 running execution 在重启后继续观察；没有 session id 的启动中断会取消且不会重发。被取消的运行（用户停止，或会话中途消失）结算为 cancelled，任务进入「已失败」列——停止绝不视为成功。
 - **实时同步**：变更返回完整 revision snapshot；SSE 只提示 revision、scheduler 与 power 变化，重连和页面恢复可见时重新拉完整 snapshot。
 - **可选空闲睡眠保护**：默认关闭；开启后覆盖全部运行中的 DSH 会话、已启用且未归档的任务计划和未知会话状态。
+- **会话视图时间戳**：主会话视图显示每条消息与每个工具调用的运行时间。用户消息的开始时间与助手回合的结束/耗时标签（DSH 默认悬停才显示）常驻可见；每个工具行带一个常显的「HH:MM:SS · 耗时」标签，时间取自会话事件时间戳（更早的日期加 `M/D` 或 `Y/M/D` 前缀）。默认开启；「设置 → 插件 → 全部任务 → 在会话视图显示时间」开关可恢复官方悬停行为。
 - **系统提示词注入**：Host 通过 `SystemPrompt.section` 注册 order 200 的 `plugin:task-board` 段；任务看板设置可单独关闭声明而不关闭看板。该提示也会提醒 agent 在最终回复前收尾可见的 `todo_write` 计划列表。
 
 ## 架构与协议
@@ -72,6 +73,7 @@ dsh plugin --profile web add link:$(pwd)
 | `enabled` | `true` | 启用 Host 服务与浏览器看板。 |
 | `announceToAgent` | `false` | 按需开启：开启后向 agent 系统提示加入任务看板说明。 |
 | `preventIdleSleep` | `false` | 存在运行中的 DSH 会话、已启用计划或未知会话状态时，持有一个系统空闲睡眠断言。 |
+| `sessionTimestamps` | `true` | 在主会话视图显示每条消息与每个工具调用的运行时间：消息时间常驻可见，每个工具行带开始时间与耗时标签。 |
 | `trustedProxyHosts` | `[]` | 仅通过已认证 loopback 反向代理路径接受的规范 `host[:port]` authority 白名单。 |
 | `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | 保存反向代理 token 的环境变量名；token 本身不会写入插件配置。 |
 | `endpointMaxWaitHours` | `24` | 排队运行等待可用端点的最长时间，超时后判定失败。 |

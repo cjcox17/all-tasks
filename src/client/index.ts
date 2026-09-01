@@ -29,6 +29,7 @@ import { mountSidebarEntry } from './sidebar-entry.ts'
 import { TaskBoardSettingsCard, TaskBoardSettingsCardController, type TaskBoardSettings } from './TaskBoardSettingsCard.tsx'
 import { en, zh, type TaskBoardKey } from './locales.ts'
 import { HttpTaskBoardHostTransport } from './host-api.ts'
+import { hideMessageClocks, registerAssistantTimeShadow, showMessageClocks, type SessionTimesSlots } from './session-times.tsx'
 import { reportDailyHeartbeat } from './telemetry.ts'
 
 /** Locale namespace this plugin owns. */
@@ -110,6 +111,28 @@ export function apply(ctx: ClientContext): void {
       return () => {}
     }
   })
+
+  // Session-view timestamps (see session-times.tsx): show what time each
+  // message and tool call ran at in the main session view. Independent of the
+  // board UI (it decorates the official chat flow), so it mounts with the
+  // plugin, gated by its own `sessionTimestamps` setting (default on).
+  const sessionTimestampsEnabled = (): boolean => {
+    const snapshot = settingsScope.getSnapshot()
+    return snapshot.status === 'ready' ? (snapshot.value?.sessionTimestamps ?? true) : true
+  }
+  const syncSessionTimeStyles = (): void => {
+    try {
+      if (sessionTimestampsEnabled()) showMessageClocks()
+      else hideMessageClocks()
+    } catch {
+      // Cosmetic only: a failure leaves the official hover-reveal behavior.
+    }
+  }
+  ctx.effect(() => {
+    syncSessionTimeStyles()
+    return settingsScope.subscribe(syncSessionTimeStyles)
+  }, 'task-board: session-time styles')
+  ctx.effect(() => registerAssistantTimeShadow(ctx.slots as unknown as SessionTimesSlots, sessionTimestampsEnabled), 'task-board: session-time assistant shadow')
 
   // The sidebar entry and board view mount once the settings scope settles;
   // while the scope is still loading, the composition default is unknown, so

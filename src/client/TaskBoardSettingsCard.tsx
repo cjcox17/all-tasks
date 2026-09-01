@@ -21,6 +21,8 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
+  /** Show what time each message and tool call ran at in the session view. */
+  sessionTimestamps?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
@@ -43,6 +45,8 @@ export interface TaskBoardSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
+  /** Session-view timestamp flag. */
+  sessionTimestamps: CardFieldState
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -64,6 +68,7 @@ export class TaskBoardSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('preventIdleSleep'),
+      booleanField('sessionTimestamps'),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -74,6 +79,7 @@ export class TaskBoardSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
+      sessionTimestamps: this.form.field('sessionTimestamps'),
     }
   }
 
@@ -177,6 +183,18 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         {...state.preventIdleSleep}
         onEdit={(text) => { props.edit('preventIdleSleep', text) }}
         onReset={() => { props.resetField('preventIdleSleep') }}
+      />
+      <BooleanField
+        id="settings-task-board-session-timestamps"
+        label={t('settings.sessionTimestamps')}
+        hint={t('settings.sessionTimestampsHint')}
+        inheritLabel={t('settings.inherit')}
+        onLabel={t('settings.on')}
+        offLabel={t('settings.off')}
+        {...fieldProps}
+        {...state.sessionTimestamps}
+        onEdit={(text) => { props.edit('sessionTimestamps', text) }}
+        onReset={() => { props.resetField('sessionTimestamps') }}
       />
       <EndpointsEditor t={t} disabled={disabled} />
       <p>
