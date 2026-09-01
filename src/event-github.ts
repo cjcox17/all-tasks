@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { EventMapping, EventRequest, EventSource } from './core/events.ts'
 
 export const GITHUB_EVENT_ID = 'github'
-export const GITHUB_EVENT_PATH = '/api/task-board/events/github'
+export const GITHUB_EVENT_PATH = '/api/all-tasks/events/github'
 
 const PROMPT_LIMIT = 64 * 1024
 const TITLE_LIMIT = 256

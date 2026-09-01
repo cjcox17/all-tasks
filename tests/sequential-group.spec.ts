@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 
 const roots: string[] = []
@@ -49,7 +49,7 @@ function setup(ledger: HostTaskLedger): void {
   }
 }
 
-function harness(ledger: HostTaskLedger): { service: TaskBoardHostService; create: ReturnType<typeof vi.fn> } {
+function harness(ledger: HostTaskLedger): { service: AllTasksHostService; create: ReturnType<typeof vi.fn> } {
   let sessionCounter = 0
   const create = vi.fn(async (request: { rpcId: unknown }) => {
     sessionCounter += 1
@@ -63,7 +63,7 @@ function harness(ledger: HostTaskLedger): { service: TaskBoardHostService; creat
       cancel: async (request: { rpcId: unknown }) => ok(request, { cancelled: true }),
     },
   } as unknown as ApiProxy
-  const service = new TaskBoardHostService(api, {
+  const service = new AllTasksHostService(api, {
     ledger,
     power: new PowerInhibitor({ platform: 'linux' }),
   })

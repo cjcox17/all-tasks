@@ -34,17 +34,17 @@ describe('board responsive css', () => {
   })
 
   it('responds to the board container rather than only the viewport', () => {
-    expect(css).toMatch(/\[data-dsh-taskboard-view\]\s*\{[^}]*container-name:\s*task-board-view/s)
-    expect(css).toContain('@container task-board-view (max-width: 768px)')
-    expect(css).toContain('@container task-board-view (max-width: 720px)')
-    expect(css).toContain('@container task-board-view (max-width: 600px)')
+    expect(css).toMatch(/\[data-dsh-all-tasks-view\]\s*\{[^}]*container-name:\s*all-tasks-view/s)
+    expect(css).toContain('@container all-tasks-view (max-width: 768px)')
+    expect(css).toContain('@container all-tasks-view (max-width: 720px)')
+    expect(css).toContain('@container all-tasks-view (max-width: 600px)')
     expect(css).toMatch(/\.boardHeader\s*\{[^}]*flex-wrap:\s*wrap/s)
     expect(css).toMatch(/\.search\s*\{[^}]*flex:\s*1 0 100%/s)
   })
 
   it('turns phone columns into one-card-per-swipe snap points', () => {
-    expect(css).toMatch(/@container task-board-view \(max-width: 768px\)[\s\S]*?\.columns\s*\{[^}]*grid-auto-columns:\s*86cqw/s)
-    expect(css).toMatch(/@container task-board-view \(max-width: 768px\)[\s\S]*?\.columns\s*\{[^}]*scroll-snap-type:\s*inline mandatory/s)
+    expect(css).toMatch(/@container all-tasks-view \(max-width: 768px\)[\s\S]*?\.columns\s*\{[^}]*grid-auto-columns:\s*86cqw/s)
+    expect(css).toMatch(/@container all-tasks-view \(max-width: 768px\)[\s\S]*?\.columns\s*\{[^}]*scroll-snap-type:\s*inline mandatory/s)
     expect(css).toMatch(/\.column\s*\{[^}]*scroll-snap-align:\s*start[^}]*scroll-snap-stop:\s*always/s)
   })
 

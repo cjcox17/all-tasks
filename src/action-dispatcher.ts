@@ -8,13 +8,13 @@ import { randomUUID } from 'node:crypto'
 import type { ActionContext, ActionRegistry } from './core/actions.ts'
 import type { NewTaskInput, TaskRecord } from './core/tasks.ts'
 import type { SettlementEvent } from './host-ledger.ts'
-import type { TaskBoardAction } from './protocol.ts'
+import type { AllTasksAction } from './protocol.ts'
 
 /** The ledger surface the dispatcher needs (satisfied by `HostTaskLedger`). */
 export interface SettlementLedger {
   onSettled(listener: (event: SettlementEvent) => void): () => void
   taskById(id: string): TaskRecord | undefined
-  applyRequest(requestId: string, action: TaskBoardAction): unknown
+  applyRequest(requestId: string, action: AllTasksAction): unknown
 }
 
 /** Resolves an action's config by id; `undefined` disables that action. */
@@ -61,7 +61,7 @@ export class ActionDispatcher {
       try {
         await action.run(context)
       } catch (error) {
-        console.error(`[dsh-task-board] action ${action.id} failed for ${event.taskId}`, error)
+        console.error(`[dsh-all-tasks] action ${action.id} failed for ${event.taskId}`, error)
       }
     }
   }

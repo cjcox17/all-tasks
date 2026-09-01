@@ -33,13 +33,13 @@ import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } fr
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
 import { planWorkspaceActions } from './workspace-actions.ts'
-import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '../protocol.ts'
+import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../protocol.ts'
 
-export interface TaskBoardTransport {
-  bootstrap(legacy: readonly TaskRecord[]): Promise<TaskBoardSnapshot>
-  state(): Promise<TaskBoardSnapshot>
-  action(action: TaskBoardAction): Promise<TaskBoardSnapshot>
-  subscribe(listener: (event?: TaskBoardEventPayload) => void): () => void
+export interface AllTasksTransport {
+  bootstrap(legacy: readonly TaskRecord[]): Promise<AllTasksSnapshot>
+  state(): Promise<AllTasksSnapshot>
+  action(action: AllTasksAction): Promise<AllTasksSnapshot>
+  subscribe(listener: (event?: AllTasksEventPayload) => void): () => void
 }
 
 /** The sessions face the controller needs for navigation awareness. */
@@ -61,7 +61,7 @@ export interface ControllerDeps {
   /** Id minting; defaults to a random-uuid. */
   uuid?: () => string
   /** Host-authoritative transport; absent keeps the legacy in-memory test path. */
-  transport?: TaskBoardTransport
+  transport?: AllTasksTransport
 }
 
 /** One workspace option the execution-target pickers offer. */
@@ -167,7 +167,7 @@ export interface ControllerSnapshot {
   /** Per-token pricing for the dashboard cost estimate (absent = not configured). */
   pricing?: CostPricing
   transportError?: string
-  host?: Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power'>
+  host?: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'>
 }
 
 /** The selected task (resolved from the ledger), or undefined. */
@@ -217,7 +217,7 @@ export class BoardController {
   private readonly taskQueues = new Map<string, Promise<void>>()
   private pricing: CostPricing | undefined
   private transportError: string | undefined
-  private hostState: Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
+  private hostState: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
   private remoteSubscribed = false
   private remoteInitialization: Promise<boolean> | undefined
 
@@ -881,7 +881,7 @@ export class BoardController {
     this.notify()
   }
 
-  private async commitRemote(action: TaskBoardAction, taskId?: string): Promise<boolean> {
+  private async commitRemote(action: AllTasksAction, taskId?: string): Promise<boolean> {
     const transport = this.deps.transport
     if (transport === undefined) return true
     if (taskId === undefined) return await this.performRemote(action)
@@ -902,7 +902,7 @@ export class BoardController {
     }
   }
 
-  private async performRemote(action: TaskBoardAction): Promise<boolean> {
+  private async performRemote(action: AllTasksAction): Promise<boolean> {
     const transport = this.deps.transport
     if (transport === undefined) return true
     this.transportError = undefined
@@ -950,7 +950,7 @@ export class BoardController {
    * the full /state fetch; otherwise the 5 s heartbeat would re-clone and
    * re-serialize the whole ledger per tab even while nothing changes.
    */
-  private onRemoteEvent(event: TaskBoardEventPayload | undefined): void {
+  private onRemoteEvent(event: AllTasksEventPayload | undefined): void {
     if (event !== undefined && this.hostState !== undefined && event.revision === this.hostState.revision
       && typeof event.scheduler === 'object' && event.scheduler !== null
       && typeof event.power === 'object' && event.power !== null) {
@@ -978,7 +978,7 @@ export class BoardController {
     }
   }
 
-  private acceptRemote(snapshot: TaskBoardSnapshot): boolean {
+  private acceptRemote(snapshot: AllTasksSnapshot): boolean {
     const currentLedgerId = this.hostState?.scheduler.ledgerId
     const nextLedgerId = snapshot.scheduler.ledgerId
     const sameGeneration = currentLedgerId === nextLedgerId

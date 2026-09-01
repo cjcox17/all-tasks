@@ -1,5 +1,5 @@
 /**
- * Task-board copy: zh-first dictionaries with an English fallback, selected
+ * All-tasks copy: zh-first dictionaries with an English fallback, selected
  * by the document language. Kept dependency-free (no dsh locale service) so
  * the DOM-injected entry row and the standalone board tree share one tiny
  * lookup.
@@ -636,19 +636,19 @@ export const en: Record<keyof typeof zh, string> = {
 }
 
 /** The dictionary key union. */
-export type TaskBoardKey = keyof typeof zh
+export type AllTasksKey = keyof typeof zh
 
-/** The settings-card slice of the task-board dictionary. */
-export type SettingsCardKey = TaskBoardKey
+/** The settings-card slice of the all-tasks dictionary. */
+export type SettingsCardKey = AllTasksKey
 
 /** Active dictionary, picked by the document language at call time. */
-export function dictionary(): Record<TaskBoardKey, string> {
+export function dictionary(): Record<AllTasksKey, string> {
   const lang = typeof document !== 'undefined' ? document.documentElement.lang : 'zh'
   return lang.toLowerCase().startsWith('en') ? en : zh
 }
 
 /** Translate a key with optional {name} template params. */
-export function t(key: TaskBoardKey, params?: Record<string, string>): string {
+export function t(key: AllTasksKey, params?: Record<string, string>): string {
   let text: string = dictionary()[key]
   if (params !== undefined) {
     for (const [name, value] of Object.entries(params)) {

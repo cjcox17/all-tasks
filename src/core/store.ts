@@ -2,7 +2,7 @@
  * Legacy v1 browser persistence and the store seam used by pure client tests.
  *
  * Production v2 state is Host-authoritative. This backend is retained only to
- * read `dsh.taskBoard.v1` for one-time import; the old value is never removed,
+ * read `dsh.allTasks.v1` for one-time import; the old value is never removed,
  * so it remains a read-only rollback copy after migration.
  *
  * The seam keeps the backend swappable (e.g. an IndexedDB or a host-file
@@ -32,7 +32,7 @@ export interface TaskStore {
 }
 
 /** Storage key for the task ledger document. */
-export const DEFAULT_STORAGE_KEY = 'dsh.taskBoard.v1'
+export const DEFAULT_STORAGE_KEY = 'dsh.allTasks.v1'
 
 /** Structural shape of the storage event fired in sibling tabs (DOM-free). */
 export interface StorageChangeEvent {
@@ -125,11 +125,11 @@ export function parseLedger(raw: string | null): TaskRecord[] {
   try {
     parsed = JSON.parse(raw)
   } catch (error) {
-    console.error('[dsh-task-board] persisted task ledger is not valid JSON; starting empty', error)
+    console.error('[dsh-all-tasks] persisted task ledger is not valid JSON; starting empty', error)
     return []
   }
   if (!Array.isArray(parsed)) {
-    console.error('[dsh-task-board] persisted task ledger is not an array; starting empty')
+    console.error('[dsh-all-tasks] persisted task ledger is not an array; starting empty')
     return []
   }
   const tasks: TaskRecord[] = []
@@ -138,7 +138,7 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     // todo instead of dropping the row); the schedule is repaired field by
     // field; every other field must be valid.
     if (!isTaskRecordShape(row)) {
-      console.warn('[dsh-task-board] dropping invalid task row from persisted ledger', row)
+      console.warn('[dsh-all-tasks] dropping invalid task row from persisted ledger', row)
       continue
     }
     // Always (re)assign the schedule: a repair that returns undefined must
@@ -201,7 +201,7 @@ export class LocalStorageTaskStore implements TaskStore {
     } catch (error) {
       // Storage read failures (private mode, quota) degrade to an empty ledger,
       // never break the board.
-      console.error('[dsh-task-board] task ledger read failed; starting empty', error)
+      console.error('[dsh-all-tasks] task ledger read failed; starting empty', error)
       return []
     }
   }
@@ -212,7 +212,7 @@ export class LocalStorageTaskStore implements TaskStore {
       this.storage.setItem(this.key, JSON.stringify(tasks))
     } catch (error) {
       // Write failures only skip persistence; in-memory state stays live.
-      console.error('[dsh-task-board] task ledger write failed (persistence skipped)', error)
+      console.error('[dsh-all-tasks] task ledger write failed (persistence skipped)', error)
     }
   }
 
@@ -221,7 +221,7 @@ export class LocalStorageTaskStore implements TaskStore {
     try {
       this.storage.removeItem(this.key)
     } catch (error) {
-      console.error('[dsh-task-board] task ledger clear failed', error)
+      console.error('[dsh-all-tasks] task ledger clear failed', error)
     }
   }
 

@@ -15,7 +15,7 @@ import {
   type ModelTimeoutView,
 } from './model-timeouts.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
-import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from './protocol.ts'
+import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from './protocol.ts'
 
 const SESSION_POLL_MS = 5_000
 const SCHEDULE_TICK_MS = 30_000
@@ -32,7 +32,7 @@ function emptyRouterConfig(): EndpointRouterConfig {
   return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] }
 }
 
-export class TaskBoardHostService {
+export class AllTasksHostService {
   readonly ledger: HostTaskLedger
   readonly runner: HostExecutionRunner
   readonly power: PowerInhibitor
@@ -125,7 +125,7 @@ export class TaskBoardHostService {
     this.emit()
   }
 
-  snapshot(): TaskBoardSnapshot {
+  snapshot(): AllTasksSnapshot {
     const state = this.ledger.state()
     return {
       schemaVersion: 2,
@@ -140,7 +140,7 @@ export class TaskBoardHostService {
   }
 
   /** SSE frame payload; deliberately skips the tasks deep-clone of {@link snapshot}. */
-  eventPayload(): TaskBoardEventPayload {
+  eventPayload(): AllTasksEventPayload {
     const { revision, scheduler } = this.ledger.summary()
     return { revision, scheduler, power: this.power.snapshot() }
   }
@@ -150,7 +150,7 @@ export class TaskBoardHostService {
     return () => { this.listeners.delete(listener) }
   }
 
-  apply(requestId: string, action: TaskBoardAction): TaskBoardSnapshot {
+  apply(requestId: string, action: AllTasksAction): AllTasksSnapshot {
     if (!this.active) throw new Error('task board is disabled')
     const result = this.ledger.applyRequest(requestId, action)
     if (result.run !== undefined) this.scheduleLaunch(result.run)
@@ -163,7 +163,7 @@ export class TaskBoardHostService {
     if (result.stopSessions !== undefined) {
       for (const sessionId of result.stopSessions) {
         void this.runner.cancel(sessionId).catch(error => {
-          console.error('[dsh-task-board] session cancel failed', error)
+          console.error('[dsh-all-tasks] session cancel failed', error)
         })
       }
     }
@@ -172,7 +172,7 @@ export class TaskBoardHostService {
     // cancelled on the next poll).
     for (const resume of result.resumeRuns ?? []) {
       void this.runner.continue(resume.task, resume.sessionId).catch(error => {
-        console.error('[dsh-task-board] session resume failed', error)
+        console.error('[dsh-all-tasks] session resume failed', error)
       })
     }
     return {
@@ -219,7 +219,7 @@ export class TaskBoardHostService {
   }
 
   /**
-   * The current endpoint editor state over the `task-board` namespace: the
+   * The current endpoint editor state over the `all-tasks` namespace: the
    * configured endpoints (with per-endpoint timeouts resolved from the
    * provider route settings) plus the global default order. Empty when no
    * settings seam is wired.
@@ -227,7 +227,7 @@ export class TaskBoardHostService {
   endpoints(): EndpointEditorState {
     const settings = this.settings
     if (settings === undefined) return { endpoints: [], defaultEndpoints: [] }
-    return readEndpointEditorState(settings.get('task-board'), this.modelTimeouts())
+    return readEndpointEditorState(settings.get('all-tasks'), this.modelTimeouts())
   }
 
   /** The provider catalog the endpoint editor offers (routes + their models and timeouts). */
@@ -239,7 +239,7 @@ export class TaskBoardHostService {
 
   /**
    * Store one endpoint editor state through the settings seam: the endpoint
-   * list lands in the `task-board` namespace and each endpoint's idle/total
+   * list lands in the `all-tasks` namespace and each endpoint's idle/total
    * timeouts write through to its provider route's settings (the only place
    * DSH honors them). The writes are validated by the respective schemas,
    * then the state is re-read so the caller gets the effective list after the
@@ -251,7 +251,7 @@ export class TaskBoardHostService {
   async applyEndpoints(state: EndpointEditorState): Promise<EndpointEditorState> {
     const settings = this.settings
     if (settings === undefined) throw new Error('settings service is unavailable')
-    await settings.mutate('task-board', endpointEditorOps(state))
+    await settings.mutate('all-tasks', endpointEditorOps(state))
     const catalog = this.endpointProviders()
     for (const patch of endpointTimeoutPatches(state, catalog)) {
       const target = this.modelTimeouts().find(view => view.provider === patch.provider)
@@ -263,7 +263,7 @@ export class TaskBoardHostService {
       })
       await settings.mutate(namespace, ops)
     }
-    return readEndpointEditorState(settings.get('task-board'), this.modelTimeouts())
+    return readEndpointEditorState(settings.get('all-tasks'), this.modelTimeouts())
   }
 
   dispose(): void {
@@ -437,7 +437,7 @@ export class TaskBoardHostService {
         this.launching.add(opened.execution.id)
         void this.launch(opened.task, opened.execution.id, decision.mode === 'routed' ? decision.selection : undefined)
           .catch(error => {
-            console.error('[dsh-task-board] group advance launch failed', error)
+            console.error('[dsh-all-tasks] group advance launch failed', error)
           })
           .finally(() => { this.launching.delete(opened.execution.id) })
       }
@@ -467,7 +467,7 @@ export class TaskBoardHostService {
     this.routePassInFlight = true
     this.routePassPending = false
     void this.routeQueued().catch(error => {
-      console.error('[dsh-task-board] endpoint queue re-check failed', error)
+      console.error('[dsh-all-tasks] endpoint queue re-check failed', error)
     }).finally(() => {
       this.routePassInFlight = false
       if (this.routePassPending) this.scheduleRoutePass()
@@ -490,7 +490,7 @@ export class TaskBoardHostService {
       // paused run must never execute: halt the freshly attached session.
       if (this.ledger.executionPaused(task.id, executionId)) {
         void this.runner.cancel(sessionId).catch(error => {
-          console.error('[dsh-task-board] session cancel failed', error)
+          console.error('[dsh-all-tasks] session cancel failed', error)
         })
       }
     } catch (error) {
@@ -630,7 +630,7 @@ export class TaskBoardHostService {
 
   private scheduleLaunch(opened: OpenedRun): void {
     void this.launchRouted(opened).catch(error => {
-      console.error('[dsh-task-board] execution launch settlement failed', error)
+      console.error('[dsh-all-tasks] execution launch settlement failed', error)
     })
   }
 
@@ -638,7 +638,7 @@ export class TaskBoardHostService {
     if (this.pollInFlight || this.disposed) return
     this.pollInFlight = true
     void this.pollSessions().catch(error => {
-      console.error('[dsh-task-board] session polling failed', error)
+      console.error('[dsh-all-tasks] session polling failed', error)
     }).finally(() => { this.pollInFlight = false })
   }
 
@@ -646,7 +646,7 @@ export class TaskBoardHostService {
     if (this.tickInFlight || this.disposed) return
     this.tickInFlight = true
     void this.tickSchedule(first).catch(error => {
-      console.error('[dsh-task-board] scheduler tick failed', error)
+      console.error('[dsh-all-tasks] scheduler tick failed', error)
     }).finally(() => { this.tickInFlight = false })
   }
 

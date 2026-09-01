@@ -46,9 +46,9 @@ describe('LocalStorageTaskStore', () => {
 
   it('persists under the configured key with a JSON document', () => {
     const storage = new FakeStorage()
-    const store = new LocalStorageTaskStore('dsh.taskBoard.v1', storage)
+    const store = new LocalStorageTaskStore('dsh.allTasks.v1', storage)
     store.save(sampleLedger())
-    expect(storage.getItem('dsh.taskBoard.v1')).toBe(JSON.stringify(sampleLedger()))
+    expect(storage.getItem('dsh.allTasks.v1')).toBe(JSON.stringify(sampleLedger()))
   })
 
   it('clears the document on clear()', () => {
@@ -96,12 +96,12 @@ describe('LocalStorageTaskStore.subscribeExternal', () => {
   it('notifies only for its own key (or a full storage clear)', () => {
     const storage = new FakeStorage()
     const events = new FakeEvents()
-    const store = new LocalStorageTaskStore('dsh.taskBoard.v1', storage, events)
+    const store = new LocalStorageTaskStore('dsh.allTasks.v1', storage, events)
     const listener = vi.fn()
     store.subscribeExternal(listener)
     events.fire('some.other.key')
     expect(listener).not.toHaveBeenCalled()
-    events.fire('dsh.taskBoard.v1')
+    events.fire('dsh.allTasks.v1')
     expect(listener).toHaveBeenCalledTimes(1)
     // A null key means the whole storage was cleared by another tab.
     events.fire(null)

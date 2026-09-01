@@ -383,11 +383,11 @@ export function registerAssistantTimeShadow(
         name: 'conversation.chat.node',
         key: ASSISTANT_CELL_KEY,
         priority: floor,
-        locale: 'task-board',
+        locale: 'all-tasks',
       }, shadow)
       return () => { unregister() }
     } catch (error) {
-      console.warn('[dsh-task-board] session-time assistant shadow registration failed:', error)
+      console.warn('[dsh-all-tasks] session-time assistant shadow registration failed:', error)
       return () => {}
     }
   })

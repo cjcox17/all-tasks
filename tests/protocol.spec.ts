@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createTask } from '../src/core/tasks.ts'
 import { parseActionEnvelope } from '../src/protocol.ts'
 
-describe('task-board action protocol', () => {
+describe('all-tasks action protocol', () => {
   it('accepts the versioned action union and rejects unknown executable fields', () => {
     expect(parseActionEnvelope({
       requestId: 'request-a',

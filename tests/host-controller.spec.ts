@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BoardController, type SessionsControllerFace, type TaskBoardTransport } from '../src/core/controller.ts'
+import { BoardController, type SessionsControllerFace, type AllTasksTransport } from '../src/core/controller.ts'
 import { InMemoryTaskStore } from '../src/core/store.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
-import type { TaskBoardEventPayload, TaskBoardSnapshot } from '../src/protocol.ts'
+import type { AllTasksEventPayload, AllTasksSnapshot } from '../src/protocol.ts'
 
-function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger-a'): TaskBoardSnapshot {
+function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger-a'): AllTasksSnapshot {
   return {
     schemaVersion: 2,
     revision,
@@ -28,9 +28,9 @@ function sessions(): SessionsControllerFace {
 
 describe('Host-backed BoardController', () => {
   it('keeps a create pending and invisible until the Host confirms it', async () => {
-    let resolveAction!: (value: TaskBoardSnapshot) => void
-    const action = vi.fn(() => new Promise<TaskBoardSnapshot>(resolve => { resolveAction = resolve }))
-    const transport: TaskBoardTransport = {
+    let resolveAction!: (value: AllTasksSnapshot) => void
+    const action = vi.fn(() => new Promise<AllTasksSnapshot>(resolve => { resolveAction = resolve }))
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(0),
       state: async () => snapshot(0),
       action,
@@ -56,7 +56,7 @@ describe('Host-backed BoardController', () => {
     const confirmed = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
     let onEvent: (() => void) | undefined
     let remoteState = snapshot(2, [confirmed])
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => remoteState,
       state: async () => remoteState,
       action: async () => { throw new Error('host unavailable') },
@@ -84,7 +84,7 @@ describe('Host-backed BoardController', () => {
     store.save([legacy])
     let online = false
     const subscribe = vi.fn(() => () => undefined)
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => {
         if (!online) throw new Error('migration offline')
         return snapshot(1, [confirmed])
@@ -107,9 +107,9 @@ describe('Host-backed BoardController', () => {
 
   it('queues conflicting actions for one task and keeps pending until the queue drains', async () => {
     const initial = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
-    const resolvers: Array<(value: TaskBoardSnapshot) => void> = []
-    const action = vi.fn(async () => await new Promise<TaskBoardSnapshot>(resolve => { resolvers.push(resolve) }))
-    const transport: TaskBoardTransport = {
+    const resolvers: Array<(value: AllTasksSnapshot) => void> = []
+    const action = vi.fn(async () => await new Promise<AllTasksSnapshot>(resolve => { resolvers.push(resolve) }))
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(1, [initial]),
       state: async () => snapshot(1, [initial]),
       action,
@@ -135,7 +135,7 @@ describe('Host-backed BoardController', () => {
     const refreshed = { ...initial, title: 'fresh', updatedAt: 3 }
     const state = vi.fn(async () => snapshot(3, [refreshed]))
     let onEvent: (() => void) | undefined
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(2, [initial]),
       state,
       action: async () => snapshot(1, []),
@@ -159,8 +159,8 @@ describe('Host-backed BoardController', () => {
   it('applies a same-revision SSE frame in place without refetching the full state', async () => {
     const confirmed = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
     const state = vi.fn(async () => snapshot(2, [confirmed]))
-    let onEvent: ((event?: TaskBoardEventPayload) => void) | undefined
-    const transport: TaskBoardTransport = {
+    let onEvent: ((event?: AllTasksEventPayload) => void) | undefined
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(2, [confirmed]),
       state,
       action: async () => snapshot(2, [confirmed]),
@@ -189,8 +189,8 @@ describe('Host-backed BoardController', () => {
   it('still refetches the full state when the SSE revision differs', async () => {
     const confirmed = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
     const state = vi.fn(async () => snapshot(3, [confirmed]))
-    let onEvent: ((event?: TaskBoardEventPayload) => void) | undefined
-    const transport: TaskBoardTransport = {
+    let onEvent: ((event?: AllTasksEventPayload) => void) | undefined
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(2, [confirmed]),
       state,
       action: async () => snapshot(2, [confirmed]),
@@ -208,8 +208,8 @@ describe('Host-backed BoardController', () => {
   it('falls back to a full refresh when the SSE frame is missing', async () => {
     const confirmed = createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a')
     const state = vi.fn(async () => snapshot(2, [confirmed]))
-    let onEvent: ((event?: TaskBoardEventPayload) => void) | undefined
-    const transport: TaskBoardTransport = {
+    let onEvent: ((event?: AllTasksEventPayload) => void) | undefined
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(2, [confirmed]),
       state,
       action: async () => snapshot(2, [confirmed]),
@@ -231,7 +231,7 @@ describe('Host-backed BoardController', () => {
         workspaceDefaults: { 'ws-a': { mode: 'planner', approved: false } },
       }
     })
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(0),
       state: async () => snapshot(0),
       action,

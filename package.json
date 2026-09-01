@@ -1,6 +1,6 @@
 {
-  "name": "@linxin666/dsh-client-ui-all-tasks",
-  "description": "All Tasks - a Host-authoritative task board for the DSH Web GUI with real session execution, Host cron scheduling, and optional cross-platform idle-sleep protection; standalone fork of @linxin666/dsh-client-ui-task-board (zhu1090093659/dsh-web).",
+  "name": "@cjcox17/all-tasks",
+  "description": "All Tasks - a Host-authoritative task board for the DSH Web GUI with real session execution, Host cron scheduling, and optional cross-platform idle-sleep protection; an independent project originally derived from dsh-task-board (@linxin666/dsh-client-ui-task-board, zhu1090093659/dsh-web).",
   "version": "0.3.6",
   "type": "module",
   "main": "lib/index.js",

@@ -979,7 +979,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
 }
 
 /** Board component; subscribes to the controller snapshot. */
-export function TaskBoard({ controller }: { controller: BoardController }) {
+export function AllTasks({ controller }: { controller: BoardController }) {
   const [snapshot, setSnapshot] = useState(controller.getSnapshot())
   useEffect(
     () => controller.subscribe(() => setSnapshot(controller.getSnapshot())),
@@ -1009,7 +1009,7 @@ export function TaskBoard({ controller }: { controller: BoardController }) {
   const selected = selectedTaskOf(snapshot)
 
   return (
-    <div className={css.board} data-dsh-taskboard-board="" data-dsh-plugin="task-board">
+    <div className={css.board} data-dsh-all-tasks-board="" data-dsh-plugin="all-tasks">
       {view === undefined ? (
         <header className={css.boardHeader}>
           {/* Shared hook: dsh-web-all offsets center-view back controls beside the collapsed mobile sidebar. */}

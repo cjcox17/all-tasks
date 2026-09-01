@@ -16,7 +16,7 @@ import type { TaskGroupRecord } from '../../core/groups.ts'
 import type { ExecutionWorkspaceOption } from '../../core/controller.ts'
 import type { TaskRecord, TaskStatus } from '../../core/tasks.ts'
 import { planWorkspaceActions } from '../../core/workspace-actions.ts'
-import { t, type TaskBoardKey } from '../locales.ts'
+import { t, type AllTasksKey } from '../locales.ts'
 import { STATUS_KEY } from './status-key.ts'
 import css from '../board.module.css'
 import {
@@ -28,7 +28,7 @@ import {
 } from './workspace-list.ts'
 
 /** The count columns shown on every workspace row, in display order. */
-const COUNT_COLUMNS: readonly { key: TaskBoardKey; field: keyof WorkspaceCounts; col: string }[] = [
+const COUNT_COLUMNS: readonly { key: AllTasksKey; field: keyof WorkspaceCounts; col: string }[] = [
   { key: 'grid.count.todo', field: 'todo', col: 'todo' },
   { key: 'grid.count.pending', field: 'pending', col: 'pending' },
   { key: 'grid.count.working', field: 'working', col: 'working' },

@@ -7,7 +7,7 @@
  * runner dispatches `/compact` on the shared session before each member's
  * prompt, keeping the context bounded without losing it.
  *
- * These tests drive the real Host service (TaskBoardHostService + ledger +
+ * These tests drive the real Host service (AllTasksHostService + ledger +
  * runner) against a fake DSH api, so they cover the full launch/settle/advance
  * wiring: the first member creates the session, the auto-advance chain reuses
  * it, /compact is dispatched between members, a parallel group never shares,
@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 
 const roots: string[] = []
@@ -65,7 +65,7 @@ function harness(ledger: HostTaskLedger, commands?: { execute: ReturnType<typeof
       items: [...liveSessions].map(sessionId => ({ sessionId, running: false })),
     }),
   }
-  const service = new TaskBoardHostService({ sessions } as unknown as ApiProxy, {
+  const service = new AllTasksHostService({ sessions } as unknown as ApiProxy, {
     ledger,
     power: new PowerInhibitor({ platform: 'linux' }),
     ...(commands === undefined ? {} : { commandDispatcher: commands }),

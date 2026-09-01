@@ -5,7 +5,7 @@ import { extractSummary } from './core/result-summary.ts'
 import type { ExecutionUsage, TaskRecord } from './core/tasks.ts'
 
 function request<T>(payload: T) {
-  return { rpcId: `task-board-${crypto.randomUUID()}` as RpcId, payload }
+  return { rpcId: `all-tasks-${crypto.randomUUID()}` as RpcId, payload }
 }
 
 /**

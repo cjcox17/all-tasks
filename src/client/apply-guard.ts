@@ -1,5 +1,5 @@
 /**
- * Cross-module-instance apply guard for the task-board client bundle.
+ * Cross-module-instance apply guard for the all-tasks client bundle.
  *
  * The client factory can run more than once in a single page lifetime (for
  * example when a stale bundle is mixed with a rebuilt one while `dsh web` is
@@ -14,13 +14,13 @@
 
 declare global {
   // eslint-disable-next-line no-var
-  var __dshTaskboardApplied: boolean | undefined
+  var __dshAllTasksApplied: boolean | undefined
 }
 
 /** Claims the plugin apply slot. Returns true when this call won the slot. */
-export function claimTaskboardApply(): boolean {
-  if (globalThis.__dshTaskboardApplied === true) return false
-  globalThis.__dshTaskboardApplied = true
+export function claimAllTasksApply(): boolean {
+  if (globalThis.__dshAllTasksApplied === true) return false
+  globalThis.__dshAllTasksApplied = true
   return true
 }
 
@@ -30,6 +30,6 @@ export function claimTaskboardApply(): boolean {
  * the rebuilt one in the same page) can claim again instead of being
  * silently dropped.
  */
-export function releaseTaskboardApply(): void {
-  globalThis.__dshTaskboardApplied = undefined
+export function releaseAllTasksApply(): void {
+  globalThis.__dshAllTasksApplied = undefined
 }

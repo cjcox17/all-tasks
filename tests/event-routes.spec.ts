@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventSourceRegistry } from '../src/core/events.ts'
 import { createHttpEventSource } from '../src/event-http.ts'
 import { makeEventRoutes } from '../src/host-routes.ts'
-import type { TaskBoardHostService } from '../src/host-service.ts'
+import type { AllTasksHostService } from '../src/host-service.ts'
 
 function post(url: string, headers: Record<string, string>, body: string): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
@@ -31,7 +31,7 @@ describe('event routes', () => {
       apply,
       snapshot: () => ({}),
       subscribe: () => () => undefined,
-    } as unknown as TaskBoardHostService
+    } as unknown as AllTasksHostService
     const routes = makeEventRoutes(registry, service)
     server = createServer((req, res) => {
       const route = routes.find(candidate => candidate.path === new URL(req.url ?? '/', 'http://local').pathname)
@@ -50,7 +50,7 @@ describe('event routes', () => {
 
   it('creates a task from a verified loopback event', async () => {
     const result = await post(
-      `${base}/api/task-board/events/http`,
+      `${base}/api/all-tasks/events/http`,
       { 'content-type': 'application/json', origin: base },
       JSON.stringify({ event: 'build failed' }),
     )
@@ -61,7 +61,7 @@ describe('event routes', () => {
   })
 
   it('rejects a request without the browser same-origin marker', async () => {
-    const result = await post(`${base}/api/task-board/events/http`, { 'content-type': 'application/json' }, '{}')
+    const result = await post(`${base}/api/all-tasks/events/http`, { 'content-type': 'application/json' }, '{}')
     expect(result.status).toBe(403)
     expect(apply).not.toHaveBeenCalled()
   })

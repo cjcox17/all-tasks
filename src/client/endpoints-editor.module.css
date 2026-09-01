@@ -1,4 +1,4 @@
-/* Endpoints editor inside the task-board settings card. Self-contained (the
+/* Endpoints editor inside the all-tasks settings card. Self-contained (the
  * card chrome stylesheet is vendored and must not be edited); mirrors the
  * shared field/input/button tokens so the section reads as part of the
  * settings family. */

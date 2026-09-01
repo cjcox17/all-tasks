@@ -1,20 +1,20 @@
 /**
- * Task-board settings for availability, agent announcement, and optional Host
+ * All-tasks settings for availability, agent announcement, and optional Host
  * idle-sleep protection. Registers into the official `settings.plugin.item`
- * keyed slot (the Plugins section's configurable tab) under the `task-board`
- * namespace key, bound to the `task-board` namespace.
+ * keyed slot (the Plugins section's configurable tab) under the `all-tasks`
+ * namespace key, bound to the `all-tasks` namespace.
  */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { useEffect, useState } from 'react'
-import type { TaskBoardPowerSnapshot } from '../protocol.ts'
+import type { AllTasksPowerSnapshot } from '../protocol.ts'
 import { EndpointsEditor } from './EndpointsEditor.tsx'
 import { PluginSettingsCard, BooleanField, ValueField } from './PluginSettingsCard.tsx'
 import { CardForm, booleanField, numberField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
-/** The task-board fields this card edits (the namespace's full schema). */
-export interface TaskBoardSettings {
+/** The all-tasks fields this card edits (the namespace's full schema). */
+export interface AllTasksSettings {
   /** Master switch for the plugin. */
   enabled?: boolean
   /** Whether the board announces itself in every agent's system prompt. */
@@ -41,8 +41,8 @@ export interface TaskBoardSettings {
   }>
 }
 
-/** What the task-board card renders. */
-export interface TaskBoardSettingsCardState extends CardShell {
+/** What the all-tasks card renders. */
+export interface AllTasksSettingsCardState extends CardShell {
   /** Master switch. */
   enabled: CardFieldState
   /** System-prompt announcement flag. */
@@ -58,20 +58,20 @@ export interface TaskBoardSettingsCardState extends CardShell {
 }
 
 /** The registration-side face the card's slot entry injects. */
-export interface TaskBoardSettingsCardFace extends CardActions {
+export interface AllTasksSettingsCardFace extends CardActions {
   hooks: {
-    /** Card snapshot bound by the renderer as useTaskBoardSettingsCard. */
-    taskBoardSettingsCard: SnapshotStore<TaskBoardSettingsCardState>
+    /** Card snapshot bound by the renderer as useAllTasksSettingsCard. */
+    allTasksSettingsCard: SnapshotStore<AllTasksSettingsCardState>
   }
 }
 
-/** Bridges the `task-board` scope onto the card's staged form. */
-export class TaskBoardSettingsCardController {
-  private readonly form: CardForm<TaskBoardSettings>
-  private readonly store: SnapshotStore<TaskBoardSettingsCardState>
+/** Bridges the `all-tasks` scope onto the card's staged form. */
+export class AllTasksSettingsCardController {
+  private readonly form: CardForm<AllTasksSettings>
+  private readonly store: SnapshotStore<AllTasksSettingsCardState>
 
-  /** @param scope - the bound settings scope for the `task-board` namespace. */
-  constructor(scope: SettingsScope<TaskBoardSettings>) {
+  /** @param scope - the bound settings scope for the `all-tasks` namespace. */
+  constructor(scope: SettingsScope<AllTasksSettings>) {
     this.form = new CardForm(scope, [
       booleanField('enabled'),
       booleanField('announceToAgent'),
@@ -83,7 +83,7 @@ export class TaskBoardSettingsCardController {
     this.store = this.form.bind(() => this.projection())
   }
 
-  private projection(): TaskBoardSettingsCardState {
+  private projection(): AllTasksSettingsCardState {
     return {
       ...this.form.shell(),
       enabled: this.form.field('enabled'),
@@ -99,8 +99,8 @@ export class TaskBoardSettingsCardController {
    * Build the face the card's slot registration injects.
    * @returns the card's snapshot and its form actions.
    */
-  inject(): TaskBoardSettingsCardFace {
-    return { hooks: { taskBoardSettingsCard: this.store }, ...this.form.actions() }
+  inject(): AllTasksSettingsCardFace {
+    return { hooks: { allTasksSettingsCard: this.store }, ...this.form.actions() }
   }
 
   /**
@@ -112,31 +112,31 @@ export class TaskBoardSettingsCardController {
   }
 }
 
-/** Props the renderer binds for the task-board card. */
-export type TaskBoardSettingsCardProps =
+/** Props the renderer binds for the all-tasks card. */
+export type AllTasksSettingsCardProps =
   PropsRuntime<'settings.plugin.item'>
-  & PropsLocale<'task-board'>
-  & InjectFace<TaskBoardSettingsCardFace>
+  & PropsLocale<'all-tasks'>
+  & InjectFace<AllTasksSettingsCardFace>
 
 /**
- * Render the task-board card.
+ * Render the all-tasks card.
  * @param props - locale copy, the card snapshot, and its form actions.
  * @returns the card.
  */
-export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
+export function AllTasksSettingsCard(props: AllTasksSettingsCardProps) {
   const { t } = props
-  const state = props.useTaskBoardSettingsCard(snapshot => snapshot)
+  const state = props.useAllTasksSettingsCard(snapshot => snapshot)
   const disabled = !state.writable
-  const [power, setPower] = useState<TaskBoardPowerSnapshot | undefined>()
+  const [power, setPower] = useState<AllTasksPowerSnapshot | undefined>()
   useEffect(() => {
     // The SSE channel already carries power on every real change and pushes
     // one frame on subscribe; polling the full /state snapshot every 5 s
     // re-cloned and re-serialized the whole ledger server-side for one field.
     let live = true
-    const events = new EventSource('/api/task-board/events')
+    const events = new EventSource('/api/all-tasks/events')
     events.onmessage = (message: MessageEvent<string>): void => {
       try {
-        const frame = JSON.parse(message.data) as { power?: TaskBoardPowerSnapshot }
+        const frame = JSON.parse(message.data) as { power?: AllTasksPowerSnapshot }
         if (frame.power !== undefined && live) setPower(frame.power)
       } catch {
         // The settings form remains usable while the host status is reconnecting.
@@ -161,7 +161,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
       onDiscard={props.discard}
     >
       <BooleanField
-        id="settings-task-board-enabled"
+        id="settings-all-tasks-enabled"
         label={t('settings.enabled')}
         hint={t('settings.enabledHint')}
         inheritLabel={t('settings.inherit')}
@@ -173,7 +173,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('enabled') }}
       />
       <BooleanField
-        id="settings-task-board-announce"
+        id="settings-all-tasks-announce"
         label={t('settings.announceToAgent')}
         hint={t('settings.announceToAgentHint')}
         inheritLabel={t('settings.inherit')}
@@ -185,7 +185,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('announceToAgent') }}
       />
       <BooleanField
-        id="settings-task-board-prevent-idle-sleep"
+        id="settings-all-tasks-prevent-idle-sleep"
         label={t('settings.preventIdleSleep')}
         hint={t('settings.preventIdleSleepHint')}
         inheritLabel={t('settings.inherit')}
@@ -197,7 +197,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('preventIdleSleep') }}
       />
       <ValueField
-        id="settings-task-board-cost-input"
+        id="settings-all-tasks-cost-input"
         numeric
         label={t('settings.costInput')}
         hint={t('settings.costHint')}
@@ -208,7 +208,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('costPerMillionInputTokens') }}
       />
       <ValueField
-        id="settings-task-board-cost-output"
+        id="settings-all-tasks-cost-output"
         numeric
         label={t('settings.costOutput')}
         hint={t('settings.costHint')}
@@ -219,7 +219,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         onReset={() => { props.resetField('costPerMillionOutputTokens') }}
       />
       <BooleanField
-        id="settings-task-board-session-timestamps"
+        id="settings-all-tasks-session-timestamps"
         label={t('settings.sessionTimestamps')}
         hint={t('settings.sessionTimestampsHint')}
         inheritLabel={t('settings.inherit')}

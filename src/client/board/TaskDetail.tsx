@@ -12,7 +12,7 @@ import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type ExecutionRecord, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
-import { t, type TaskBoardKey } from '../locales.ts'
+import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
@@ -23,14 +23,14 @@ import { ReasoningEffortPicker } from './ReasoningEffortPicker.tsx'
 import { STATUS_KEY } from './status-key.ts'
 
 /** Execution outcome → locale key. */
-const RESULT_KEY: Record<NonNullable<ExecutionRecord['result']>, TaskBoardKey> = {
+const RESULT_KEY: Record<NonNullable<ExecutionRecord['result']>, AllTasksKey> = {
   succeeded: 'detail.result.succeeded',
   failed: 'detail.result.failed',
   cancelled: 'detail.result.cancelled',
 }
 
 /** Why a queued run is waiting → locale key (endpoint is the default). */
-function waitingKey(reason: ExecutionRecord['queuedReason']): TaskBoardKey {
+function waitingKey(reason: ExecutionRecord['queuedReason']): AllTasksKey {
   if (reason === 'group') return 'detail.result.waitingGroup'
   if (reason === 'window') return 'detail.result.waitingWindow'
   if (reason === 'workspace') return 'detail.result.waitingWorkspace'
@@ -134,7 +134,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
     : defaults.endpoints.map(id => options.endpoints.find(option => option.id === id)?.name ?? id).join('、')
   const defaultPermission = defaults?.permission === undefined
     ? undefined
-    : t(`exec.permission.${defaults.permission}` as TaskBoardKey)
+    : t(`exec.permission.${defaults.permission}` as AllTasksKey)
   const workspaceDefaultHint = (value: string | undefined): ReactNode =>
     value === undefined ? null : (
       <span className={css.settingsHint}>{t('detail.workspaceDefault', { value })}</span>
@@ -290,7 +290,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
         >
           <option value="">{t('exec.permission.default')}</option>
           {TASK_PERMISSIONS.map(id => (
-            <option key={id} value={id}>{t(`exec.permission.${id}` as TaskBoardKey)}</option>
+            <option key={id} value={id}>{t(`exec.permission.${id}` as AllTasksKey)}</option>
           ))}
         </select>
         {permission === '' && workspaceDefaultHint(defaultPermission)}
@@ -537,7 +537,7 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
                     disabled={current.status === status || running || pending}
                     onClick={() => { controller.moveTask(current.id, status) }}
                   >
-                    {t(`status.move.${status}` as TaskBoardKey)}
+                    {t(`status.move.${status}` as AllTasksKey)}
                   </button>
                 ))}
               </div>

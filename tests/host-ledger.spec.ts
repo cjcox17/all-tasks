@@ -10,7 +10,7 @@ const roots: string[] = []
 const NOW = new Date(2026, 7, 16, 10, 0, 30).getTime()
 
 function tempRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-task-board-ledger-'))
+  const root = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-ledger-'))
   roots.push(root)
   return root
 }
@@ -50,7 +50,7 @@ function secondGranularStartMs(pid: number): number | undefined {
 function spawnZombie(): number | undefined {
   if (process.platform !== 'linux') return undefined
   try {
-    const probeFile = join(tmpdir(), `dsh-task-board-zombie-${process.pid}-${Math.random().toString(36).slice(2)}`)
+    const probeFile = join(tmpdir(), `dsh-all-tasks-zombie-${process.pid}-${Math.random().toString(36).slice(2)}`)
     const shell = spawn('sh', ['-c', `sleep 0.2 & echo $! > "${probeFile}"`], { stdio: 'ignore' })
     shell.unref()
     const deadline = Date.now() + 3000

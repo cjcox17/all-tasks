@@ -28,9 +28,9 @@ import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleNextRun } from './core/use-cases/task-schedule.ts'
 import { applyUpdateTask, canEditTaskContent, hasContentPatch } from './core/use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, normalizeWorkspaceDefaults, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
-import { TASK_BOARD_SCHEMA_VERSION, type TaskBoardAction, type TaskBoardSchedulerSnapshot } from './protocol.ts'
+import { ALL_TASKS_SCHEMA_VERSION, type AllTasksAction, type AllTasksSchedulerSnapshot } from './protocol.ts'
 
-interface PersistedScheduler extends TaskBoardSchedulerSnapshot {
+interface PersistedScheduler extends AllTasksSchedulerSnapshot {
   importedSources?: string[]
 }
 
@@ -40,7 +40,7 @@ interface PersistedRequest {
 }
 
 interface LedgerDocument {
-  schemaVersion: typeof TASK_BOARD_SCHEMA_VERSION
+  schemaVersion: typeof ALL_TASKS_SCHEMA_VERSION
   revision: number
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
@@ -68,7 +68,7 @@ export interface LedgerState {
   groups: TaskGroupRecord[]
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   workspacePaused: Record<string, number>
-  scheduler: TaskBoardSchedulerSnapshot
+  scheduler: AllTasksSchedulerSnapshot
 }
 
 /** One execution settlement, emitted once the outcome is durably recorded. */
@@ -447,7 +447,7 @@ export class HostTaskLedger {
   /** Small sidecar for the 30 s scheduler heartbeat (lastTickAt only). */
   readonly schedulerFile: string
 
-  constructor(dir: string = join(dshHome(), 'task-board'), private readonly now: () => number = Date.now) {
+  constructor(dir: string = join(dshHome(), 'all-tasks'), private readonly now: () => number = Date.now) {
     mkdirSync(dir, { recursive: true })
     this.file = join(dir, 'ledger-v2.json')
     this.lockFile = join(dir, 'ledger-v2.lock')
@@ -470,7 +470,7 @@ export class HostTaskLedger {
   }
 
   /** Revision + scheduler without any task cloning; feeds the SSE event frame. */
-  summary(): { revision: number; scheduler: TaskBoardSchedulerSnapshot } {
+  summary(): { revision: number; scheduler: AllTasksSchedulerSnapshot } {
     const { importedSources: _imports, ...scheduler } = this.document.scheduler
     return { revision: this.document.revision, scheduler: { ...scheduler } }
   }
@@ -847,7 +847,7 @@ export class HostTaskLedger {
     }
   }
 
-  applyRequest(requestId: string, action: TaskBoardAction): LedgerApplyResult {
+  applyRequest(requestId: string, action: AllTasksAction): LedgerApplyResult {
     const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex')
     const cached = this.requestCache.get(requestId)
     if (cached !== undefined) {
@@ -911,7 +911,7 @@ export class HostTaskLedger {
     if (changed) this.commit()
   }
 
-  setScheduler(patch: Partial<TaskBoardSchedulerSnapshot>): void {
+  setScheduler(patch: Partial<AllTasksSchedulerSnapshot>): void {
     this.document.scheduler = { ...this.document.scheduler, ...patch }
     // The 30 s heartbeat only moves lastTickAt; rewriting the whole ledger
     // for it made idle idle cost O(ledger bytes) every tick. Persist it to a
@@ -956,7 +956,7 @@ export class HostTaskLedger {
     }
   }
 
-  private apply(action: TaskBoardAction): LedgerApplyResult {
+  private apply(action: AllTasksAction): LedgerApplyResult {
     const now = this.now()
     let run: OpenedRun | undefined
     let runs: OpenedRun[] | undefined
@@ -1512,7 +1512,7 @@ export class HostTaskLedger {
     const existed = existsSync(this.file)
     try {
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<LedgerDocument>
-      if (parsed.schemaVersion !== TASK_BOARD_SCHEMA_VERSION || !Array.isArray(parsed.tasks)) throw new Error('unsupported ledger schema')
+      if (parsed.schemaVersion !== ALL_TASKS_SCHEMA_VERSION || !Array.isArray(parsed.tasks)) throw new Error('unsupported ledger schema')
       // Groups are workspace-scoped: normalize against the parsed tasks so a
       // legacy group without an explicit scope adopts its members' workspace
       // (the one-time migration), then drop any membership whose task
@@ -1547,7 +1547,7 @@ export class HostTaskLedger {
         ? documentLastTickAt
         : sidecarLastTickAt
       return {
-        schemaVersion: TASK_BOARD_SCHEMA_VERSION,
+        schemaVersion: ALL_TASKS_SCHEMA_VERSION,
         revision: Number.isSafeInteger(parsed.revision) && (parsed.revision as number) >= 0 ? parsed.revision as number : 0,
         tasks,
         groups,
@@ -1575,7 +1575,7 @@ export class HostTaskLedger {
       if (existed) renameSync(this.file, `${this.file}.corrupt-${this.now()}-${process.pid}-${crypto.randomUUID()}`)
       mkdirSync(dir, { recursive: true })
       return {
-        schemaVersion: TASK_BOARD_SCHEMA_VERSION,
+        schemaVersion: ALL_TASKS_SCHEMA_VERSION,
         revision: 0,
         tasks: [],
         groups: [],
@@ -1690,7 +1690,7 @@ export class HostTaskLedger {
         } catch {
           // A power-loss mid-write can leave a truncated lock; the same event
           // killed the writer, so fail closed but explain the recovery.
-          throw new Error(`task-board ledger lock is unreadable: ${this.lockFile}; if this is a leftover from an unclean shutdown and no other DSH host is running, remove it manually and retry`)
+          throw new Error(`all-tasks ledger lock is unreadable: ${this.lockFile}; if this is a leftover from an unclean shutdown and no other DSH host is running, remove it manually and retry`)
         }
         if (pid !== undefined && processIsAlive(pid)) {
           const actualStartedAt = pid === process.pid ? ownProcessStartTimeMs() : processStartTimeMs(pid)
@@ -1714,7 +1714,7 @@ export class HostTaskLedger {
             const hint = confirmedOwner
               ? ''
               : `; if this PID was reused after a crash and no other DSH host is running, remove ${this.lockFile} manually and retry`
-            throw new Error(`task-board ledger is already owned by process ${pid}${hint}`)
+            throw new Error(`all-tasks ledger is already owned by process ${pid}${hint}`)
           }
         }
         try { unlinkSync(this.lockFile) } catch (unlinkError) {
@@ -1722,6 +1722,6 @@ export class HostTaskLedger {
         }
       }
     }
-    throw new Error(`task-board ledger lock could not be acquired: ${this.lockFile}`)
+    throw new Error(`all-tasks ledger lock could not be acquired: ${this.lockFile}`)
   }
 }

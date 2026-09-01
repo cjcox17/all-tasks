@@ -1,5 +1,5 @@
 /**
- * Task-board client plugin: wires the framework-free core (controller,
+ * All-tasks client plugin: wires the framework-free core (controller,
  * execution service, store) to the real client runtime and mounts the two
  * DOM surfaces — the sidebar entry row and the board view in the center
  * column.
@@ -23,25 +23,25 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { BoardController } from '../core/controller.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
-import { claimTaskboardApply, releaseTaskboardApply } from './apply-guard.ts'
+import { claimAllTasksApply, releaseAllTasksApply } from './apply-guard.ts'
 import { mountBoard } from './board-mount.tsx'
 import { mountSidebarEntry } from './sidebar-entry.ts'
-import { TaskBoardSettingsCard, TaskBoardSettingsCardController, type TaskBoardSettings } from './TaskBoardSettingsCard.tsx'
-import { en, zh, type TaskBoardKey } from './locales.ts'
-import { HttpTaskBoardHostTransport } from './host-api.ts'
+import { AllTasksSettingsCard, AllTasksSettingsCardController, type AllTasksSettings } from './AllTasksSettingsCard.tsx'
+import { en, zh, type AllTasksKey } from './locales.ts'
+import { HttpAllTasksHostTransport } from './host-api.ts'
 import { hideMessageClocks, registerAssistantTimeShadow, showMessageClocks, type SessionTimesSlots } from './session-times.tsx'
 import { reportDailyHeartbeat } from './telemetry.ts'
 
 /** Locale namespace this plugin owns. */
-const NS = 'task-board'
+const NS = 'all-tasks'
 
 /** Settings namespace the settings card edits (the Host plugin registers it). */
-const TASK_BOARD_NS = 'task-board'
+const ALL_TASKS_NS = 'all-tasks'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Task-board surface copy. */
-    'task-board': TaskBoardKey
+    /** All-tasks surface copy. */
+    'all-tasks': AllTasksKey
   }
 }
 
@@ -67,17 +67,17 @@ export const inject = ['slots', 'sessions', 'workspaces', 'connection', 'setting
 export function apply(ctx: ClientContext): void {
   // Anonymous install heartbeat (docs/telemetry.md): one beat per browser per
   // UTC day, package name only, silent failure.
-  reportDailyHeartbeat([{ name: '@linxin666/dsh-client-ui-all-tasks' }])
+  reportDailyHeartbeat([{ name: '@cjcox17/all-tasks' }])
 
   // A duplicated client injection (module factory executed twice in one page
   // lifetime) would otherwise mount a second sidebar entry and board view.
   // First application wins; later calls become no-ops (see apply-guard.ts).
-  if (!claimTaskboardApply()) return
+  if (!claimAllTasksApply()) return
 
   // Release the claim when this fiber unloads (the loader supports plugin
   // unloads / hot-reloads), so a rebuilt bundle can claim again in the same
   // page instead of being silently dropped.
-  ctx.effect(() => releaseTaskboardApply, 'task-board: apply claim')
+  ctx.effect(() => releaseAllTasksApply, 'all-tasks: apply claim')
 
   ctx.effect(() => {
     try {
@@ -85,24 +85,24 @@ export function apply(ctx: ClientContext): void {
     } catch {
       return () => {}
     }
-  }, 'task-board: dictionaries')
+  }, 'all-tasks: dictionaries')
 
-  // Plugin configuration card: one staged form over the `task-board` settings
+  // Plugin configuration card: one staged form over the `all-tasks` settings
   // namespace, contributed to the official Plugins section's configurable tab
   // (`settings.plugin.item`, keyed by the namespace it edits). The earlier
   // `web-ui.plugin.item` slot belonged to a dsh-web-only group that the
   // standalone DSH distribution does not compose, so the card never rendered.
   const binder = ctx.get('webUiSettings') ?? ctx.settingsScope
-  const settingsScope = binder.bind<TaskBoardSettings>({ namespace: TASK_BOARD_NS })
-  const settingsCard = new TaskBoardSettingsCardController(settingsScope)
+  const settingsScope = binder.bind<AllTasksSettings>({ namespace: ALL_TASKS_NS })
+  const settingsCard = new AllTasksSettingsCardController(settingsScope)
   ctx.slots.inject('settings.plugin.item', () => {
     try {
       const unregister = ctx.slots.register({
         name: 'settings.plugin.item',
-        key: TASK_BOARD_NS,
+        key: ALL_TASKS_NS,
         locale: NS,
         inject: () => settingsCard.inject(),
-      }, TaskBoardSettingsCard)
+      }, AllTasksSettingsCard)
       return () => {
         settingsCard.dispose()
         unregister()
@@ -132,8 +132,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     syncSessionTimeStyles()
     return settingsScope.subscribe(syncSessionTimeStyles)
-  }, 'task-board: session-time styles')
-  ctx.effect(() => registerAssistantTimeShadow(ctx.slots as unknown as SessionTimesSlots, sessionTimestampsEnabled), 'task-board: session-time assistant shadow')
+  }, 'all-tasks: session-time styles')
+  ctx.effect(() => registerAssistantTimeShadow(ctx.slots as unknown as SessionTimesSlots, sessionTimestampsEnabled), 'all-tasks: session-time assistant shadow')
 
   // The sidebar entry and board view mount once the settings scope settles;
   // while the scope is still loading, the composition default is unknown, so
@@ -153,7 +153,7 @@ export function apply(ctx: ClientContext): void {
     const store = new LocalStorageTaskStore()
     const controller = new BoardController({
       store,
-      transport: new HttpTaskBoardHostTransport(),
+      transport: new HttpAllTasksHostTransport(),
       sessions: {
         list: sessions.list,
         open: id => sessions.open(id as SessionId),
@@ -196,10 +196,10 @@ export function apply(ctx: ClientContext): void {
       } catch (error) {
         // A failed roster read leaves the previous options in place; the
         // picker stays usable and the next reconnect retries the read.
-        console.error('[dsh-task-board] agent preset roster read failed', error)
+        console.error('[dsh-all-tasks] agent preset roster read failed', error)
       }
     }
-    // Endpoint options come from the plugin's own settings (the `task-board`
+    // Endpoint options come from the plugin's own settings (the `all-tasks`
     // namespace the Host validates and the router enforces), not the runtime.
     // The provider/model facts ride along so the model picker can constrain
     // itself to models the pinned endpoints actually serve.
@@ -247,7 +247,7 @@ export function apply(ctx: ClientContext): void {
       } catch (error) {
         // A failed catalog read leaves the previous options in place; the
         // picker stays usable and the next reconnect retries the read.
-        console.error('[dsh-task-board] model catalog read failed', error)
+        console.error('[dsh-all-tasks] model catalog read failed', error)
       }
     }
     void pushPresetOptions()
@@ -258,7 +258,7 @@ export function apply(ctx: ClientContext): void {
       disposers.push(mountBoard(controller))
     } catch (error) {
       // DOM failures degrade the board, never the GUI.
-      console.error('[dsh-task-board] mount failed:', error)
+      console.error('[dsh-all-tasks] mount failed:', error)
     }
 
     uiDisposer = () => {

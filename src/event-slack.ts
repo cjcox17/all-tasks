@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { EventMapping, EventRequest, EventSource, EventSourceResponse } from './core/events.ts'
 
 export const SLACK_EVENT_ID = 'slack'
-export const SLACK_EVENT_PATH = '/api/task-board/events/slack'
+export const SLACK_EVENT_PATH = '/api/all-tasks/events/slack'
 
 const PROMPT_LIMIT = 64 * 1024
 const TITLE_LIMIT = 256

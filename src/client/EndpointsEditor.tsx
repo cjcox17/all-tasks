@@ -1,9 +1,9 @@
 /**
- * Endpoints editor for the task-board settings card.
+ * Endpoints editor for the all-tasks settings card.
  *
  * Endpoints are the compute targets the endpoint model-router routes tasks
  * through (DeepSeek Official, an LM Studio on the NAS, …). They live in the
- * plugin's own `task-board` settings namespace; before this editor the only
+ * plugin's own `all-tasks` settings namespace; before this editor the only
  * way to configure them was editing `~/.dsh/settings.yaml` by hand, so the
  * task modal's Endpoints dropdown stayed empty.
  *
@@ -20,7 +20,7 @@
 
 import { useEffect, useState } from 'react'
 import type { EndpointEditorView, EndpointProviderInfo } from '../endpoint-editor.ts'
-import type { TaskBoardKey } from './locales.ts'
+import type { AllTasksKey } from './locales.ts'
 import css from './endpoints-editor.module.css'
 
 /** Bound on endpoint id/name/provider/model length (mirrors the host). */
@@ -88,7 +88,7 @@ function draftToView(row: EndpointDraft): EndpointEditorView {
 /** Props the settings card binds for the editor. */
 export interface EndpointsEditorProps {
   /** Locale reader for this card's copy. */
-  t: (key: TaskBoardKey, params?: Record<string, string | number>) => string
+  t: (key: AllTasksKey, params?: Record<string, string | number>) => string
   /** Disable every control (read-only settings document). */
   disabled: boolean
 }
@@ -113,7 +113,7 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
   useEffect(() => {
     let live = true
     const controller = new AbortController()
-    void fetch('/api/task-board/endpoints', { signal: controller.signal, headers: { 'sec-fetch-site': 'same-origin' } })
+    void fetch('/api/all-tasks/endpoints', { signal: controller.signal, headers: { 'sec-fetch-site': 'same-origin' } })
       .then(async response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const body = await response.json() as {
@@ -244,7 +244,7 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
     setSaved(false)
     setError(undefined)
     try {
-      const response = await fetch('/api/task-board/endpoints', {
+      const response = await fetch('/api/all-tasks/endpoints', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
         body: JSON.stringify({ endpoints: rows.map(draftToView), defaultEndpoints: defaultOrder }),
@@ -266,7 +266,7 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
     setBusy(true)
     setError(undefined)
     try {
-      const response = await fetch('/api/task-board/endpoints', { headers: { 'sec-fetch-site': 'same-origin' } })
+      const response = await fetch('/api/all-tasks/endpoints', { headers: { 'sec-fetch-site': 'same-origin' } })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = await response.json() as { endpoints?: EndpointEditorView[]; defaultEndpoints?: string[]; providers?: EndpointProviderInfo[] }
       setRows((body.endpoints ?? []).map(viewToDraft))

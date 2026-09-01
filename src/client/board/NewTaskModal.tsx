@@ -12,7 +12,7 @@ import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import { modelSelectionKey, parseModelSelectionKey, TASK_PERMISSIONS, type TaskPermission } from '../../core/tasks.ts'
 import type { WorkspaceDefaultsRecord } from '../../core/workspace-defaults.ts'
 import { withReasoningEffort } from '../reasoning-effort.ts'
-import { t, type TaskBoardKey } from '../locales.ts'
+import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
@@ -236,7 +236,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
           >
             <option value="">{t('exec.permission.default')}</option>
             {TASK_PERMISSIONS.map(id => (
-              <option key={id} value={id}>{t(`exec.permission.${id}` as TaskBoardKey)}</option>
+              <option key={id} value={id}>{t(`exec.permission.${id}` as AllTasksKey)}</option>
             ))}
           </select>
         </label>

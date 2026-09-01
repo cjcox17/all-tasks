@@ -4,14 +4,14 @@ import { join } from 'node:path'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 import { createTask, EXECUTION_HISTORY_LIMIT, startExecution, withSchedule } from '../src/core/tasks.ts'
 
 const roots: string[] = []
 
 function root(): string {
-  const value = mkdtempSync(join(tmpdir(), 'dsh-task-board-service-'))
+  const value = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-service-'))
   roots.push(value)
   return value
 }
@@ -24,7 +24,7 @@ afterEach(() => {
   for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true })
 })
 
-describe('TaskBoardHostService scheduling without a browser', () => {
+describe('AllTasksHostService scheduling without a browser', () => {
   it('fires one due run and records its independent session', async () => {
     let now = new Date(2026, 7, 16, 10, 0, 30).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
@@ -42,7 +42,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
         prompt,
       },
     } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -70,7 +70,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     }
     ledger.applyRequest('import', { kind: 'import', sourceId: 'legacy', tasks: [archived] })
     const create = vi.fn()
-    const service = new TaskBoardHostService({ sessions: { create } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { create } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -92,7 +92,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
       },
     })
     const create = vi.fn()
-    const service = new TaskBoardHostService({ sessions: { create } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { create } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -106,7 +106,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
   })
 
   it('treats the first session snapshot after re-enable as unknown', () => {
-    const service = new TaskBoardHostService({ sessions: {} } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: {} } as unknown as ApiProxy, {
       ledger: new HostTaskLedger(root()),
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -118,7 +118,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
   })
 
   it('returns the first ledger result for a duplicate request id', () => {
-    const service = new TaskBoardHostService({ sessions: {} } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: {} } as unknown as ApiProxy, {
       ledger: new HostTaskLedger(root()),
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -158,7 +158,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
         }),
       },
     }
-    const service = new TaskBoardHostService(api as unknown as ApiProxy, {
+    const service = new AllTasksHostService(api as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -171,7 +171,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
 
   it('starts its two Host timers only once', () => {
     const interval = vi.spyOn(globalThis, 'setInterval')
-    const service = new TaskBoardHostService({ sessions: { list: vi.fn() } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { list: vi.fn() } } as unknown as ApiProxy, {
       ledger: new HostTaskLedger(root()),
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -189,7 +189,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     const executionId = opened.state.tasks[0].executions[0].id
     ledger.attachSession('task-a', executionId, 'session-a')
     const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
-    const service = new TaskBoardHostService({ sessions: { cancel } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { cancel } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => 0,
@@ -208,7 +208,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
     const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
-    const service = new TaskBoardHostService({ sessions: { cancel } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { cancel } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => 0,
@@ -224,7 +224,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, 'cloud', 0, 'endpoint')
-    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+    const service = new AllTasksHostService({} as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => 0,
@@ -250,7 +250,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'x', seq: 1 }))
     const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
     const api = { sessions: { create, rename, prompt } } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -288,7 +288,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'x', seq: 1 }))
     const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
     const api = { sessions: { create, rename, prompt } } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -319,7 +319,7 @@ describe('TaskBoardHostService scheduling without a browser', () => {
 
   it('carries per-workspace defaults in every snapshot, including after an apply', () => {
     const ledger = new HostTaskLedger(root(), () => 0)
-    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+    const service = new AllTasksHostService({} as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => 0,
@@ -336,13 +336,13 @@ describe('TaskBoardHostService scheduling without a browser', () => {
   })
 })
 
-describe('TaskBoardHostService poll heartbeat', () => {
+describe('AllTasksHostService poll heartbeat', () => {
   function sessionsList(items: Array<{ sessionId: string; running: boolean }>) {
     return { sessions: { list: async (request: { rpcId: unknown }) => ok(request, { items }) } } as unknown as ApiProxy
   }
 
   it('does not push SSE frames while the session and power snapshots stay unchanged', async () => {
-    const service = new TaskBoardHostService(sessionsList([]), {
+    const service = new AllTasksHostService(sessionsList([]), {
       ledger: new HostTaskLedger(root()),
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -360,7 +360,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
 
   it('pushes an SSE frame when the running-session count changes', async () => {
     let items: Array<{ sessionId: string; running: boolean }> = []
-    const service = new TaskBoardHostService({
+    const service = new AllTasksHostService({
       sessions: { list: async (request: { rpcId: unknown }) => ok(request, { items }) },
     } as unknown as ApiProxy, {
       ledger: new HostTaskLedger(root()),
@@ -381,7 +381,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
   it('eventPayload carries revision/scheduler/power and never the task list', () => {
     const ledger = new HostTaskLedger(root())
     ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
-    const service = new TaskBoardHostService(sessionsList([]), {
+    const service = new AllTasksHostService(sessionsList([]), {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -407,7 +407,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
       events: [{ event: { type: 'turn/end', seq: 10, time: 1_200, data: { reason: { kind: 'complete' } } } }],
       hasMore: false,
     }))
-    const service = new TaskBoardHostService({ sessions: { list, history } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { list, history } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
     })
@@ -447,7 +447,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
       if (!sessionStateAvailable) throw new Error('temporary list failure')
       return ok(request, { items: [{ sessionId: 'session-open', running: true }] })
     })
-    const service = new TaskBoardHostService({ sessions: { list } } as unknown as ApiProxy, {
+    const service = new AllTasksHostService({ sessions: { list } } as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -473,7 +473,7 @@ describe('TaskBoardHostService poll heartbeat', () => {
   })
 })
 
-describe('TaskBoardHostService pause gates', () => {
+describe('AllTasksHostService pause gates', () => {
   it('pause fires the session cancel RPC and the paused execution is never settled by reconcile', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
@@ -488,7 +488,7 @@ describe('TaskBoardHostService pause gates', () => {
       hasMore: false,
     }))
     const api = { sessions: { cancel, list: vi.fn(), history } } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -525,7 +525,7 @@ describe('TaskBoardHostService pause gates', () => {
       workspace: { list: vi.fn(async (request: { rpcId: unknown }) => ok(request, { items: [{ workspaceId: 'w1' }] })) },
       sessions: { create, rename, prompt },
     } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -559,7 +559,7 @@ describe('TaskBoardHostService pause gates', () => {
     })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.markQueued('task-a', opened.state.tasks[0].executions[0].id, undefined, now, 'endpoint')
-    const service = new TaskBoardHostService({} as unknown as ApiProxy, {
+    const service = new AllTasksHostService({} as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -588,7 +588,7 @@ describe('TaskBoardHostService pause gates', () => {
     const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
     const cancel = vi.fn(async (request: { rpcId: unknown; payload?: { sessionId?: unknown } }) => ok(request, { accepted: true }))
     const api = { sessions: { create, rename, prompt, cancel } } as unknown as ApiProxy
-    const service = new TaskBoardHostService(api, {
+    const service = new AllTasksHostService(api, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,

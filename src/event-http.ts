@@ -9,7 +9,7 @@ import { timingSafeEqual } from 'node:crypto'
 import type { EventMapping, EventRequest, EventSource } from './core/events.ts'
 
 export const HTTP_EVENT_ID = 'http'
-export const HTTP_EVENT_PATH = '/api/task-board/events/http'
+export const HTTP_EVENT_PATH = '/api/all-tasks/events/http'
 export const HTTP_EVENT_TOKEN_HEADER = 'x-dsh-events-token'
 export const HTTP_EVENT_DEDUPE_HEADER = 'x-dsh-event-id'
 

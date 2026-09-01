@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { win32 } from 'node:path'
-import type { PowerPhase, TaskBoardPowerSnapshot } from './protocol.ts'
+import type { PowerPhase, AllTasksPowerSnapshot } from './protocol.ts'
 
 const RETRY_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000] as const
 const DARWIN_STABLE_MS = 30_000
@@ -118,7 +118,7 @@ export class PowerInhibitor {
     return () => { this.listeners.delete(listener) }
   }
 
-  snapshot(): TaskBoardPowerSnapshot {
+  snapshot(): AllTasksPowerSnapshot {
     return {
       platform: this.platform,
       phase: this.phase,

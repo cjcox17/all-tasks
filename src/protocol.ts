@@ -14,12 +14,12 @@ import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelect
 import { parseLedger } from './core/store.ts'
 import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
 
-export const TASK_BOARD_SCHEMA_VERSION = 2 as const
-export const TASK_BOARD_API_PREFIX = '/api/task-board'
+export const ALL_TASKS_SCHEMA_VERSION = 2 as const
+export const ALL_TASKS_API_PREFIX = '/api/all-tasks'
 
 export type PowerPhase = 'disabled' | 'idle' | 'acquiring' | 'active' | 'error' | 'unsupported'
 
-export interface TaskBoardPowerSnapshot {
+export interface AllTasksPowerSnapshot {
   platform: string
   phase: PowerPhase
   enabled: boolean
@@ -29,7 +29,7 @@ export interface TaskBoardPowerSnapshot {
   lastError?: string
 }
 
-export interface TaskBoardSchedulerSnapshot {
+export interface AllTasksSchedulerSnapshot {
   timeZone: string
   /** Opaque identity of the current Host ledger generation. */
   ledgerId?: string
@@ -37,8 +37,8 @@ export interface TaskBoardSchedulerSnapshot {
   error?: string
 }
 
-export interface TaskBoardSnapshot {
-  schemaVersion: typeof TASK_BOARD_SCHEMA_VERSION
+export interface AllTasksSnapshot {
+  schemaVersion: typeof ALL_TASKS_SCHEMA_VERSION
   revision: number
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
@@ -56,18 +56,18 @@ export interface TaskBoardSnapshot {
    * empty map) on snapshots from an older Host.
    */
   workspacePaused?: Record<string, number>
-  scheduler: TaskBoardSchedulerSnapshot
-  power: TaskBoardPowerSnapshot
+  scheduler: AllTasksSchedulerSnapshot
+  power: AllTasksPowerSnapshot
 }
 
 /** SSE event frame: revision/scheduler/power only, never the task list. */
-export interface TaskBoardEventPayload {
+export interface AllTasksEventPayload {
   revision: number
-  scheduler: TaskBoardSchedulerSnapshot
-  power: TaskBoardPowerSnapshot
+  scheduler: AllTasksSchedulerSnapshot
+  power: AllTasksPowerSnapshot
 }
 
-export type TaskBoardAction =
+export type AllTasksAction =
   | { kind: 'import'; sourceId: string; tasks: TaskRecord[] }
   | { kind: 'create'; id: string; input: NewTaskInput }
   | { kind: 'update'; taskId: string; patch: TaskUpdatePatch }
@@ -104,9 +104,9 @@ export type TaskBoardAction =
   | { kind: 'pause-workspace'; workspaceId: string }
   | { kind: 'continue-workspace'; workspaceId: string }
 
-export interface TaskBoardActionEnvelope {
+export interface AllTasksActionEnvelope {
   requestId: string
-  action: TaskBoardAction
+  action: AllTasksAction
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -333,7 +333,7 @@ function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUp
   return sanitized
 }
 
-export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | undefined {
+export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | undefined {
   const envelope = record(value)
   if (envelope === undefined || !exactKeys(envelope, ['requestId', 'action'])) return undefined
   if (typeof envelope.requestId !== 'string' || envelope.requestId.trim() === '' || envelope.requestId.length > 256) return undefined
@@ -400,7 +400,7 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
     case 'pause':
     case 'continue':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
-      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as TaskBoardAction }
+      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as AllTasksAction }
     case 'set-approved':
       if (!exactKeys(action, ['kind', 'taskId', 'approved'])) return undefined
       return taskId !== undefined && typeof action.approved === 'boolean'
@@ -419,7 +419,7 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
     case 'continue-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== ''
-        ? { requestId: envelope.requestId, action: action as TaskBoardAction }
+        ? { requestId: envelope.requestId, action: action as AllTasksAction }
         : undefined
     case 'pause-workspace':
     case 'continue-workspace':
@@ -427,7 +427,7 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       // All tasks overview row).
       if (!exactKeys(action, ['kind', 'workspaceId'])) return undefined
       return typeof action.workspaceId === 'string' && action.workspaceId.length <= GROUP_FIELD_BOUND
-        ? { requestId: envelope.requestId, action: action as TaskBoardAction }
+        ? { requestId: envelope.requestId, action: action as AllTasksAction }
         : undefined
     case 'run-group':
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
@@ -442,12 +442,12 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
     case 'set-schedule':
       if (!exactKeys(action, ['kind', 'taskId', 'patch'])) return undefined
       return taskId !== undefined && schedulePatch(action.patch)
-        ? { requestId: envelope.requestId, action: action as unknown as Extract<TaskBoardAction, { kind: 'set-schedule' }> }
+        ? { requestId: envelope.requestId, action: action as unknown as Extract<AllTasksAction, { kind: 'set-schedule' }> }
         : undefined
     case 'move':
       if (!exactKeys(action, ['kind', 'taskId', 'status'])) return undefined
       return taskId !== undefined && isTaskStatus(action.status)
-        ? { requestId: envelope.requestId, action: action as unknown as Extract<TaskBoardAction, { kind: 'move' }> }
+        ? { requestId: envelope.requestId, action: action as unknown as Extract<AllTasksAction, { kind: 'move' }> }
         : undefined
     case 'reorder':
       if (!exactKeys(action, ['kind', 'taskId', 'beforeTaskId'])) return undefined
@@ -460,7 +460,7 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
     case 'run':
     case 'rerun':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
-      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as TaskBoardAction }
+      return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as AllTasksAction }
     default:
       return undefined
   }

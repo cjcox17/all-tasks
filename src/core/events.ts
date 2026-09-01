@@ -33,7 +33,7 @@ export interface EventSource {
   /** Stable plugin id (e.g. `github`, `http`). */
   id: string
   method: 'POST' | 'GET'
-  /** Route path under the task-board prefix (e.g. `/api/task-board/events/github`). */
+  /** Route path under the all-tasks prefix (e.g. `/api/all-tasks/events/github`). */
   path: string
   /** Verify the raw request (signature/token). Fail closed: return false to reject. */
   verify(request: EventRequest, rawBody: string): boolean | Promise<boolean>

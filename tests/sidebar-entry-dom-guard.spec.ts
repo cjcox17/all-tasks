@@ -86,8 +86,8 @@ describe('mountSidebarEntry DOM idempotency', () => {
 
     const dispose = mountSidebarEntry(controller)
 
-    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-taskboard-entry', '')
-    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-plugin', 'task-board')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-all-tasks-entry', '')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-plugin', 'all-tasks')
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-part', 'sidebar-entry')
     dispose()
   })

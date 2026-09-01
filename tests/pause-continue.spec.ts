@@ -18,7 +18,7 @@ import {
   type TaskRecord,
 } from '../src/core/tasks.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import type { TaskBoardAction } from '../src/protocol.ts'
+import type { AllTasksAction } from '../src/protocol.ts'
 
 const roots: string[] = []
 const NOW = new Date(2026, 7, 16, 10, 0, 30).getTime()
@@ -26,13 +26,13 @@ const NOW = new Date(2026, 7, 16, 10, 0, 30).getTime()
 let requestSeq = 0
 
 /** Apply one action with a fresh request id (the ledger cache keys on the id). */
-function apply(ledger: HostTaskLedger, action: TaskBoardAction) {
+function apply(ledger: HostTaskLedger, action: AllTasksAction) {
   requestSeq += 1
   return ledger.applyRequest(`request-${requestSeq}`, action)
 }
 
 function tempRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-task-board-pause-'))
+  const root = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-pause-'))
   roots.push(root)
   return root
 }

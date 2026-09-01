@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(new URL('../src/client/board.module.css', import.meta.url), 'utf8')
 const source = readFileSync(new URL('../src/client/sidebar-entry.ts', import.meta.url), 'utf8')
 
-describe('task-board sidebar entry layout', () => {
+describe('all-tasks sidebar entry layout', () => {
   it('uses the shared navigation icon dimensions', () => {
     expect(source).toContain('width="18" height="18"')
     expect(css).toMatch(/\.entryIcon\s*\{[^}]*width:\s*24px;[^}]*height:\s*24px;/s)

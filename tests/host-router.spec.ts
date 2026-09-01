@@ -6,13 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EndpointConfig, EndpointRouterConfig } from '../src/core/endpoints.ts'
 import { createTask } from '../src/core/tasks.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 
 const roots: string[] = []
 
 function root(): string {
-  const value = mkdtempSync(join(tmpdir(), 'dsh-task-board-router-'))
+  const value = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-router-'))
   roots.push(value)
   return value
 }
@@ -55,7 +55,7 @@ function launchApi(create: ReturnType<typeof vi.fn>, selectModel?: ReturnType<ty
 }
 
 interface ServiceHarness {
-  service: TaskBoardHostService
+  service: AllTasksHostService
   ledger: HostTaskLedger
   create: ReturnType<typeof vi.fn>
   selectModel: ReturnType<typeof vi.fn>
@@ -69,7 +69,7 @@ function harness(dir: string, config: EndpointRouterConfig, now: () => number): 
     selected: { provider: 'deepseek', model: request.payload?.model ?? 'deepseek-chat' },
   }))
   const ledger = new HostTaskLedger(dir, now)
-  const service = new TaskBoardHostService(launchApi(create, selectModel), {
+  const service = new AllTasksHostService(launchApi(create, selectModel), {
     ledger,
     power: new PowerInhibitor({ platform: 'linux' }),
     now,
@@ -85,7 +85,7 @@ function harness(dir: string, config: EndpointRouterConfig, now: () => number): 
   }
 }
 
-describe('TaskBoardHostService endpoint routing', () => {
+describe('AllTasksHostService endpoint routing', () => {
   it('routes through the pinned endpoint and applies its default model', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
@@ -321,7 +321,7 @@ describe('TaskBoardHostService endpoint routing', () => {
         prompt: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
       },
     }
-    const service = new TaskBoardHostService(api as unknown as ApiProxy, {
+    const service = new AllTasksHostService(api as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,
@@ -386,7 +386,7 @@ describe('TaskBoardHostService endpoint routing', () => {
         prompt: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
       },
     }
-    const service = new TaskBoardHostService(api as unknown as ApiProxy, {
+    const service = new AllTasksHostService(api as unknown as ApiProxy, {
       ledger,
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => now,

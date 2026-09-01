@@ -4,12 +4,11 @@
 
 一个可热插拔的 DeepSeek Harness (DSH) Web GUI 插件，提供 Host 权威任务账本、真实 DSH 会话执行、Host cron 调度和可选的跨平台空闲睡眠保护。插件只通过 `cordis.patch.yml` 与 profile 机制挂载，不修改 DSH 源码。
 
-> **来源**：本仓库是 [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)
-> monorepo 中 `dsh-task-board` 包（`@linxin666/dsh-client-ui-task-board`）的独立 fork，
-> 以上游 `v0.3.6` tag 为基线，并扩展了任务级模型钉与推理强度选择。包名、仓库与用户可见文案改名为
-> All Tasks（全部任务）；内部标识（`task-board` 设置命名空间、`/api/task-board`
-> 前缀、`$DSH_HOME/task-board/` 账本目录）保持不变，因此已有 dsh-task-board 账本与
-> 设置可原样沿用。许可证与上游一致，为 Apache-2.0（见 [LICENSE](LICENSE)）。
+> **来源**：All Tasks（全部任务）是由 [cjcox17](https://github.com/cjcox17) 维护的独立项目。它最初 fork 自
+> [zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web) monorepo 中的 `dsh-task-board` 包
+> （`@linxin666/dsh-client-ui-task-board`），以上游 `v0.3.6` tag 为基线，此后已大幅演进。它使用自己的
+> `all-tasks` 设置命名空间、`/api/all-tasks` API 前缀与 `$DSH_HOME/all-tasks/` 账本目录，且不再迁移原包数据。
+> 许可证与上游一致，为 Apache-2.0（见 [LICENSE](LICENSE)）。
 
 - 浏览器只是异步视图；关闭页面不会停止 Host 调度或执行结算。
 - 每次运行创建独立 DSH 会话，并在发送任务 Prompt 前应用钉住的工作区、agent 预设、模型选择与权限。
@@ -18,12 +17,12 @@
 ## 功能
 
 - **任务看板 UI**：新会话按钮下方的侧边栏入口在宽栏显示图标和文字、在折叠 rail 显示图标；看板提供五列布局、搜索、任务详情、归档/恢复、执行历史和执行会话跳转。归档任务除恢复、删除和查看 transcript 外保持只读，恢复前不能手动或定时执行。
-- **Host 权威账本**：任务、计划和执行记录存于 `$DSH_HOME/task-board/ledger-v2.json`；浏览器动作只有经 Host 确认后才成为 UI 状态。
+- **Host 权威账本**：任务、计划和执行记录存于 `$DSH_HOME/all-tasks/ledger-v2.json`；浏览器动作只有经 Host 确认后才成为 UI 状态。
 - **有界执行历史**：每个任务只保留最近 20 条执行记录；新运行开始时截掉最旧的记录，使账本大小与每次写入成本不随任务历史无限增长。
 - **真实执行**：手动运行和定时运行共用 Host runner，新建独立会话、重命名、应用 agent 预设、通过 `session.selectModel` 钉住模型选择、应用 `/permission <id>`，再以 queue 模式发送任务 Prompt。
 - **钉子失败即关闭**：工作区缺失、预设缺失或损坏、模型选择被拒绝、权限命令被拒绝时，任务 Prompt 不会发送。
 - **任务级模型钉**：每个任务都可以从 Host 模型目录中挑选提供商与模型钉住执行会话，并可选择推理强度（minimal/low/medium/high 或提供商自定义值）；留空则回落到部署默认模型。任务钉住端点时，模型下拉会被收窄到这些端点实际可服务的模型（按端点列表取并集）——端点无法服务的已钉模型仍以陈旧行保留可选并带提示，实际生效的选择绝不会在静默中偏离。
-- **端点模型路由器**：命名计算端点（DeepSeek Official、NAS 上的 LM Studio 等）。端点刻意保持精简——只选一个 DSH 提供方路由，并收窄该提供方的模型与默认模型；并发、token 上限、时段等属于提供方自己的设置，不在这里。每个端点还会设置该提供方的模型请求超时（空闲与总时长）。端点在设置卡片中创建与编辑（**设置 → 插件 → 全部任务 → 端点**）：整表编辑器把 `task-board` 命名空间实时写回，任务弹窗的「端点」下拉与路由器立即刷新。路由器按任务的端点优先级顺序选择第一个能服务任务模型的端点（任务自身模型钉，否则用端点的 `defaultModel`）启动每次运行。所有端点都被阻塞时，运行进入排队（不创建会话、不产生费用、重启后仍等待），可服务时自动启动，超过可配置的等待上限（默认 24 小时）才失败。峰值/低谷时段按 DeepSeek 官方规则硬编码（2026-08-23 起：高峰为周一至周五 01:00–04:00 与 06:00–10:00 UTC，其余时间及周六、周日均为错峰），刻意不做配置。
+- **端点模型路由器**：命名计算端点（DeepSeek Official、NAS 上的 LM Studio 等）。端点刻意保持精简——只选一个 DSH 提供方路由，并收窄该提供方的模型与默认模型；并发、token 上限、时段等属于提供方自己的设置，不在这里。每个端点还会设置该提供方的模型请求超时（空闲与总时长）。端点在设置卡片中创建与编辑（**设置 → 插件 → 全部任务 → 端点**）：整表编辑器把 `all-tasks` 命名空间实时写回，任务弹窗的「端点」下拉与路由器立即刷新。路由器按任务的端点优先级顺序选择第一个能服务任务模型的端点（任务自身模型钉，否则用端点的 `defaultModel`）启动每次运行。所有端点都被阻塞时，运行进入排队（不创建会话、不产生费用、重启后仍等待），可服务时自动启动，超过可配置的等待上限（默认 24 小时）才失败。峰值/低谷时段按 DeepSeek 官方规则硬编码（2026-08-23 起：高峰为周一至周五 01:00–04:00 与 06:00–10:00 UTC，其余时间及周六、周日均为错峰），刻意不做配置。
 - **任务分组**：一组共享执行策略的命名任务集合，在每个看板列内以独立横幅聚合展示（空分组也会显示在「待办」列，创建后立即可见可管理）。分组是**按工作区隔离**的：分组属于创建它的工作区，只接受钉到该工作区的任务作为成员（不带工作区的分组只接受未分配任务），因此同名分组可以在多个工作区里各自独立、设置互不影响。分组有执行模式——顺序（同一时刻只运行一个成员，按组内成员顺序）或并行（最多同时运行可配置的数量，留空为不限）——组内任务的任何启动（手动、定时、路由自动启动）都受此限制。分组可钉住自己的端点优先级列表（成员的自身钉优先，其次分组，最后全局默认）、可用时段窗口与 off-peak-only 开关（即上面的硬编码 DeepSeek 错峰时段），以及可选的分组 cron。分组 cron 启用后，组内成员继承它并忽略各自的定时；成员结算后，按顺序的下一个可运行成员自动启动。被阻塞的手动运行会显示等待原因（**等待组内插槽** / **等待允许时段** / **等待端点**），插槽或时段一空出就自动启动，与端点排队行为一致。运行中的成员持有其分组的容量插槽：执行结算前不能把它移到别的分组（或移出分组），旧分组绝不会在第一个成员仍在运行时启动第二个成员。看板可直接停止：每个运行中的成员卡片带独立**停止**按钮，分组横幅上的**停止分组**会取消全部运行中的成员并把分组标记为已停止（不再启动任何成员，手动执行与 cron 都被拒绝），横幅的**恢复**按钮解除停止。整个分组可拖到待规划/待办列一次移动全部成员，不必逐个拖动。
 - **审批门**：每个任务都有一个审批状态。手动创建的任务默认已批准；通过协议 `create` 动作的程序化创建可以传入 `approved: false` 创建为未批准。未批准的任务不能以任何方式运行——手动执行/重新执行、它自己的 cron、分组自动推进都会被拒绝，直到重新批准（分组序列会跳过它，继续下一个已批准成员）。未批准的任务仍然完全可管理：卡片带**未批准**标记，可移动、编辑、分组；头部**仅看未批准**筛选把整个看板收窄到恰好是当天待批准的任务。在卡片（✓）、任务详情或分组成员行上可一键批准；任务详情还提供**取消批准**。排队等待端点时被取消批准的任务会取消该次运行（落入「已失败」列）；未批准任务被暂停的 cron 会滚动到下一次触发点，批准后恢复节奏。
 - **暂停与继续**：每个运行中的任务都可以暂停——会话的当前 turn 被取消但会话保留、运行保持打开并标记为**已暂停**，任何东西都不会结算或为它启动——之后可以继续：在**同一个**会话里重新排队任务 prompt，agent 带着完整历史恢复。控件位于运行中的卡片（⏸ / ▶）、任务详情中打开的执行行（**查看会话**旁）以及详情页脚。暂停可放大到整个**任务分组**（**暂停分组**暂停全部运行中的成员并阻止成员启动，直到**继续分组**）和整个**工作区**（总览行上的 ⏸ 暂停钉在该工作区的每个任务并阻止新启动——包括 cron、排队运行与分组自动推进——直到 **▶** 恢复；**全部任务**行暂停整个看板）。已暂停的工作区显示**已暂停**胶囊，其排队任务显示**等待工作区恢复**。暂停是软性挂起：**停止**仍是把运行取消进「已失败」列的硬停止。
@@ -36,7 +35,7 @@
 - **实时同步**：变更返回完整 revision snapshot；SSE 只提示 revision、scheduler 与 power 变化，重连和页面恢复可见时重新拉完整 snapshot。
 - **可选空闲睡眠保护**：默认关闭；开启后覆盖全部运行中的 DSH 会话、已启用且未归档的任务计划和未知会话状态。
 - **会话视图时间戳与 Token 数**：主会话视图显示每条消息与每个工具调用的运行时间。用户消息的开始时间与助手回合的结束/耗时标签（DSH 默认悬停才显示）常驻可见；每个工具行带一个常显的「HH:MM:SS · 耗时」标签，时间取自会话事件时间戳（更早的日期加 `M/D` 或 `Y/M/D` 前缀）；每个回合末尾显示该回合的输入/输出 Token 数（如「输入 1.2K tok · 输出 350 tok」），取自 assistant 的 usage 事件。默认开启；「设置 → 插件 → 全部任务 → 在会话视图显示时间与 Token 数」开关可恢复官方悬停行为。
-- **系统提示词注入**：Host 通过 `SystemPrompt.section` 注册 order 200 的 `plugin:task-board` 段；任务看板设置可单独关闭声明而不关闭看板。该提示也会提醒 agent 在最终回复前收尾可见的 `todo_write` 计划列表。
+- **系统提示词注入**：Host 通过 `SystemPrompt.section` 注册 order 200 的 `plugin:all-tasks` 段；任务看板设置可单独关闭声明而不关闭看板。该提示也会提醒 agent 在最终回复前收尾可见的 `todo_write` 计划列表。
 
 ## 架构与协议
 
@@ -44,7 +43,7 @@
 - `src/host-ledger.ts` 串行动作，并用临时文件加原子 rename 持久化 `{ schemaVersion: 2, revision, tasks, groups, workspaceDefaults, scheduler, recentRequests }`。
 - `src/host-service.ts` 负责 cron tick、错过触发跳过、runner 启动、重启对账和电源保护理由。
 - `src/client/host-api.ts` 单次导入旧浏览器数据、提交幂等动作，并把 Host snapshot 当作唯一已确认 UI 状态。
-- 同源接口为 `GET /api/task-board/state`、`GET /api/task-board/events` 和 `POST /api/task-board/action`。
+- 同源接口为 `GET /api/all-tasks/state`、`GET /api/all-tasks/events` 和 `POST /api/all-tasks/action`。
 - 所有接口都要求浏览器同源标记。直接访问只允许 DSH loopback origin；同机认证反向代理必须使用显式 Host 白名单和服务端注入 token。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
 
 ## 安装
@@ -77,21 +76,21 @@ dsh plugin --profile web add link:$(pwd)
 | `preventIdleSleep` | `false` | 存在运行中的 DSH 会话、已启用计划或未知会话状态时，持有一个系统空闲睡眠断言。 |
 | `sessionTimestamps` | `true` | 在主会话视图显示每条消息与每个工具调用的运行时间（消息时间常驻可见，每个工具行带开始时间与耗时标签），并在每个回合末尾显示该回合的输入/输出 Token 数。 |
 | `trustedProxyHosts` | `[]` | 仅通过已认证 loopback 反向代理路径接受的规范 `host[:port]` authority 白名单。 |
-| `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | 保存反向代理 token 的环境变量名；token 本身不会写入插件配置。 |
+| `proxyTokenEnv` | `DSH_ALL_TASKS_PROXY_TOKEN` | 保存反向代理 token 的环境变量名；token 本身不会写入插件配置。 |
 | `endpointMaxWaitHours` | `24` | 排队运行等待可用端点的最长时间，超时后判定失败。 |
 | `defaultEndpoints` | `[]` | 未显式钉端点的任务使用的有序端点列表。 |
 | `endpoints` | `[]` | 路由器用于路由任务的命名计算端点（见下）。 |
 
 峰值/低谷时段按 DeepSeek 官方规则硬编码（2026-08-23 起：高峰为周一至周五 01:00–04:00 与 06:00–10:00 UTC，其余时间及周六、周日均为错峰），刻意不做配置——这些时段由 DeepSeek 决定，不由用户配置。分组通过「仅限错峰时段」勾选框使用它。
 
-浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
+浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-All-Tasks-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
 
 ### 端点路由配置
 
-端点在 `task-board` 设置命名空间下。设置卡片（**设置 → 插件 → 全部任务 → 端点**）是常规编辑器：列出每个端点、支持增删改排序，选择提供方（限定为已知的 `llm` 提供方路由）、从该提供方的模型列表里收窄服务模型、在其中选默认模型，并设置该提供方的请求超时（空闲与总时长）。保存时整张列表一次性写回——任务弹窗的「端点」下拉与路由器都会实时重载，无需重启。同样的值也以 YAML 形式存放在 `task-board` 下，可直接编辑（路由器同样实时重载）；超时字段会写穿到提供方路由自己的设置（`llm-pi-ai` / `llm-deepseek`），这是 DSH 唯一认可超时的地方：
+端点在 `all-tasks` 设置命名空间下。设置卡片（**设置 → 插件 → 全部任务 → 端点**）是常规编辑器：列出每个端点、支持增删改排序，选择提供方（限定为已知的 `llm` 提供方路由）、从该提供方的模型列表里收窄服务模型、在其中选默认模型，并设置该提供方的请求超时（空闲与总时长）。保存时整张列表一次性写回——任务弹窗的「端点」下拉与路由器都会实时重载，无需重启。同样的值也以 YAML 形式存放在 `all-tasks` 下，可直接编辑（路由器同样实时重载）；超时字段会写穿到提供方路由自己的设置（`llm-pi-ai` / `llm-deepseek`），这是 DSH 唯一认可超时的地方：
 
 ```yaml
-task-board:
+all-tasks:
   defaultEndpoints: [deepseek-official]
   endpoints:
     - id: deepseek-official
@@ -165,12 +164,12 @@ DSH 在模型请求 300 秒内未收到新内容（stream-idle watchdog 默认�
 
 ## 数据存储与迁移
 
-- v2 账本位于 `$DSH_HOME/task-board/ledger-v2.json`。POSIX 新文件权限为 `0600`；Windows 继承用户目录 ACL。
+- v2 账本位于 `$DSH_HOME/all-tasks/ledger-v2.json`。POSIX 新文件权限为 `0600`；Windows 继承用户目录 ACL。
 - 损坏的 v2 文件会移动到防碰撞的 `ledger-v2.json.corrupt-*` 名称，Host 以空账本和可见 scheduler 错误启动，不覆盖损坏字节。
-- 每个 origin 首次加载新版页面时，按稳定 source id 和 request id 导入 `dsh.taskBoard.v1`。任务按 id 合并，浏览器端严格较新的顶层字段优先，时间戳相同时保留 Host 字段，执行记录按 execution id 合并。
+- All Tasks（全部任务）全新开始，不再导入原 `dsh-task-board` 包的浏览器数据。插件自己的旧浏览器键为 `dsh.allTasks.v1`；每个 origin 首次加载页面时，按稳定 source id 和 request id 导入该键下的数据。任务按 id 合并，浏览器端严格较新的顶层字段优先，时间戳相同时保留 Host 字段，执行记录按 execution id 合并。
 - 最近 256 个 request id 与动作的 SHA-256 指纹会随账本持久化，因此 Host 重启后的变更重试仍保持幂等，且不会复制完整动作载荷。
-- 只有导入成功并经 Host 确认后，`dsh.taskBoard.v2.hostImported` 才保存当前 Host 账本 generation；新建或损坏恢复出的新 generation 会再次接收保留的 v1 数据。v1 localStorage 原值保持不变，作为只读回退备份。
-- 同一时间只有一个 Host 进程能通过 `$DSH_HOME/task-board/ledger-v2.lock` 持有任务看板账本目录；第二个使用同一 DSH home 的 Host 会失败关闭，不并发写账本。
+- 只有导入成功并经 Host 确认后，`dsh.allTasks.v2.hostImported` 才保存当前 Host 账本 generation；新建或损坏恢复出的新 generation 会再次接收保留的 v1 数据。v1 localStorage 原值保持不变，作为只读回退备份。
+- 同一时间只有一个 Host 进程能通过 `$DSH_HOME/all-tasks/ledger-v2.lock` 持有任务看板账本目录；第二个使用同一 DSH home 的 Host 会失败关闭，不并发写账本。
 
 ## 安全模型
 

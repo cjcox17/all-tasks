@@ -9,7 +9,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mountBoard } from '../src/client/board-mount.tsx'
-import { TaskBoard } from '../src/client/board/TaskBoard.tsx'
+import { AllTasks } from '../src/client/board/AllTasks.tsx'
 import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
@@ -28,7 +28,7 @@ afterEach(() => {
     act(() => { root.unmount() })
   }
   document.body.replaceChildren()
-  document.documentElement.removeAttribute('data-dsh-taskboard-active')
+  document.documentElement.removeAttribute('data-dsh-all-tasks-active')
 })
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -110,17 +110,17 @@ async function openWorkspace(container: HTMLElement, workspaceId: string): Promi
   await act(async () => { card.click() })
 }
 
-describe('TaskBoard L2 semantic attributes (#506)', () => {
+describe('AllTasks L2 semantic attributes (#506)', () => {
   it('tags the board root, the status columns, and the task cards', async () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController()} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController()} />) })
 
-    const board = container.querySelector('[data-dsh-taskboard-board]')
+    const board = container.querySelector('[data-dsh-all-tasks-board]')
     expect(board).not.toBeNull()
-    expect(board!.getAttribute('data-dsh-plugin')).toBe('task-board')
+    expect(board!.getAttribute('data-dsh-plugin')).toBe('all-tasks')
     expect(board!.querySelector('button[data-dsh-center-view-back]')).not.toBeNull()
 
     // The board lands on the workspace list; the kanban opens behind a row.
@@ -147,7 +147,7 @@ describe('TaskBoard L2 semantic attributes (#506)', () => {
       archiveView: true,
       tasks: [task({ archivedAt: Date.now(), status: 'done' })],
     })
-    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
     await openAllTasks(container)
 
     const archive = container.querySelector('section[data-status="archived"]')
@@ -156,7 +156,7 @@ describe('TaskBoard L2 semantic attributes (#506)', () => {
   })
 })
 
-describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
+describe('AllTasks card drag-and-drop status changes (#1195)', () => {
   it('marks manual tasks as draggable and running/pending/archived tasks as not draggable', async () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -171,7 +171,7 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
       ],
       pendingTaskIds: ['t-pending'],
     })
-    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
     await openAllTasks(container)
 
     const cards = container.querySelectorAll('button[data-dsh-part="card"]')
@@ -205,7 +205,7 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
         moveTask: (id, status) => { moveCalls.push({ id, status }) },
       },
     )
-    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
     await openAllTasks(container)
 
     const todoColumn = container.querySelector('section[data-status="todo"]')
@@ -248,7 +248,7 @@ describe('TaskBoard card drag-and-drop status changes (#1195)', () => {
         moveTask: (id, status) => { moveCalls.push({ id, status }) },
       },
     )
-    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
     await openAllTasks(container)
 
     const todoColumn = container.querySelector('section[data-status="todo"]')
@@ -287,9 +287,9 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
 
     await act(async () => { disposeMount = mountBoard(fakeController()) })
 
-    const view = column.querySelector('[data-dsh-taskboard-view]')
+    const view = column.querySelector('[data-dsh-all-tasks-view]')
     expect(view).not.toBeNull()
-    expect(view!.getAttribute('data-dsh-plugin')).toBe('task-board')
+    expect(view!.getAttribute('data-dsh-plugin')).toBe('all-tasks')
   })
 
   it('clicking the back button calls controller.closeBoard() (#1233)', async () => {
@@ -302,7 +302,7 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
     const controller = fakeController({}, {
       closeBoard: () => { closed += 1 },
     })
-    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
 
     const backButton = container.querySelector('button[data-dsh-center-view-back]') as HTMLButtonElement
     expect(backButton).not.toBeNull()
@@ -317,7 +317,7 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
 
     const controller = fakeController({ boardOpen: true })
     await act(async () => { disposeMount = mountBoard(controller) })
-    expect(column.querySelector('[data-dsh-taskboard-view]')).not.toBeNull()
+    expect(column.querySelector('[data-dsh-all-tasks-view]')).not.toBeNull()
 
     // Replace the column element in DOM (e.g. React re-render of AppFrame)
     column.remove()
@@ -329,11 +329,11 @@ describe('mountBoard lifecycle & interaction (#506, #1233)', () => {
       // Trigger MutationObserver callback
       document.body.appendChild(document.createElement('span'))
     })
-    expect(column.querySelector('[data-dsh-taskboard-view]')).not.toBeNull()
+    expect(column.querySelector('[data-dsh-all-tasks-view]')).not.toBeNull()
   })
 })
 
-describe('TaskBoard group sections', () => {
+describe('AllTasks group sections', () => {
   const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
 
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
@@ -341,7 +341,7 @@ describe('TaskBoard group sections', () => {
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
@@ -513,13 +513,13 @@ describe('TaskBoard group sections', () => {
   })
 })
 
-describe('TaskBoard start buttons', () => {
+describe('AllTasks start buttons', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
@@ -568,13 +568,13 @@ describe('TaskBoard start buttons', () => {
   })
 })
 
-describe('TaskBoard workspace landing list', () => {
+describe('AllTasks workspace landing list', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     return { container }
   }
 
@@ -796,13 +796,13 @@ describe('TaskBoard workspace landing list', () => {
   })
 })
 
-describe('TaskBoard approval', () => {
+describe('AllTasks approval', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
@@ -875,13 +875,13 @@ describe('TaskBoard approval', () => {
   })
 })
 
-describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
+describe('AllTasks drag reorder, group join/leave (#drag)', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     // The kanban lives behind the workspace list; open the All-tasks view.
     await openAllTasks(container)
     return { container }
@@ -1003,7 +1003,7 @@ describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => {
-      root.render(<TaskBoard controller={fakeController({
+      root.render(<AllTasks controller={fakeController({
         tasks: [
           task({ id: 't-u1', title: 'Unassigned A', status: 'todo' }),
           task({ id: 't-u2', title: 'Unassigned B', status: 'todo' }),
@@ -1031,7 +1031,7 @@ describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => {
-      root.render(<TaskBoard controller={fakeController({
+      root.render(<AllTasks controller={fakeController({
         tasks: [task({ id: 't-ghost', title: 'Ghost', status: 'todo' })],
       })} />)
     })
@@ -1079,13 +1079,13 @@ describe('TaskBoard drag reorder, group join/leave (#drag)', () => {
   })
 })
 
-describe('TaskBoard workspace directory (expandable landing)', () => {
+describe('AllTasks workspace directory (expandable landing)', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     return { container }
   }
 
@@ -1191,13 +1191,13 @@ describe('TaskBoard workspace directory (expandable landing)', () => {
   })
 })
 
-describe('TaskBoard dashboard & workspace controls', () => {
+describe('AllTasks dashboard & workspace controls', () => {
   async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     return { container }
   }
 
@@ -1246,7 +1246,7 @@ describe('pause / continue affordances', () => {
     document.body.appendChild(container)
     const root = createRoot(container)
     roots.push(root)
-    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
     await openAllTasks(container)
     return { container }
   }

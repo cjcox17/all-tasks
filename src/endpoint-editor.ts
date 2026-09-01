@@ -1,7 +1,7 @@
 /**
- * Endpoint editor state and write-ops for the task-board settings card.
+ * Endpoint editor state and write-ops for the all-tasks settings card.
  *
- * Endpoints live in the plugin's own `task-board` settings namespace
+ * Endpoints live in the plugin's own `all-tasks` settings namespace
  * (`endpoints` array + the `defaultEndpoints` fallback order). An endpoint is
  * deliberately lean — it names one DSH provider route and narrows that
  * provider's models plus a default model; provider-level concerns (concurrency,
@@ -60,7 +60,7 @@ export interface EndpointProviderInfo {
   timeoutMs?: number
 }
 
-/** The editor's full state over the `task-board` namespace. */
+/** The editor's full state over the `all-tasks` namespace. */
 export interface EndpointEditorState {
   endpoints: EndpointEditorView[]
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
@@ -145,11 +145,11 @@ function viewOf(raw: unknown, byProvider: ReadonlyMap<string, ModelTimeoutView>)
 }
 
 /**
- * Resolve the editor's state from the `task-board` namespace's effective
+ * Resolve the editor's state from the `all-tasks` namespace's effective
  * value plus the resolved provider timeout views. Malformed entries and
  * unknown default-list ids are dropped defensively; an absent namespace
  * yields an empty editor.
- * @param settings - resolved `task-board` namespace value.
+ * @param settings - resolved `all-tasks` namespace value.
  * @param providerViews - resolved provider timeout rows (`readModelTimeoutViews`).
  */
 export function readEndpointEditorState(settings: unknown, providerViews: readonly ModelTimeoutView[] = []): EndpointEditorState {
@@ -244,7 +244,7 @@ function rawOf(view: EndpointEditorView): Record<string, unknown> {
 }
 
 /**
- * The settings ops that store one editor state in the `task-board` namespace:
+ * The settings ops that store one editor state in the `all-tasks` namespace:
  * the full `endpoints` array plus the `defaultEndpoints` order, written as one
  * atomic-per-namespace mutation. The timeout fields are intentionally NOT
  * stored here — they belong to the provider route's settings (see

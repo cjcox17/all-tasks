@@ -5,14 +5,14 @@
  * value stays editable through the picker (as a custom row).
  */
 import type { TaskModelSelection } from '../core/tasks.ts'
-import type { TaskBoardKey } from './locales.ts'
+import type { AllTasksKey } from './locales.ts'
 
 /** Preset effort levels offered by the model pickers (adapter-owned values). */
 export const REASONING_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 
 /** Locale key for one preset effort level's display label. */
-export function reasoningEffortLabelKey(level: string): TaskBoardKey {
-  return `exec.model.effort.${level}` as TaskBoardKey
+export function reasoningEffortLabelKey(level: string): AllTasksKey {
+  return `exec.model.effort.${level}` as AllTasksKey
 }
 
 /**

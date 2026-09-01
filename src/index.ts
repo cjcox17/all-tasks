@@ -1,5 +1,5 @@
 /**
- * Host loader entry for the task-board plugin.
+ * Host loader entry for the all-tasks plugin.
  *
  * The Host owns the v2 ledger, action API, cron scheduler, session runner,
  * execution reconciliation, and optional idle-sleep inhibitor. The browser is
@@ -25,8 +25,8 @@ import { EventSourceRegistry } from './core/events.ts'
 import { createGithubEventSource, type GithubEventConfig } from './event-github.ts'
 import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
 import { createSlackEventSource, type SlackEventConfig } from './event-slack.ts'
-import { TaskBoardHostService } from './host-service.ts'
-import { makeEventRoutes, makeTaskBoardRoutes } from './host-routes.ts'
+import { AllTasksHostService } from './host-service.ts'
+import { makeEventRoutes, makeAllTasksRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
 
@@ -34,19 +34,19 @@ import { mountOnce } from './mount-once.ts'
 const SECTION_ORDER = 200
 
 /** Default environment variable holding the authenticated proxy token. */
-export const DEFAULT_PROXY_TOKEN_ENV = 'DSH_TASK_BOARD_PROXY_TOKEN'
+export const DEFAULT_PROXY_TOKEN_ENV = 'DSH_ALL_TASKS_PROXY_TOKEN'
 
 export const inject = ['systemPrompt', 'apiProxy', 'webServer', 'agents', 'commands']
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
-export const TASK_BOARD_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；打开看板先见工作区总览网格（每个工作区的实时任务计数，点击进入该工作区看板，头部返回按钮回到总览）；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；每个工作区可设置默认执行参数（agent 预设、模型、端点、权限、是否默认未批准），新建任务时自动预填，且任务自身未设置的执行参数在执行时回退到其工作区的默认值；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时；顺序分组可开启跨成员保持同一会话并在成员之间运行 /compact 压缩上下文）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。用户提到「全部任务 / 看板 / 工作区 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
+export const ALL_TASKS_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；打开看板先见工作区总览网格（每个工作区的实时任务计数，点击进入该工作区看板，头部返回按钮回到总览）；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；每个工作区可设置默认执行参数（agent 预设、模型、端点、权限、是否默认未批准），新建任务时自动预填，且任务自身未设置的执行参数在执行时回退到其工作区的默认值；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时；顺序分组可开启跨成员保持同一会话并在成员之间运行 /compact 压缩上下文）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。用户提到「全部任务 / 看板 / 工作区 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
 
 /**
  * Settings namespace of the board's announcement capability — the section the
  * web settings surface edits. Spelled here rather than imported: the browser
  * half spells the same value and must not depend on a Host package.
  */
-export const TASK_BOARD_SETTINGS_NAMESPACE = settingsNamespace('task-board')
+export const ALL_TASKS_SETTINGS_NAMESPACE = settingsNamespace('all-tasks')
 
 /** Plugin config, validated by the same-named schemastery schema. */
 export interface Config {
@@ -160,10 +160,10 @@ export function resolveProxyAccess(config: Config | undefined, env: NodeJS.Proce
   const trustedProxyHosts = config?.trustedProxyHosts ?? []
   if (trustedProxyHosts.length === 0) return { trustedProxyHosts }
   const proxyTokenEnv = config?.proxyTokenEnv ?? DEFAULT_PROXY_TOKEN_ENV
-  if (proxyTokenEnv.trim() === '') throw new Error('task-board: proxyTokenEnv must not be empty')
+  if (proxyTokenEnv.trim() === '') throw new Error('all-tasks: proxyTokenEnv must not be empty')
   const proxyToken = env[proxyTokenEnv]
   if (proxyToken === undefined || proxyToken === '') {
-    throw new Error(`task-board: trustedProxyHosts requires a non-empty ${proxyTokenEnv} environment variable`)
+    throw new Error(`all-tasks: trustedProxyHosts requires a non-empty ${proxyTokenEnv} environment variable`)
   }
   return { trustedProxyHosts, proxyToken }
 }
@@ -196,10 +196,10 @@ function modelTimeoutSettingsSeam(ctx: Context): ModelTimeoutSettingsSeam | unde
  * @param ctx - the plugin context (systemPrompt injected).
  * @param config - resolved plugin config (schema defaults applied by the loader).
  */
-export const apply = mountOnce('@linxin666/dsh-client-ui-all-tasks', applyImpl)
+export const apply = mountOnce('@cjcox17/all-tasks', applyImpl)
 
 function applyImpl(ctx: Context, config?: Config): void {
-  const host = new TaskBoardHostService(ctx.apiProxy, {
+  const host = new AllTasksHostService(ctx.apiProxy, {
     commandDispatcher: {
       async execute(sessionId, line, signal) {
         const agent = ctx.agents.get(sessionId)
@@ -225,7 +225,7 @@ function applyImpl(ctx: Context, config?: Config): void {
   ctx.effect(() => {
     const disposers: Array<() => void> = []
     try {
-      for (const route of makeTaskBoardRoutes(host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
+      for (const route of makeAllTasksRoutes(host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       for (const route of makeEventRoutes(eventSources, host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       dispatcher.start()
     } catch (error) {
@@ -239,7 +239,7 @@ function applyImpl(ctx: Context, config?: Config): void {
       for (const dispose of disposers) dispose()
       host.dispose()
     }
-  }, 'task-board: host ledger, scheduler, and routes')
+  }, 'all-tasks: host ledger, scheduler, and routes')
   // The live source the announcement reads: the settings section once the web
   // settings surface is served, the composition entry otherwise
   // (installSettingsSection swaps it when the namespace registers).
@@ -260,13 +260,13 @@ function applyImpl(ctx: Context, config?: Config): void {
     if (!active) return
     if ((current().announceToAgent ?? DEFAULT_ANNOUNCE) === false) return
     disposeSection = ctx.systemPrompt.section({
-      name: 'plugin:task-board',
+      name: 'plugin:all-tasks',
       order: SECTION_ORDER,
-      text: TASK_BOARD_GUIDANCE,
+      text: ALL_TASKS_GUIDANCE,
     })
   }
 
-  installSettingsSection(ctx, TASK_BOARD_SETTINGS_NAMESPACE, Config, config ?? {}, {
+  installSettingsSection(ctx, ALL_TASKS_SETTINGS_NAMESPACE, Config, config ?? {}, {
     setSource: (source) => { current = source },
     onChange: sync,
   })

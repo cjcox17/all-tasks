@@ -8,7 +8,7 @@ const roots: string[] = []
 const NOW = new Date(2026, 7, 16, 10, 0, 30).getTime()
 
 function tempRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-task-board-settle-'))
+  const root = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-settle-'))
   roots.push(root)
   return root
 }

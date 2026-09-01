@@ -14,19 +14,19 @@
  */
 import { createRoot, type Root } from 'react-dom/client'
 import type { BoardController } from '../core/controller.ts'
-import { TaskBoard } from './board/TaskBoard.tsx'
+import { AllTasks } from './board/AllTasks.tsx'
 import css from './board.module.css'
 
 /** The injected board container (kept in the DOM, hidden when inactive). */
-export const BOARD_VIEW_SELECTOR = '[data-dsh-taskboard-view]'
+export const BOARD_VIEW_SELECTOR = '[data-dsh-all-tasks-view]'
 
 const CONVERSATION_COLUMN_SELECTOR = '[data-pane="conversation"], [class*="centerCol"]'
-const ACTIVE_ATTR = 'data-dsh-taskboard-active'
+const ACTIVE_ATTR = 'data-dsh-all-tasks-active'
 /** The sibling panel's activation attribute (ssh), removed when this panel opens. */
 const OTHER_ACTIVE_ATTR = 'data-dsh-ssh-active'
 /** Cross-plugin activation event; detail is the activating panel name. */
 const ACTIVATE_EVENT = 'dsh-panel-activate'
-const PANEL_NAME = 'taskboard'
+const PANEL_NAME = 'all-tasks'
 
 /** Find the center column, or undefined while the frame is not mounted. */
 function conversationColumn(): HTMLElement | undefined {
@@ -54,12 +54,12 @@ export function mountBoard(controller: BoardController): () => void {
     const column = conversationColumn()
     if (column === undefined) return
     container = document.createElement('div')
-    container.dataset.dshTaskboardView = ''
-    container.dataset.dshPlugin = 'task-board'
+    container.dataset.dshAllTasksView = ''
+    container.dataset.dshPlugin = 'all-tasks'
     container.className = css.boardView
     column.appendChild(container)
     root = createRoot(container)
-    root.render(<TaskBoard controller={controller} />)
+    root.render(<AllTasks controller={controller} />)
   }
 
   // The frame mounts after boot settlement; watch for the column's arrival.

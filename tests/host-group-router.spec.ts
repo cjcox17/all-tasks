@@ -6,13 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EndpointConfig, EndpointRouterConfig } from '../src/core/endpoints.ts'
 import { nextRunAtMs } from '../src/core/schedule.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 
 const roots: string[] = []
 
 function root(): string {
-  const value = mkdtempSync(join(tmpdir(), 'dsh-task-board-group-'))
+  const value = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-group-'))
   roots.push(value)
   return value
 }
@@ -58,7 +58,7 @@ function launchApi(create: ReturnType<typeof vi.fn>) {
 }
 
 interface ServiceHarness {
-  service: TaskBoardHostService
+  service: AllTasksHostService
   ledger: HostTaskLedger
   create: ReturnType<typeof vi.fn>
   routeQueued: () => Promise<void>
@@ -69,7 +69,7 @@ interface ServiceHarness {
 function harness(dir: string, config: EndpointRouterConfig, now: () => number): ServiceHarness {
   const create = vi.fn(async (request) => ok(request, { sessionId: 'session-x' }))
   const ledger = new HostTaskLedger(dir, now)
-  const service = new TaskBoardHostService(launchApi(create), {
+  const service = new AllTasksHostService(launchApi(create), {
     ledger,
     power: new PowerInhibitor({ platform: 'linux' }),
     now,
@@ -102,7 +102,7 @@ function seedGroup(h: ServiceHarness, groupId: string, name: string, taskIds: st
   }
 }
 
-describe('TaskBoardHostService group routing', () => {
+describe('AllTasksHostService group routing', () => {
   it('queues a second member of a sequential group while the first runs, then launches it after a settle', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()

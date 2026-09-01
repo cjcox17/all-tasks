@@ -10,7 +10,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { TaskBoard } from '../src/client/board/TaskBoard.tsx'
+import { AllTasks } from '../src/client/board/AllTasks.tsx'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { ExecutionRecord, TaskRecord } from '../src/core/tasks.ts'
@@ -29,7 +29,7 @@ afterEach(() => {
     act(() => { root.unmount() })
   }
   document.body.replaceChildren()
-  document.documentElement.removeAttribute('data-dsh-taskboard-active')
+  document.documentElement.removeAttribute('data-dsh-all-tasks-active')
 })
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -118,7 +118,7 @@ async function mountKanban(controller: BoardController): Promise<HTMLElement> {
   document.body.appendChild(container)
   const root = createRoot(container)
   roots.push(root)
-  await act(async () => { root.render(<TaskBoard controller={controller} />) })
+  await act(async () => { root.render(<AllTasks controller={controller} />) })
   const wrap = Array.from(container.querySelectorAll('[data-dsh-part="workspace-card"]'))
     .find(card => card.getAttribute('data-workspace') === '') as HTMLElement | undefined
   expect(wrap, 'All-tasks card').toBeDefined()
@@ -134,7 +134,7 @@ function bannerOf(container: HTMLElement, groupId: string): HTMLElement {
   return section!
 }
 
-describe('TaskBoard group banner status badges', () => {
+describe('AllTasks group banner status badges', () => {
   it('shows no status pills for an idle group', async () => {
     const controller = fakeController({
       groups: [group()],

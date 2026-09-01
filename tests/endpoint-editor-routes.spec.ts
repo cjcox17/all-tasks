@@ -5,14 +5,14 @@ import { createServer, type Server } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { HostTaskLedger } from '../src/host-ledger.ts'
-import { makeTaskBoardRoutes } from '../src/host-routes.ts'
-import { TaskBoardHostService } from '../src/host-service.ts'
+import { makeAllTasksRoutes } from '../src/host-routes.ts'
+import { AllTasksHostService } from '../src/host-service.ts'
 import type { EndpointEditorState, EndpointEditorView, EndpointProviderInfo } from '../src/endpoint-editor.ts'
 import { DEEPSEEK_PROVIDER } from '../src/model-timeouts.ts'
 import type { ModelTimeoutSettingsSeam } from '../src/model-timeouts.ts'
-import type { TaskBoardSnapshot } from '../src/protocol.ts'
+import type { AllTasksSnapshot } from '../src/protocol.ts'
 
-const snapshot: TaskBoardSnapshot = {
+const snapshot: AllTasksSnapshot = {
   schemaVersion: 2,
   revision: 0,
   tasks: [],
@@ -60,8 +60,8 @@ describe('endpoints HTTP routes', () => {
       endpointProviders,
       endpoints,
       applyEndpoints,
-    } as unknown as TaskBoardHostService
-    const routes = makeTaskBoardRoutes(service)
+    } as unknown as AllTasksHostService
+    const routes = makeAllTasksRoutes(service)
     server = createServer((req, res) => {
       const route = routes.find(candidate => candidate.path === new URL(req.url ?? '/', 'http://local').pathname)
       if (route === undefined) { res.writeHead(404); res.end(); return }
@@ -78,7 +78,7 @@ describe('endpoints HTTP routes', () => {
   })
 
   it('serves the endpoint state plus the provider catalog to a same-origin GET', async () => {
-    const response = await fetch(`${base}/api/task-board/endpoints`, { headers: { 'sec-fetch-site': 'same-origin' } })
+    const response = await fetch(`${base}/api/all-tasks/endpoints`, { headers: { 'sec-fetch-site': 'same-origin' } })
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(await response.json()).toEqual({ ...STATE, providers: PROVIDERS })
@@ -88,7 +88,7 @@ describe('endpoints HTTP routes', () => {
 
   it('applies a full replacement on POST and returns the stored state', async () => {
     const body = { endpoints: [VIEW], defaultEndpoints: ['lm-studio-nas'] }
-    const response = await fetch(`${base}/api/task-board/endpoints`, {
+    const response = await fetch(`${base}/api/all-tasks/endpoints`, {
       method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' }, body: JSON.stringify(body),
     })
     expect(response.status).toBe(200)
@@ -98,10 +98,10 @@ describe('endpoints HTTP routes', () => {
   })
 
   it('rejects writes without the browser same-origin marker', async () => {
-    expect((await fetch(`${base}/api/task-board/endpoints`, {
+    expect((await fetch(`${base}/api/all-tasks/endpoints`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoints: [VIEW] }),
     })).status).toBe(403)
-    expect((await fetch(`${base}/api/task-board/endpoints`)).status).toBe(403)
+    expect((await fetch(`${base}/api/all-tasks/endpoints`)).status).toBe(403)
     expect(applyEndpoints).not.toHaveBeenCalled()
   })
 
@@ -112,23 +112,23 @@ describe('endpoints HTTP routes', () => {
       { endpoints: [{ id: 'a', provider: 'p' }], defaultEndpoints: ['missing'] },
     ]
     for (const body of bad) {
-      const response = await fetch(`${base}/api/task-board/endpoints`, {
+      const response = await fetch(`${base}/api/all-tasks/endpoints`, {
         method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' }, body: JSON.stringify(body),
       })
       expect(response.status).toBe(400)
     }
     expect(applyEndpoints).not.toHaveBeenCalled()
-    expect((await fetch(`${base}/api/task-board/endpoints`, {
+    expect((await fetch(`${base}/api/all-tasks/endpoints`, {
       method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'text/plain' }, body: '{}',
     })).status).toBe(415)
-    expect((await fetch(`${base}/api/task-board/endpoints`, {
+    expect((await fetch(`${base}/api/all-tasks/endpoints`, {
       method: 'PUT', headers: { 'sec-fetch-site': 'same-origin' },
     })).status).toBe(405)
   })
 
   it('surfaces service failures as 400 responses', async () => {
     applyEndpoints.mockRejectedValueOnce(new Error('settings service is unavailable'))
-    const response = await fetch(`${base}/api/task-board/endpoints`, {
+    const response = await fetch(`${base}/api/all-tasks/endpoints`, {
       method: 'POST', headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
       body: JSON.stringify({ endpoints: [VIEW] }),
     })
@@ -166,7 +166,7 @@ function fakeSettings(initial: Record<string, unknown>): ModelTimeoutSettingsSea
 const roots: string[] = []
 
 function root(): string {
-  const value = mkdtempSync(join(tmpdir(), 'dsh-task-board-endpoints-'))
+  const value = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-endpoints-'))
   roots.push(value)
   return value
 }
@@ -175,17 +175,17 @@ afterEach(() => {
   for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true })
 })
 
-function serviceWith(settings: ModelTimeoutSettingsSeam | undefined): TaskBoardHostService {
-  return new TaskBoardHostService({} as unknown as ApiProxy, {
+function serviceWith(settings: ModelTimeoutSettingsSeam | undefined): AllTasksHostService {
+  return new AllTasksHostService({} as unknown as ApiProxy, {
     ledger: new HostTaskLedger(root(), () => 0),
     settings,
   })
 }
 
-describe('TaskBoardHostService endpoint write path', () => {
+describe('AllTasksHostService endpoint write path', () => {
   it('reads the namespace, applies a full replacement, and writes timeouts through to the provider route', async () => {
     const settings = fakeSettings({
-      'task-board': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
+      'all-tasks': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
       'llm-pi-ai': { providers: { 'lm-studio': { displayName: 'LM Studio', models: [{ id: 'qwen/qwen3.8-27b' }] } } },
       'llm-deepseek': {},
     })
@@ -209,9 +209,9 @@ describe('TaskBoardHostService endpoint write path', () => {
     }
     const stored = await service.applyEndpoints(next)
     expect(stored.endpoints).toHaveLength(2)
-    // One task-board write + one per-provider timeout write.
+    // One all-tasks write + one per-provider timeout write.
     expect(settings.applied).toHaveLength(3)
-    expect(settings.applied[0]?.ns).toBe('task-board')
+    expect(settings.applied[0]?.ns).toBe('all-tasks')
     expect(settings.applied[0]?.ops[0]).toMatchObject({ op: 'set', path: ['endpoints'] })
     expect(settings.applied[0]?.ops[1]).toEqual({ op: 'set', path: ['defaultEndpoints'], value: ['lm-studio-nas', 'deepseek'] })
     // lm-studio idle + total land in llm-pi-ai.
@@ -226,7 +226,7 @@ describe('TaskBoardHostService endpoint write path', () => {
 
   it('unsets a blank total timeout instead of writing a zero value', async () => {
     const settings = fakeSettings({
-      'task-board': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
+      'all-tasks': { endpoints: [{ id: 'lm-studio-nas', provider: 'lm-studio' }], defaultEndpoints: ['lm-studio-nas'] },
       'llm-pi-ai': { providers: { 'lm-studio': { displayName: 'LM Studio', streamIdleTimeoutMs: 300_000, timeoutMs: 3_600_000 } } },
       'llm-deepseek': {},
     })

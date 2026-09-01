@@ -4,11 +4,11 @@
  * settled frame).
  */
 import { describe, expect, it, vi } from 'vitest'
-import { BoardController, type ControllerDeps, type TaskBoardTransport } from '../src/core/controller.ts'
+import { BoardController, type ControllerDeps, type AllTasksTransport } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 import { InMemoryTaskStore } from '../src/core/store.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
-import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '../src/protocol.ts'
+import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../src/protocol.ts'
 
 const NOW = 1_700_000_000_000
 let nextId = 0
@@ -40,7 +40,7 @@ class FakeSessions {
 }
 
 /** Host-like snapshot builder for transport fakes. */
-function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger-a'): TaskBoardSnapshot {
+function snapshot(revision: number, tasks: TaskRecord[] = [], ledgerId = 'ledger-a'): AllTasksSnapshot {
   return {
     schemaVersion: 2,
     revision,
@@ -270,8 +270,8 @@ describe('run loop', () => {
   it('requests a Host run and applies the confirmed running state', async () => {
     const initial = createTask({ title: '任务A', description: '', prompt: '干活' }, NOW, 'task-a')
     const running = { ...initial, status: 'running' as const, updatedAt: NOW + 1 }
-    const actions: TaskBoardAction[] = []
-    const transport: TaskBoardTransport = {
+    const actions: AllTasksAction[] = []
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(1, [initial]),
       state: async () => snapshot(1, [initial]),
       action: async action => { actions.push(action); return snapshot(2, [running]) },
@@ -300,9 +300,9 @@ describe('run loop', () => {
       ...running, status: 'done', updatedAt: NOW + 2,
       executions: [{ id: 'e1', sessionId: 's-9', startedAt: NOW, endedAt: NOW + 5, result: 'succeeded', error: undefined }],
     }
-    let onEvent: ((event?: TaskBoardEventPayload) => void) | undefined
+    let onEvent: ((event?: AllTasksEventPayload) => void) | undefined
     let remote = snapshot(2, [running])
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(1, [initial]),
       state: async () => remote,
       action: async () => { remote = snapshot(2, [running]); return remote },
@@ -330,8 +330,8 @@ describe('run loop', () => {
       executions: [{ id: 'e1', sessionId: 's-9', startedAt: NOW, endedAt: NOW + 5, result: 'failed', error: 'boom' }],
     }
     const rerunning: TaskRecord = { ...failed, status: 'running', updatedAt: NOW + 2 }
-    const actions: TaskBoardAction[] = []
-    const transport: TaskBoardTransport = {
+    const actions: AllTasksAction[] = []
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(2, [failed]),
       state: async () => snapshot(2, [failed]),
       action: async action => { actions.push(action); return snapshot(3, [rerunning]) },
@@ -355,13 +355,13 @@ describe('run loop', () => {
       order: ['task-a'], createdAt: NOW, updatedAt: NOW,
     }
     const running = { ...initial, status: 'running' as const, updatedAt: NOW + 1 }
-    const actions: TaskBoardAction[] = []
-    const withGroup = (tasks: TaskRecord[]): TaskBoardSnapshot => ({
+    const actions: AllTasksAction[] = []
+    const withGroup = (tasks: TaskRecord[]): AllTasksSnapshot => ({
       schemaVersion: 2, revision: 1, tasks, groups: [group], workspaceDefaults: {},
       scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
       power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
     })
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => withGroup([initial]),
       state: async () => withGroup([initial]),
       action: async action => { actions.push(action); return withGroup([running]) },
@@ -383,13 +383,13 @@ describe('run loop', () => {
       id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, stopped: true,
       order: ['task-a'], createdAt: NOW, updatedAt: NOW,
     }
-    const actions: TaskBoardAction[] = []
-    const withGroup = (tasks: TaskRecord[]): TaskBoardSnapshot => ({
+    const actions: AllTasksAction[] = []
+    const withGroup = (tasks: TaskRecord[]): AllTasksSnapshot => ({
       schemaVersion: 2, revision: 1, tasks, groups: [group], workspaceDefaults: {},
       scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
       power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
     })
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => withGroup([initial]),
       state: async () => withGroup([initial]),
       action: async action => { actions.push(action); return withGroup([initial]) },
@@ -419,7 +419,7 @@ describe('run loop', () => {
       archivedAt: NOW,
     }
     const action = vi.fn(async () => snapshot(1, [archived]))
-    const transport: TaskBoardTransport = {
+    const transport: AllTasksTransport = {
       bootstrap: async () => snapshot(1, [archived]),
       state: async () => snapshot(1, [archived]),
       action,
@@ -742,8 +742,8 @@ describe('BoardController reorder', () => {
 describe('BoardController workspace fan-out', () => {
   const OPEN = { id: 'e', sessionId: 's', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }
 
-  function hostTransport(seedTasks: TaskRecord[], seedGroups: TaskGroupRecord[], actions: TaskBoardAction[]): TaskBoardTransport {
-    const snap = (): TaskBoardSnapshot => ({
+  function hostTransport(seedTasks: TaskRecord[], seedGroups: TaskGroupRecord[], actions: AllTasksAction[]): AllTasksTransport {
+    const snap = (): AllTasksSnapshot => ({
       schemaVersion: 2, revision: 1, tasks: seedTasks, groups: seedGroups, workspaceDefaults: {},
       scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
       power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
@@ -761,13 +761,13 @@ describe('BoardController workspace fan-out', () => {
     const backlog = { ...createTask({ title: 'backlog', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-backlog'), status: 'backlog' as const }
     const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', workspaceId: 'ws-a', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
     const member = createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1')
-    const actions: TaskBoardAction[] = []
+    const actions: AllTasksAction[] = []
     const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([todo, backlog, member], [group], actions), now: () => NOW, uuid })
     controller.start()
     await controller.retryHostSync()
 
     await controller.runWorkspace('ws-a')
-    expect(actions.map(action => action.kind === 'run' ? `run:${(action as Extract<TaskBoardAction, { kind: 'run' }>).taskId}` : action.kind === 'run-group' ? `run-group:${(action as Extract<TaskBoardAction, { kind: 'run-group' }>).groupId}` : action.kind))
+    expect(actions.map(action => action.kind === 'run' ? `run:${(action as Extract<AllTasksAction, { kind: 'run' }>).taskId}` : action.kind === 'run-group' ? `run-group:${(action as Extract<AllTasksAction, { kind: 'run-group' }>).groupId}` : action.kind))
       .toEqual(['run:t-todo', 'run-group:g1'])
     controller.dispose()
   })
@@ -776,7 +776,7 @@ describe('BoardController workspace fan-out', () => {
     const runTask = { ...createTask({ title: 'run', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-run'), status: 'running' as const, executions: [OPEN] }
     const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', workspaceId: 'ws-a', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
     const member = { ...createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1'), status: 'running' as const, executions: [OPEN] }
-    const actions: TaskBoardAction[] = []
+    const actions: AllTasksAction[] = []
     const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([runTask, member], [group], actions), now: () => NOW, uuid })
     controller.start()
     await controller.retryHostSync()

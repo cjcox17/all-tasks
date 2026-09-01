@@ -5,7 +5,7 @@ import { EventSourceRegistry, type EventSource } from '../src/core/events.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { SettlementEvent } from '../src/host-ledger.ts'
 
-function eventSource(id: string, path = `/api/task-board/events/${id}`): EventSource {
+function eventSource(id: string, path = `/api/all-tasks/events/${id}`): EventSource {
   return {
     id,
     method: 'POST',
@@ -28,7 +28,7 @@ describe('EventSourceRegistry', () => {
     const registry = new EventSourceRegistry()
     registry.register(eventSource('github'))
     expect(() => registry.register(eventSource('github'))).toThrow('already registered')
-    expect(() => registry.register(eventSource('other', '/api/task-board/events/github'))).toThrow('already registered')
+    expect(() => registry.register(eventSource('other', '/api/all-tasks/events/github'))).toThrow('already registered')
   })
 })
 

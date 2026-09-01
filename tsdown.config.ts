@@ -11,7 +11,7 @@
  */
 import { clientBundle } from './build/tsdown.client.ts'
 
-export default clientBundle('@linxin666/dsh-client-ui-all-tasks', ['src/index.ts', 'src/invariant.ts'], {
+export default clientBundle('@cjcox17/all-tasks', ['src/index.ts', 'src/invariant.ts'], {
   libExternal: [
     '@deepseek-ai/dsh-client-connection',
     '@deepseek-ai/dsh-client-locale',

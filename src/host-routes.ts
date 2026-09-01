@@ -3,20 +3,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { EventRequest, EventSourceRegistry } from './core/events.ts'
 import { parseEndpointEditorPatch } from './endpoint-editor.ts'
-import type { TaskBoardHostService } from './host-service.ts'
+import type { AllTasksHostService } from './host-service.ts'
 import { writeJson } from './http.ts'
 import { isLoopbackAddress, isLoopbackRequest } from './loopback.ts'
-import { parseActionEnvelope, TASK_BOARD_API_PREFIX } from './protocol.ts'
+import { parseActionEnvelope, ALL_TASKS_API_PREFIX } from './protocol.ts'
 
 const ACTION_LIMIT = 64 * 1024
 const IMPORT_LIMIT = 2 * 1024 * 1024
 const HEARTBEAT_MS = 15_000
 
 /** Header replaced by an authenticated same-host reverse proxy. */
-export const TASK_BOARD_PROXY_TOKEN_HEADER = 'x-dsh-task-board-proxy-token'
+export const ALL_TASKS_PROXY_TOKEN_HEADER = 'x-dsh-all-tasks-proxy-token'
 
 /** Optional authenticated reverse-proxy access layered over the loopback default. */
-export interface TaskBoardRouteAccess {
+export interface AllTasksRouteAccess {
   trustedProxyHosts?: readonly string[]
   proxyToken?: string
 }
@@ -43,17 +43,17 @@ function parseAuthority(authority: string): { canonical: string; url: URL } | un
   }
 }
 
-function resolveAccess(access: TaskBoardRouteAccess): ResolvedRouteAccess {
+function resolveAccess(access: AllTasksRouteAccess): ResolvedRouteAccess {
   const trustedProxyHosts = new Set<string>()
   for (const authority of access.trustedProxyHosts ?? []) {
     const parsed = parseAuthority(authority)
     if (parsed === undefined || parsed.canonical !== authority.toLowerCase()) {
-      throw new Error(`task-board: trustedProxyHosts entry ${JSON.stringify(authority)} is not a canonical host[:port] authority`)
+      throw new Error(`all-tasks: trustedProxyHosts entry ${JSON.stringify(authority)} is not a canonical host[:port] authority`)
     }
     trustedProxyHosts.add(parsed.canonical)
   }
   if (trustedProxyHosts.size > 0 && (access.proxyToken === undefined || access.proxyToken === '')) {
-    throw new Error('task-board: authenticated proxy hosts require a non-empty proxy token')
+    throw new Error('all-tasks: authenticated proxy hosts require a non-empty proxy token')
   }
   return { trustedProxyHosts, ...(access.proxyToken === undefined ? {} : { proxyToken: access.proxyToken }) }
 }
@@ -62,7 +62,7 @@ function resolveAccess(access: TaskBoardRouteAccess): ResolvedRouteAccess {
  * Browser-signal tripwire, NOT an authority check: a bare curl sends neither
  * header and is refused, but a curl with a forged Origin passes this too.
  * The real boundary is the loopback socket + Host + origin-equality checks
- * in isTrustedTaskBoardRequest below; do not rely on this marker alone.
+ * in isTrustedAllTasksRequest below; do not rely on this marker alone.
  */
 function browserSameOriginMarker(req: IncomingMessage): boolean {
   const site = req.headers['sec-fetch-site']
@@ -88,7 +88,7 @@ function matchesToken(candidate: string | string[] | undefined, expected: string
 }
 
 /**
- * Task-board route fence. Direct desktop access uses the repository-wide
+ * All-tasks route fence. Direct desktop access uses the repository-wide
  * loopback socket + Host guard and additionally requires a browser same-origin
  * marker: a bare local curl without any browser signal cannot exercise the
  * agent control plane (a forged Origin does pass the marker — it is a
@@ -96,7 +96,7 @@ function matchesToken(candidate: string | string[] | undefined, expected: string
  * Authenticated proxies must be explicitly allowlisted and replace the
  * internal token header after their own authentication step.
  */
-export function isTrustedTaskBoardRequest(req: IncomingMessage, access: ResolvedRouteAccess): boolean {
+export function isTrustedAllTasksRequest(req: IncomingMessage, access: ResolvedRouteAccess): boolean {
   if (!browserSameOriginMarker(req)) return false
   if (isLoopbackRequest(req)) return true
   if (!isLoopbackAddress(req.socket.remoteAddress)) return false
@@ -105,7 +105,7 @@ export function isTrustedTaskBoardRequest(req: IncomingMessage, access: Resolved
   const parsed = parseAuthority(host)
   if (parsed === undefined || parsed.canonical !== host.toLowerCase()) return false
   if (!access.trustedProxyHosts.has(parsed.canonical) || !sameAuthority(req, parsed.url)) return false
-  return matchesToken(req.headers[TASK_BOARD_PROXY_TOKEN_HEADER], access.proxyToken)
+  return matchesToken(req.headers[ALL_TASKS_PROXY_TOKEN_HEADER], access.proxyToken)
 }
 
 async function readBody(req: IncomingMessage): Promise<{ raw: string; value: unknown }> {
@@ -121,16 +121,16 @@ async function readBody(req: IncomingMessage): Promise<{ raw: string; value: unk
   return { raw, value: JSON.parse(raw) }
 }
 
-export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskBoardRouteAccess = {}): WebRoute[] {
+export function makeAllTasksRoutes(service: AllTasksHostService, access: AllTasksRouteAccess = {}): WebRoute[] {
   const resolvedAccess = resolveAccess(access)
   const guard = (req: IncomingMessage, res: ServerResponse): boolean => {
-    if (isTrustedTaskBoardRequest(req, resolvedAccess)) return true
+    if (isTrustedAllTasksRequest(req, resolvedAccess)) return true
     writeJson(res, 403, { ok: false, error: 'forbidden' }, { 'cache-control': 'no-store' })
     return false
   }
   const state: WebRoute = {
     kind: 'exact',
-    path: `${TASK_BOARD_API_PREFIX}/state`,
+    path: `${ALL_TASKS_API_PREFIX}/state`,
     handler: (req, res): void => {
       if (req.method !== 'GET') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
       if (!guard(req, res)) return
@@ -139,7 +139,7 @@ export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskB
   }
   const action: WebRoute = {
     kind: 'exact',
-    path: `${TASK_BOARD_API_PREFIX}/action`,
+    path: `${ALL_TASKS_API_PREFIX}/action`,
     handler: async (req, res): Promise<void> => {
       if (req.method !== 'POST') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
       if (!guard(req, res)) return
@@ -162,7 +162,7 @@ export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskB
   }
   const events: WebRoute = {
     kind: 'exact',
-    path: `${TASK_BOARD_API_PREFIX}/events`,
+    path: `${ALL_TASKS_API_PREFIX}/events`,
     handler: (req, res): void => {
       if (req.method !== 'GET') {
         res.writeHead(405)
@@ -192,7 +192,7 @@ export function makeTaskBoardRoutes(service: TaskBoardHostService, access: TaskB
   }
   const endpoints: WebRoute = {
     kind: 'exact',
-    path: `${TASK_BOARD_API_PREFIX}/endpoints`,
+    path: `${ALL_TASKS_API_PREFIX}/endpoints`,
     handler: async (req, res): Promise<void> => {
       if (req.method === 'GET') {
         if (!guard(req, res)) return
@@ -238,8 +238,8 @@ const EVENT_COOLDOWN_MS = 60_000
  */
 export function makeEventRoutes(
   registry: EventSourceRegistry,
-  service: TaskBoardHostService,
-  access: TaskBoardRouteAccess = {},
+  service: AllTasksHostService,
+  access: AllTasksRouteAccess = {},
 ): WebRoute[] {
   const resolvedAccess = resolveAccess(access)
   const cooldown = new Map<string, number>()
@@ -250,7 +250,7 @@ export function makeEventRoutes(
       if (req.method !== source.method) {
         return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
       }
-      if (!isTrustedTaskBoardRequest(req, resolvedAccess)) {
+      if (!isTrustedAllTasksRequest(req, resolvedAccess)) {
         return writeJson(res, 403, { ok: false, error: 'forbidden' }, { 'cache-control': 'no-store' })
       }
       if (!(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {

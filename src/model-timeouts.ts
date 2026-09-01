@@ -1,5 +1,5 @@
 /**
- * Model timeout views and settings write-ops for the task-board settings
+ * Model timeout views and settings write-ops for the all-tasks settings
  * card.
  *
  * DSH's model-request timeouts live in the user-settings seam, not on the
