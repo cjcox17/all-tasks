@@ -292,7 +292,7 @@ function groupInput(value: unknown): value is GroupCreateInput {
 /** Gate a group update patch (every field optional; null clears a field). */
 function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'stopped', 'schedule'])) return false
+  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'finalStepTaskId', 'finalStepRequireSuccess', 'stopped', 'schedule'])) return false
   if (patch.name !== undefined && (typeof patch.name !== 'string' || patch.name.trim() === '' || patch.name.length > GROUP_FIELD_BOUND)) return false
   if (patch.mode !== undefined && !isGroupExecutionMode(patch.mode)) return false
   if (patch.maxParallel !== undefined && patch.maxParallel !== null && normalizeMaxParallel(patch.maxParallel) === undefined) return false
@@ -301,6 +301,11 @@ function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
   if (patch.offPeakOnly !== undefined && typeof patch.offPeakOnly !== 'boolean') return false
   if (patch.maintainSession !== undefined && typeof patch.maintainSession !== 'boolean') return false
   if (patch.compactBetween !== undefined && typeof patch.compactBetween !== 'boolean') return false
+  // A non-string or oversized designation rejects; a blank string collapses
+  // to "no final step" in the sanitizer (like a blank workspace scope).
+  if (patch.finalStepTaskId !== undefined && patch.finalStepTaskId !== null
+    && (typeof patch.finalStepTaskId !== 'string' || patch.finalStepTaskId.length > GROUP_FIELD_BOUND)) return false
+  if (patch.finalStepRequireSuccess !== undefined && typeof patch.finalStepRequireSuccess !== 'boolean') return false
   if (patch.stopped !== undefined && typeof patch.stopped !== 'boolean') return false
   if (patch.schedule !== undefined && patch.schedule !== null && !groupScheduleField(patch.schedule)) return false
   return true
@@ -329,6 +334,12 @@ function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUp
   }
   if ('allowedHours' in sanitized && sanitized.allowedHours !== undefined && sanitized.allowedHours !== null) {
     sanitized.allowedHours = normalizeDailyWindow(sanitized.allowedHours)
+  }
+  if ('finalStepTaskId' in sanitized && sanitized.finalStepTaskId !== undefined && sanitized.finalStepTaskId !== null) {
+    // A blank designation collapses to "no final step" (absent).
+    const finalStepTaskId = sanitized.finalStepTaskId.trim()
+    if (finalStepTaskId === '') delete sanitized.finalStepTaskId
+    else sanitized.finalStepTaskId = finalStepTaskId
   }
   return sanitized
 }

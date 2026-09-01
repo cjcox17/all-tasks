@@ -51,7 +51,7 @@ export function formatTime(ms: number, timeZone?: string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpinner }: {
+function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpinner, finalStep, finalStepWaiting }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
@@ -61,6 +61,10 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
   /** The parent overlays its own action circle on this card, so the card's
    *  meta-row spinner is suppressed (the circle's ring shows the same state). */
   hideSpinner?: boolean
+  /** This card is the group's designated final step (the merge step). */
+  finalStep?: boolean
+  /** The final step is gated: other group members are still unfinished. */
+  finalStepWaiting?: boolean
 }) {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
@@ -114,6 +118,15 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
         {!archived && task.deferAutoStart === true && (
           <span className={css.cardHeld} title={t('card.heldHint')}>
             {t('card.held')}
+          </span>
+        )}
+        {!archived && finalStep === true && (
+          <span
+            className={finalStepWaiting ? css.cardFinalStepWaiting : css.cardFinalStep}
+            title={finalStepWaiting ? t('card.finalStepWaitingHint') : t('card.finalStepHint')}
+          >
+            {t('card.finalStep')}
+            {finalStepWaiting ? ` · ${t('card.finalStepWaiting')}` : ''}
           </span>
         )}
         {!archived && task.schedule?.enabled === true && (

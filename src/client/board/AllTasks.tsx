@@ -15,6 +15,7 @@ import { memo, useCallback, useEffect, useRef, useState, type DragEvent as React
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
 import { computeDashboard } from '../../core/dashboard.ts'
 import {
+  groupFinalStepBlocked,
   groupRuntimeStatus,
   orderedGroupMembers,
   type ExecutionQueuedReason,
@@ -120,16 +121,20 @@ function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) 
  * re-renders only when its own task changes — not when a sibling card status,
  * the filter, or the selection moves.
  */
-const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner }: {
+const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner, finalStep, finalStepWaiting }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
   onOpen: (id: string) => void
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer) => void
   hideSpinner?: boolean
+  /** This card is the group's designated final step (merge step). */
+  finalStep?: boolean
+  /** The final step is gated: other group members are still unfinished. */
+  finalStepWaiting?: boolean
 }) {
   const onClick = useCallback(() => { onOpen(task.id) }, [task.id, onOpen])
-  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} hideSpinner={hideSpinner} />
+  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} hideSpinner={hideSpinner} finalStep={finalStep} finalStepWaiting={finalStepWaiting} />
 })
 
 /** Human hint for a pending group: the reason(s) its held members wait. */
@@ -218,6 +223,11 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
         <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
           {t('group.pending')}
           {status.pending > 1 ? ` ${status.pending}` : ''}
+        </span>
+      )}
+      {status.finalStepWaiting && (
+        <span className={css.groupStatus} data-kind="finalstep" title={t('card.finalStepWaitingHint')}>
+          {t('group.finalStepWaitingBadge')}
         </span>
       )}
       {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
@@ -311,7 +321,7 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
  * flight. Single-member pause/continue stays available through the group
  * banner (Pause group) and the task detail's open-execution row.
  */
-function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget, finalStepBlocked }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Open-execution status of the whole group (running/queued members). */
@@ -333,6 +343,8 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   onDragStart?: (payload: string, rect: { x: number; y: number; width: number; height: number }, html: string, pointer: DragPointer) => void
   /** Whether a task drag is hovering this group's section (highlight + line). */
   dropTarget?: DropTarget
+  /** Whether the group's final step is gated on unsettled members (all tasks considered). */
+  finalStepBlocked: boolean
 }) {
   const overGroup = dropTarget?.zone === 'group' && dropTarget.groupId === group.id
   return (
@@ -352,6 +364,11 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
       />
       {members.length === 0 && <p className={css.groupEmpty}>{t('group.emptyMembers')}</p>}
       {members.map(task => {
+        // The final step is gated: while other members are still unfinished it
+        // carries no run action (the Host refuses a manual start; the badge on
+        // the card explains the wait). Stop/approve stay available.
+        const isFinalStep = group.finalStepTaskId === task.id
+        const finalStepWaiting = isFinalStep && finalStepBlocked
         // One contextual action per member, shown as a circle on the card's
         // right edge (inside the card — the card itself is a button, so the
         // action stays a sibling in the DOM and is overlaid by the wrapper).
@@ -359,9 +376,11 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
           ? { kind: 'stop' as const, label: t('group.stopMember'), glyph: '⏹', onAct: () => { onStopMember(task.id) } }
           : task.approved === false
             ? { kind: 'approve' as const, label: t('card.approve'), glyph: '✓', onAct: () => { onApproveMember(task.id) } }
-            : canStartTask(task)
-              ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
-              : undefined
+            : finalStepWaiting
+              ? undefined
+              : canStartTask(task)
+                ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
+                : undefined
         // While the task is running or an action is pending, the circle's ring
         // spins — the pending indicator merged around the action icon.
         const active = action !== undefined && (task.status === 'running' || pendingIds.includes(task.id))
@@ -374,6 +393,8 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
               onOpen={onOpen}
               onDragStart={onDragStart}
               hideSpinner={action !== undefined}
+              finalStep={isFinalStep}
+              finalStepWaiting={finalStepWaiting}
             />
             {action !== undefined && (
               <button
@@ -795,6 +816,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onResume={() => { void controller.resumeGroup(group.id) }}
                 onDragStart={startDrag}
                 dropTarget={dropTarget}
+                finalStepBlocked={groupFinalStepBlocked(group, snapshot.tasks)}
               />
             )
             return (

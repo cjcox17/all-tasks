@@ -9,6 +9,8 @@ import {
   applyDeleteGroup,
   applyUpdateGroup,
   GROUP_FIELD_BOUND,
+  groupFinalStepBlocked,
+  groupFinalStepReady,
   groupSequenceStarted,
   normalizeGroupOrder,
   normalizeGroupRows,
@@ -187,6 +189,14 @@ export interface GroupRuntimeView {
    * running, so manual launches are never raced by the chain.
    */
   readonly newestExecutionSettled: boolean
+  /** The group's final-step member id, when one is designated. */
+  readonly finalStepTaskId?: string
+  /**
+   * Whether the group's final step may launch right now (every other member
+   * settled and the final step itself runnable — see {@link groupFinalStepReady}).
+   * The advance pass starts it only when this is true.
+   */
+  readonly finalStepReady: boolean
   readonly order: readonly string[]
   readonly members: readonly GroupMemberRuntimeView[]
 }
@@ -634,7 +644,10 @@ export class HostTaskLedger {
           // A held member (deferAutoStart) joined the group after its
           // sequence started; the auto-advance chain skips it until an
           // explicit start (run-group / group cron / manual run) clears it.
-          runnable: task.archivedAt === undefined
+          // The group's final step is never chain-runnable either: it opens
+          // only through its own gate (finalStepReady).
+          runnable: task.id !== group.finalStepTaskId
+            && task.archivedAt === undefined
             && task.approved !== false
             && task.deferAutoStart !== true
             && (task.status === 'backlog' || task.status === 'todo')
@@ -660,6 +673,8 @@ export class HostTaskLedger {
         paused: group.paused === true,
         scheduleEnabled: group.schedule?.enabled === true,
         newestExecutionSettled: newest !== undefined && newest.endedAt !== undefined,
+        ...(group.finalStepTaskId === undefined ? {} : { finalStepTaskId: group.finalStepTaskId }),
+        finalStepReady: groupFinalStepReady(group, this.document.tasks),
         order: [...group.order],
         members,
       }
@@ -708,6 +723,13 @@ export class HostTaskLedger {
     // an explicit start clears the hold (defensive; the advance pass already
     // excludes it from runnable).
     if (task.deferAutoStart === true) return undefined
+    // The group's final step is gated: it never launches through the regular
+    // chain until every other member has settled (defensive; the advance pass
+    // launches it only through its own gate).
+    if (task.groupId !== undefined) {
+      const group = this.document.groups.find(candidate => candidate.id === task.groupId)
+      if (group?.finalStepTaskId === taskId && !groupFinalStepReady(group, this.document.tasks)) return undefined
+    }
     const opened = startExecution(task, now, crypto.randomUUID())
     this.document.tasks = this.document.tasks.map(item => item.id === taskId ? opened.task : item)
     this.commit()
@@ -1146,6 +1168,11 @@ export class HostTaskLedger {
           const group = this.document.groups.find(candidate => candidate.id === task.groupId)
           if (group?.stopped === true) throw new Error('group is stopped')
           if (group?.paused === true) throw new Error('group is paused')
+          // The group's final step is gated: it cannot be started by hand
+          // while any other member is still unfinished.
+          if (group?.finalStepTaskId === task.id && groupFinalStepBlocked(group, this.document.tasks)) {
+            throw new Error('final step waits for all group members to settle')
+          }
         }
         // A task pinned to a paused workspace never launches by any means until
         // the workspace is continued.
@@ -1331,9 +1358,23 @@ export class HostTaskLedger {
             && (task.status === 'backlog' || task.status === 'todo')
             && !this.workspacePausedFor(task)
             && !hasOpenExecution(task))
-        if (runnable.length === 0) throw new Error('no runnable members')
+        // The group's final step never joins the parallel burst: it opens only
+        // once every other member has settled (its own gate below).
+        const burst = runnable.filter(task => task.id !== group.finalStepTaskId)
+        if (burst.length === 0 && !groupFinalStepReady(group, this.document.tasks)) {
+          throw new Error('no runnable members')
+        }
         const capacity = group.mode === 'sequential' ? 1 : group.maxParallel ?? Number.POSITIVE_INFINITY
-        runs = runnable.slice(0, capacity).map(task => startExecution(task, now, crypto.randomUUID()))
+        const openedRuns = burst.slice(0, capacity).map(task => startExecution(task, now, crypto.randomUUID()))
+        // A final step whose gate already passes opens as its own run — the
+        // "every member settled, merge still pending" start.
+        if (group.finalStepTaskId !== undefined && groupFinalStepReady(group, this.document.tasks)) {
+          const finalStepTask = this.document.tasks.find(task => task.id === group.finalStepTaskId)
+          if (finalStepTask !== undefined) {
+            openedRuns.push(startExecution(finalStepTask, now, crypto.randomUUID()))
+          }
+        }
+        runs = openedRuns
         this.document.tasks = this.document.tasks.map(task => {
           const opened = runs!.find(candidate => candidate.task.id === task.id)
           return opened === undefined ? task : opened.task
@@ -1452,9 +1493,18 @@ export class HostTaskLedger {
     }
     this.document.groups = this.document.groups.map(group => {
       const order = normalizeGroupOrder(group.order, membersByGroup.get(group.id) ?? [])
-      return order.length === group.order.length && order.every((id, index) => id === group.order[index])
-        ? group
-        : { ...group, order, updatedAt: now }
+      // The final-step designation cannot dangle: a reference to a member that
+      // vanished (deleted, moved away, or out of scope) is cleared alongside
+      // the order repair.
+      const memberSet = new Set(order)
+      const finalStepTaskId = group.finalStepTaskId !== undefined && memberSet.has(group.finalStepTaskId)
+        ? group.finalStepTaskId
+        : undefined
+      const orderUnchanged = order.length === group.order.length && order.every((id, index) => id === group.order[index])
+      if (orderUnchanged && finalStepTaskId === group.finalStepTaskId) return group
+      const next: TaskGroupRecord = { ...group, order }
+      if (finalStepTaskId === undefined) delete next.finalStepTaskId
+      return { ...next, updatedAt: now }
     })
   }
 
