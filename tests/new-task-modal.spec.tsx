@@ -41,6 +41,7 @@ function fakeController(
   groups: readonly TaskGroupRecord[] = [],
   workspaces: readonly ExecutionWorkspaceOption[] = [],
   presets: readonly ExecutionPresetOption[] = [],
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {},
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [],
@@ -48,7 +49,7 @@ function fakeController(
     archiveView: false,
     selectedTaskId: undefined,
     executionOptions: { workspaces, presets, models: MODELS, endpoints },
-    workspaceDefaults: {},
+    workspaceDefaults,
     workspacePaused: {},
     groups,
     pendingTaskIds: [],
@@ -66,7 +67,7 @@ async function renderModal(
   groups: readonly TaskGroupRecord[] = [],
   workspaces: readonly ExecutionWorkspaceOption[] = [],
   presets: readonly ExecutionPresetOption[] = [],
-  modalProps: { defaultWorkspaceId?: string; defaults?: WorkspaceDefaultsRecord } = {},
+  modalProps: { defaultWorkspaceId?: string; defaults?: WorkspaceDefaultsRecord; workspaceDefaults?: Record<string, WorkspaceDefaultsRecord> } = {},
 ): Promise<{
   container: HTMLElement
   onClose: ReturnType<typeof vi.fn>
@@ -77,7 +78,7 @@ async function renderModal(
   roots.push(root)
   const onClose = vi.fn()
   await act(async () => {
-    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints, groups, workspaces, presets)} onClose={onClose} {...modalProps} />)
+    root.render(<NewTaskModal controller={fakeController(createTaskConfirmed, endpoints, groups, workspaces, presets, modalProps.workspaceDefaults)} onClose={onClose} {...modalProps} />)
   })
   return { container, onClose }
 }
@@ -86,6 +87,14 @@ function selectOf(container: HTMLElement, optionValue: string): HTMLSelectElemen
   const select = [...container.querySelectorAll('select')].find(candidate =>
     [...candidate.querySelectorAll('option')].some(option => option.value === optionValue))
   expect(select, `select with option ${optionValue}`).toBeDefined()
+  return select as HTMLSelectElement
+}
+
+function fieldSelectOf(container: HTMLElement, label: string): HTMLSelectElement {
+  const labelElement = [...container.querySelectorAll('label')].find(element =>
+    element.querySelector('span')?.textContent === label)
+  const select = labelElement?.querySelector('select')
+  expect(select, `select for label ${label}`).toBeDefined()
   return select as HTMLSelectElement
 }
 
@@ -311,6 +320,39 @@ describe('NewTaskModal workspace defaults', () => {
       expect(createTaskConfirmed).toHaveBeenCalledOnce()
       expect(createTaskConfirmed.mock.calls[0][0].approved).toBe(false)
     }
+  })
+})
+
+describe('NewTaskModal workspace-default labels', () => {
+  it('names the deployment default preset in the blank mode option', async () => {
+    const { container } = await renderModal(
+      async input => createTask(input, Date.now(), 't-new'),
+      [], [], [],
+      [{ id: 'standard', name: 'Standard', isDefault: true }],
+    )
+    const blank = [...selectOf(container, 'standard').querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.mode.workspaceDefaultWithValue', { value: 'Standard' }))
+  })
+
+  it('names the workspace default model in the blank model option of the selected workspace', async () => {
+    const { container } = await renderModal(
+      async input => createTask(input, Date.now(), 't-new'),
+      [], [],
+      [{ workspaceId: 'ws-a', title: 'Alpha' }],
+      [],
+      { defaultWorkspaceId: 'ws-a', workspaceDefaults: { 'ws-a': { model: { provider: 'deepseek', model: 'deepseek-chat' } } } },
+    )
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const blank = [...selectOf(container, chatKey).querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.model.workspaceDefaultWithValue', { value: 'deepseek · deepseek-chat' }))
+  })
+
+  it('keeps the blank options plain without workspace or deployment defaults', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'))
+    const modeBlank = [...fieldSelectOf(container, t('new.mode')).querySelectorAll('option')].find(option => option.value === '')
+    expect(modeBlank?.textContent).toBe(t('exec.mode.workspaceDefault'))
+    const modelBlank = [...fieldSelectOf(container, t('new.model')).querySelectorAll('option')].find(option => option.value === '')
+    expect(modelBlank?.textContent).toBe(t('exec.model.workspaceDefault'))
   })
 })
 

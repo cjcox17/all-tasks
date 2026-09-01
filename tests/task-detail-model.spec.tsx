@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
 import { t } from '../src/client/locales.ts'
-import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
+import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption, ExecutionPresetOption } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { WorkspaceDefaultsRecord } from '../src/core/workspace-defaults.ts'
 import { createTask, modelSelectionKey, type TaskRecord } from '../src/core/tasks.ts'
@@ -46,13 +46,14 @@ function controllerFake(
   groups: readonly TaskGroupRecord[] = [],
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {},
   workspacePaused: Record<string, number> = {},
+  presets: readonly ExecutionPresetOption[] = [],
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [taskRecord],
     boardOpen: true,
     archiveView: false,
     selectedTaskId: taskRecord.id,
-    executionOptions: { workspaces: [], presets: [], models, endpoints },
+    executionOptions: { workspaces: [], presets, models, endpoints },
     workspaceDefaults,
     workspacePaused,
     groups,
@@ -81,13 +82,14 @@ async function renderDetail(
   updateTask?: (id: string, patch: TaskUpdatePatch) => Promise<boolean>,
   endpoints?: readonly ExecutionEndpointOption[],
   workspaceDefaults?: Record<string, WorkspaceDefaultsRecord>,
+  presets?: readonly ExecutionPresetOption[],
 ): Promise<HTMLElement> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   roots.push(root)
   await act(async () => {
-    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask, endpoints, [], workspaceDefaults)} task={taskRecord} />)
+    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask, endpoints, [], workspaceDefaults, {}, presets)} task={taskRecord} />)
   })
   return container
 }
@@ -162,8 +164,8 @@ describe('TaskDetail model reasoning-effort pin', () => {
   })
 })
 
-describe('TaskDetail workspace-default hints', () => {
-  it('shows the workspace default for a blank model pin', async () => {
+describe('TaskDetail workspace-default labels', () => {
+  it('names the workspace default model in the blank model option', async () => {
     const container = await renderDetail(
       task({ workspaceId: 'ws-a' }),
       MODEL_CATALOG,
@@ -171,18 +173,42 @@ describe('TaskDetail workspace-default hints', () => {
       [],
       { 'ws-a': { model: { provider: 'deepseek', model: 'deepseek-chat' } } },
     )
-    expect(container.textContent).toContain(t('detail.workspaceDefault', { value: 'deepseek · deepseek-chat' }))
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const blank = [...selectOf(container, chatKey).querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.model.workspaceDefaultWithValue', { value: 'deepseek · deepseek-chat' }))
   })
 
-  it('does not show a hint when the task pins its own model', async () => {
+  it('keeps the blank model option plain when the workspace has no model default', async () => {
+    const container = await renderDetail(task({ workspaceId: 'ws-a' }), MODEL_CATALOG)
+    const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
+    const blank = [...selectOf(container, chatKey).querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.model.workspaceDefault'))
+  })
+
+  it('names the workspace default preset in the blank mode option', async () => {
     const container = await renderDetail(
-      task({ workspaceId: 'ws-a', model: { provider: 'deepseek', model: 'deepseek-chat' } }),
+      task({ workspaceId: 'ws-a' }),
       MODEL_CATALOG,
       async () => true,
       [],
-      { 'ws-a': { model: { provider: 'deepseek', model: 'deepseek-chat' } } },
+      { 'ws-a': { mode: 'planner' } },
+      [{ id: 'planner', name: 'Planner', isDefault: false }],
     )
-    expect(container.textContent).not.toContain(t('detail.workspaceDefault', { value: 'deepseek · deepseek-chat' }))
+    const blank = [...selectOf(container, 'planner').querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.mode.workspaceDefaultWithValue', { value: 'Planner' }))
+  })
+
+  it('falls back to the deployment default preset name when the workspace has no mode default', async () => {
+    const container = await renderDetail(
+      task({ workspaceId: 'ws-a' }),
+      MODEL_CATALOG,
+      async () => true,
+      [],
+      undefined,
+      [{ id: 'standard', name: 'Standard', isDefault: true }],
+    )
+    const blank = [...selectOf(container, 'standard').querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.mode.workspaceDefaultWithValue', { value: 'Standard' }))
   })
 })
 
