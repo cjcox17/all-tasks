@@ -20,6 +20,7 @@ import { createHttpAction, type HttpActionConfig } from './action-http.ts'
 import { ActionRegistry } from './core/actions.ts'
 import { normalizeEndpointsConfig, type EndpointRouterConfig } from './core/endpoints.ts'
 import { EventSourceRegistry } from './core/events.ts'
+import { createGithubEventSource, type GithubEventConfig } from './event-github.ts'
 import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
 import { TaskBoardHostService } from './host-service.ts'
 import { makeEventRoutes, makeTaskBoardRoutes } from './host-routes.ts'
@@ -62,12 +63,16 @@ export interface Config {
   proxyTokenEnv?: string
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
+  /** Cost estimate: USD per 1M input tokens (0 = not configured). */
+  costPerMillionInputTokens?: number
+  /** Cost estimate: USD per 1M output tokens (0 = not configured). */
+  costPerMillionOutputTokens?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
   endpoints?: EndpointSettingsConfig[]
   /** Inbound event source plugins (webhook → task). */
-  events?: { http?: HttpEventConfig }
+  events?: { http?: HttpEventConfig; github?: GithubEventConfig }
   /** Result-side action plugins (settle → side effect). */
   actions?: { http?: HttpActionConfig }
 }
@@ -100,6 +105,13 @@ const httpEventSettings = z.object({
   autoRun: z.boolean().default(false),
 })
 
+const githubEventSettings = z.object({
+  secretEnv: z.string().default(''),
+  repoWorkspaces: z.dict(z.string()).default({}),
+  defaultWorkspaceId: z.string().default(''),
+  autoRun: z.boolean().default(false),
+})
+
 const httpActionSettings = z.object({
   url: z.string().default(''),
   tokenEnv: z.string().default(''),
@@ -112,9 +124,11 @@ export const Config: z<Config> = z.object({
   trustedProxyHosts: z.array(z.string()).default([]),
   proxyTokenEnv: z.string().min(1).default(DEFAULT_PROXY_TOKEN_ENV),
   endpointMaxWaitHours: z.number().min(0).default(24),
+  costPerMillionInputTokens: z.number().min(0).default(0),
+  costPerMillionOutputTokens: z.number().min(0).default(0),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
-  events: z.object({ http: httpEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false } }),
+  events: z.object({ http: httpEventSettings, github: githubEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false }, github: { secretEnv: '', repoWorkspaces: {}, defaultWorkspaceId: '', autoRun: false } }),
   actions: z.object({ http: httpActionSettings }).default({ http: { url: '', tokenEnv: '' } }),
 })
 
@@ -181,6 +195,7 @@ function applyImpl(ctx: Context, config?: Config): void {
   host.start()
   const eventSources = new EventSourceRegistry()
   eventSources.register(createHttpEventSource(config?.events?.http))
+  eventSources.register(createGithubEventSource(config?.events?.github))
   const actions = new ActionRegistry()
   actions.register(createHttpAction())
   const dispatcher = new ActionDispatcher(host.ledger, actions, {
