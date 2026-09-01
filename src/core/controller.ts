@@ -344,14 +344,22 @@ export class BoardController {
     if (this.deps.transport !== undefined) {
       return await this.commitRemote({ kind: 'update', taskId: id, patch }, id)
     }
-    const previous = this.tasks.find(task => task.id === id)?.groupId
+    const task = this.tasks.find(candidate => candidate.id === id)
+    if (task === undefined) return false
+    const previous = task.groupId
+    // Mirror the Host ledger: a running member keeps its group's capacity slot
+    // until its execution settles; moving it between groups (or out) would let
+    // the old group start a second member while the first is still running.
+    const nextGroupId = 'groupId' in patch
+      ? (patch.groupId === null || patch.groupId === undefined ? undefined : patch.groupId.trim() === '' ? undefined : patch.groupId.trim())
+      : previous
+    if (previous !== nextGroupId && (task.status === 'running' || task.executions.some(execution => execution.endedAt === undefined))) {
+      return false
+    }
     this.tasks = [...applyUpdateTask(this.tasks, id, patch, this.now())]
     // Legacy path only: the Host ledger syncs the group order on its own.
-    if ('groupId' in patch) {
-      const next = patch.groupId === null || patch.groupId === undefined ? undefined : patch.groupId.trim() === '' ? undefined : patch.groupId.trim()
-      if (previous !== next) {
-        this.groups = withGroupMembershipChange(this.groups, id, previous, next, this.now())
-      }
+    if (previous !== nextGroupId) {
+      this.groups = withGroupMembershipChange(this.groups, id, previous, nextGroupId, this.now())
     }
     this.persistAndNotify()
     return true

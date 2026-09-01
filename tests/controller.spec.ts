@@ -600,6 +600,25 @@ describe('BoardController legacy group transitions', () => {
     expect(controller.getSnapshot().groups).toHaveLength(0)
     expect(controller.getSnapshot().tasks.find(t => t.title === 'B')?.groupId).toBeUndefined()
   })
+
+  it('refuses to move a running member out of its group (the slot must not leak)', async () => {
+    const { store } = makeController()
+    const running = {
+      ...createTask({ title: 'A', description: '', prompt: '' }, NOW, 'task-a'),
+      status: 'running' as const,
+      groupId: 'g1',
+      executions: [{ id: 'e1', sessionId: 's-1', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }],
+    }
+    store.save([running])
+    const controller = new BoardController({ store, sessions: new FakeSessions(), now: () => NOW, uuid })
+    controller.start()
+
+    expect(await controller.updateTask('task-a', { groupId: null })).toBe(false)
+    expect(controller.getSnapshot().tasks[0].groupId).toBe('g1')
+    // Re-setting the same membership is not a move and stays allowed.
+    expect(await controller.updateTask('task-a', { groupId: 'g1' })).toBe(true)
+    controller.dispose()
+  })
 })
 
 describe('BoardController workspace defaults', () => {

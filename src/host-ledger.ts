@@ -831,6 +831,13 @@ export class HostTaskLedger {
         if (nextGroupId !== undefined && !this.document.groups.some(group => group.id === nextGroupId)) {
           throw new Error('group not found')
         }
+        // A running member keeps its group's capacity slot until its execution
+        // settles; moving it between groups (or out of the group) would leak
+        // the slot and let the old group start a second member while the first
+        // is still running. Mirrors the delete/move running-task refusals.
+        if ((task.status === 'running' || hasOpenExecution(task)) && previousGroupId !== nextGroupId) {
+          throw new Error('running task cannot be moved between groups')
+        }
         this.document.tasks = [...applyUpdateTask(this.document.tasks, action.taskId, action.patch, now)]
         if (previousGroupId !== nextGroupId) {
           this.document.groups = withGroupMembershipChange(this.document.groups, action.taskId, previousGroupId, nextGroupId, now)
