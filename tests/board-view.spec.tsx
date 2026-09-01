@@ -590,11 +590,11 @@ describe('TaskBoard workspace landing list', () => {
     return cardsOf(container).some(text => text.includes(title))
   }
 
-  /** The number immediately before a label in the card's text (cells render value then label). */
-  function countBefore(text: string, label: string): string | undefined {
-    const index = text.indexOf(label)
-    if (index === -1) return undefined
-    return /(\d+)\s*$/.exec(text.slice(0, index))?.[1]
+  /** The text of one aligned count cell (`data-col`) inside a workspace row. */
+  function cellOf(row: HTMLElement, col: string): string {
+    const cell = row.querySelector(`[data-col="${col}"]`)
+    expect(cell, `count cell ${col}`).not.toBeNull()
+    return (cell!.textContent ?? '').trim()
   }
 
   it('lands on the workspace list first: an All-tasks row plus one row per workspace, each with live counts', async () => {
@@ -621,19 +621,19 @@ describe('TaskBoard workspace landing list', () => {
     const all = listRow(container, '')
     expect(all.textContent).toContain(t('grid.allTasks'))
     // All counts every on-board task: 7 total (Cron is also scheduled).
-    expect(all.textContent).toContain(t('grid.count.todo'))
-    expect(all.textContent).toContain('7')
+    expect(cellOf(all, 'todo')).toBe('2')
+    expect(cellOf(all, 'total')).toBe('7')
 
     const alpha = listRow(container, 'ws-a')
     expect(alpha.textContent).toContain('Alpha')
     // ws-a: total 6, todo 2 (Do + Cron), pending 1, working 1, scheduled 1, finished 1, failed 1.
-    expect(alpha.textContent).toContain(t('grid.total', { count: '6' }))
-    expect(countBefore(alpha.textContent!, t('grid.count.todo'))).toBe('2')
-    expect(countBefore(alpha.textContent!, t('grid.count.pending'))).toBe('1')
-    expect(countBefore(alpha.textContent!, t('grid.count.working'))).toBe('1')
-    expect(countBefore(alpha.textContent!, t('grid.count.scheduled'))).toBe('1')
-    expect(countBefore(alpha.textContent!, t('grid.count.finished'))).toBe('1')
-    expect(countBefore(alpha.textContent!, t('grid.count.failed'))).toBe('1')
+    expect(cellOf(alpha, 'todo')).toBe('2')
+    expect(cellOf(alpha, 'pending')).toBe('1')
+    expect(cellOf(alpha, 'working')).toBe('1')
+    expect(cellOf(alpha, 'scheduled')).toBe('1')
+    expect(cellOf(alpha, 'finished')).toBe('1')
+    expect(cellOf(alpha, 'failed')).toBe('1')
+    expect(cellOf(alpha, 'total')).toBe('6')
   })
 
   it('opens the scoped kanban from a workspace card and collects unpinned tasks in an Unassigned section', async () => {
@@ -734,7 +734,7 @@ describe('TaskBoard workspace landing list', () => {
     })
     const ghost = listRow(container, 'ws-gone')
     expect(ghost.textContent).toContain('ws-gone')
-    expect(ghost.textContent).toContain(t('grid.count.todo'))
+    expect(cellOf(ghost, 'todo')).toBe('1')
     await openWorkspace(container, 'ws-gone')
     expect(hasCard(container, 'Ghost pinned')).toBe(true)
   })

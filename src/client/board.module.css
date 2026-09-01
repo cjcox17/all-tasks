@@ -856,57 +856,107 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
 /* --- workspace overview directory (landing view) ----------------------------- */
 
+/* Scroll region; centers the board card below the header. */
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 6px;
+  padding: 2px 0 10px;
 }
 
-/* One row: the clickable workspace row plus its chevron and settings buttons. */
-.listRow {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  min-width: 0;
-  flex: none;
-}
-
-.listWorkspace {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  flex: 1;
-  min-width: 0;
-  padding: 8px 12px;
-  text-align: left;
-  font-family: inherit;
+/* The Monday.com-style board table: one surface card, a column-header row, and
+   workspace rows whose counts line up in aligned columns. The width is capped
+   so the table reads as columns rather than a full-bleed wall; it scrolls
+   horizontally only if a very narrow view forces it to. */
+.directory {
+  --dir-columns: minmax(0, 1fr) repeat(6, 64px) 56px 60px;
+  box-sizing: border-box;
+  max-width: 1080px;
+  margin-inline: auto;
+  overflow-x: auto;
+  padding: 8px 16px 12px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
-  cursor: pointer;
-  color: var(--dsw-alias-label-primary);
-  transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease;
+  border-radius: 14px;
+  box-shadow: var(--dsw-shadow-lv1);
+}
+
+/* The header row and every workspace row share one grid, so each count sits in
+   its own aligned column. */
+.directoryHead,
+.directoryRow {
+  display: grid;
+  grid-template-columns: var(--dir-columns);
+  gap: 10px;
+  align-items: center;
+}
+
+.directoryHead {
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--dsw-alias-separator-primary);
+}
+
+.headName,
+.headCount,
+.headTotal {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.headCount,
+.headTotal {
+  text-align: right;
+}
+
+/* One workspace (or the All-tasks row): a table row plus an expandable body. */
+.directorySection {
+  min-width: 0;
+}
+
+.directoryRow {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-separator-primary);
+  transition: background-color 120ms ease;
+}
+
+.directorySection:last-child .directoryRow {
+  border-bottom: none;
+}
+
+.directoryRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 /* The All-tasks row gets a faint primary tint so it reads as the overview hero. */
-.listRow[data-workspace=''] .listWorkspace {
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, var(--dsw-alias-bg-layer-2));
+.directorySection[data-workspace=''] .directoryRow {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, transparent);
 }
 
-.listWorkspace:hover {
-  box-shadow: var(--dsw-shadow-lv2);
-  border-color: var(--dsw-alias-border-l3);
-  transform: translateY(-1px);
+.directorySection[data-workspace=''] .directoryRow:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 11%, transparent);
 }
 
-.listWorkspace:active {
-  box-shadow: var(--dsw-shadow-lv1);
-  transform: translateY(0);
+/* The workspace name cell: avatar + title, one click target. */
+.directoryName {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.directoryName:hover .listTitle {
+  color: var(--dsw-alias-state-business-primary);
 }
 
 /* The workspace's colored identity chip (Monday.com-style avatar). */
@@ -930,76 +980,51 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 .listTitle {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex: 1 1 200px;
-  min-width: 120px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+
+/* Aligned count cells: right-aligned tabular numerals, tinted by status, and
+   muted to an en dash when a status has no tasks. */
+.directoryCount,
+.directoryTotal {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.directoryCount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.directoryCount[data-col='todo'] { color: var(--dsw-alias-state-business-primary); }
+.directoryCount[data-col='pending'] { color: var(--dsw-alias-state-warning-primary, #b8860b); }
+.directoryCount[data-col='working'] { color: var(--dsw-alias-state-warn-primary); }
+.directoryCount[data-col='scheduled'] { color: #8b5cf6; }
+.directoryCount[data-col='finished'] { color: var(--dsw-alias-state-success-primary); }
+.directoryCount[data-col='failed'] { color: var(--dsw-alias-state-error-primary); }
+.directoryCount[data-zero] { color: var(--dsw-alias-label-tertiary); font-weight: 500; }
+
+.directoryTotal {
   font-size: 13px;
   font-weight: 700;
   color: var(--dsw-alias-label-primary);
 }
 
-.listTitle > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.listTotal {
-  flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-tertiary);
-  white-space: nowrap;
-}
-
-.listCounts {
+/* Right-hand chevron + settings controls (fixed track, right-aligned). */
+.directoryActions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-left: auto;
-  justify-content: flex-end;
-  min-width: 0;
-}
-
-/* Sparse status pill: colored dot + count + label; only statuses with tasks. */
-.listCount {
-  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 9px 2px 7px;
-  background: var(--dsw-alias-interactive-bg-hover);
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.listCount::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dsw-alias-label-tertiary);
-  flex: none;
-}
-
-.listCount[data-status='todo']::before { background: var(--dsw-alias-state-business-primary); }
-.listCount[data-status='pending']::before { background: var(--dsw-alias-state-warning-primary, #b8860b); }
-.listCount[data-status='working']::before { background: var(--dsw-alias-state-warn-primary); }
-.listCount[data-status='scheduled']::before { background: #8b5cf6; }
-.listCount[data-status='finished']::before { background: var(--dsw-alias-state-success-primary); }
-.listCount[data-status='failed']::before { background: var(--dsw-alias-state-error-primary); }
-
-.listCountValue {
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--dsw-alias-label-primary);
-}
-
-.listCountLabel {
-  font-size: 11px;
-  color: var(--dsw-alias-label-secondary);
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 /* Chevron toggles the inline directory; rotates to point down when open. */
@@ -1014,43 +1039,76 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 /* The expanded content below a workspace row: its groups + ungrouped tasks. */
-.listBody {
+.directoryBody {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 1 1 100%;
-  min-width: 0;
-  padding: 6px 0 4px 44px;
+  gap: 10px;
+  padding: 10px 0 6px;
 }
 
-/* One group band: Monday.com-style colored band with a member list. */
+/* One group section: a Monday.com-style colored band — tinted surface, colored
+   left accent and name pill — with a per-group collapse toggle and member rows. */
 .groupBand {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border-left: 4px solid transparent;
-  border-radius: 8px;
   min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-left: 4px solid transparent;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
 }
 
 .groupBandHeader {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 2px;
+  padding: 8px 10px;
   min-width: 0;
 }
 
-.groupBandName {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 700;
+.groupToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  transition: transform 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.groupToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
+}
+
+.groupToggle[aria-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+.groupBandPill {
+  flex: none;
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.groupBandPill[data-neutral] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 .groupBandCount {
@@ -1063,22 +1121,25 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 1px 8px;
 }
 
-/* One task row inside a group band (or the ungrouped band). */
+/* One task row inside a group band (or the ungrouped band): a small grid so the
+   status label and badges align into columns across every row. */
 .taskRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 84px 116px;
+  gap: 10px;
   align-items: center;
-  gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 5px 6px;
-  border: none;
-  border-radius: 6px;
+  padding: 7px 10px 7px 12px;
   background: transparent;
+  border: none;
+  border-top: 1px solid var(--dsw-alias-separator-primary);
   color: var(--dsw-alias-label-primary);
   font-family: inherit;
   font-size: 12.5px;
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
 .taskRow:hover {
@@ -1092,17 +1153,60 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 .taskRowTitle {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.taskStatus {
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.taskStatus[data-status='backlog'] { color: var(--dsw-alias-label-tertiary); }
+.taskStatus[data-status='todo'] { color: var(--dsw-alias-state-business-primary); }
+.taskStatus[data-status='running'] { color: var(--dsw-alias-state-warn-primary); }
+.taskStatus[data-status='done'] { color: var(--dsw-alias-state-success-primary); }
+.taskStatus[data-status='failed'] { color: var(--dsw-alias-state-error-primary); }
+
+.taskBadges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.taskBadge {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.taskBadge[data-kind='scheduled'] {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.taskBadge[data-kind='unapproved'] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+}
+
 /* A workspace with nothing on board shows a quiet hint when expanded. */
 .listEmpty {
   margin: 0;
-  padding: 4px 0 4px 44px;
+  padding: 10px 4px 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1404,8 +1508,9 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     padding: 10px;
   }
 
-  .listWorkspace {
-    gap: 6px 10px;
+  .directory {
+    --dir-columns: minmax(0, 1fr) repeat(6, 48px) 48px 56px;
+    padding: 8px 10px 12px;
   }
 
   .listAvatar {
@@ -1415,14 +1520,9 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
     font-size: 12px;
   }
 
-  .listTitle {
-    flex: 1 1 140px;
-    min-width: 0;
-  }
-
-  .listBody,
-  .listEmpty {
-    padding-left: 8px;
+  .taskRow {
+    grid-template-columns: 10px minmax(0, 1fr) 72px 96px;
+    gap: 8px;
   }
 
   .boardHeader {
