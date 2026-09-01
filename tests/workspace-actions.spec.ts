@@ -16,7 +16,7 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
   }
 }
 
-const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['m1'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', workspaceId: 'ws-a', order: ['m1'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
 
 describe('planWorkspaceActions', () => {
   it('runs todo (not backlog) ungrouped tasks and non-stopped groups in scope', () => {

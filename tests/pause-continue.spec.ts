@@ -237,7 +237,7 @@ describe('HostTaskLedger pause/continue actions', () => {
   it('persists paused state, group paused flags, and workspace pauses across a restart', () => {
     const root = tempRoot()
     const first = new HostTaskLedger(root, () => NOW)
-    apply(first, { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    apply(first, { kind: 'create-group', id: 'g1', input: { name: 'G', workspaceId: 'w1' } })
     apply(first, { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'a', workspaceId: 'w1', groupId: 'g1' } })
     apply(first, { kind: 'run', taskId: 'a' })
     const executionId = first.state().tasks[0].executions[0].id
@@ -304,7 +304,7 @@ describe('HostTaskLedger pause/continue actions', () => {
 
   it('a paused workspace removes its members from the group runnable set', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    apply(ledger, { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    apply(ledger, { kind: 'create-group', id: 'g1', input: { name: 'G', workspaceId: 'w1' } })
     for (const id of ['a', 'b']) {
       apply(ledger, { kind: 'create', id, input: { title: id, description: '', prompt: id, groupId: 'g1', workspaceId: 'w1' } })
     }

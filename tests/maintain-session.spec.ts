@@ -162,8 +162,10 @@ describe('maintain-session sequential groups', () => {
   it('fails closed when a maintain-session member pins a different workspace/preset', async () => {
     const ledger = new HostTaskLedger(root())
     seedGroup(ledger, 'g1', 'sequential', { maintainSession: true })
-    // Member b pins a different workspace than the shared session's creator.
-    ledger.applyRequest('update-b', { kind: 'update', taskId: 'b', patch: { workspaceId: 'other-workspace' } })
+    // Member b pins a different agent preset than the shared session's creator
+    // (a different workspace would remove it from the workspace-scoped group,
+    // so the preset is what trips the shared-session composition check).
+    ledger.applyRequest('update-b', { kind: 'update', taskId: 'b', patch: { mode: 'different-preset' } })
     const { service, create } = harness(ledger)
 
     service.apply('run-a', { kind: 'run', taskId: 'a' })

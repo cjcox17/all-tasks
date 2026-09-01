@@ -724,7 +724,7 @@ describe('BoardController workspace fan-out', () => {
   it('runWorkspace starts todo (never backlog) ungrouped tasks plus non-stopped groups', async () => {
     const todo = createTask({ title: 'todo', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-todo')
     const backlog = { ...createTask({ title: 'backlog', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-backlog'), status: 'backlog' as const }
-    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
+    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', workspaceId: 'ws-a', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
     const member = createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1')
     const actions: TaskBoardAction[] = []
     const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([todo, backlog, member], [group], actions), now: () => NOW, uuid })
@@ -739,7 +739,7 @@ describe('BoardController workspace fan-out', () => {
 
   it('pauseWorkspaceGroups stops running groups; stopWorkspace cancels running ungrouped tasks and groups', async () => {
     const runTask = { ...createTask({ title: 'run', description: '', prompt: '', workspaceId: 'ws-a' }, NOW, 't-run'), status: 'running' as const, executions: [OPEN] }
-    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
+    const group: TaskGroupRecord = { id: 'g1', name: 'G', mode: 'sequential', workspaceId: 'ws-a', offPeakOnly: false, order: ['m1'], createdAt: NOW, updatedAt: NOW }
     const member = { ...createTask({ title: 'member', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' }, NOW, 'm1'), status: 'running' as const, executions: [OPEN] }
     const actions: TaskBoardAction[] = []
     const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport: hostTransport([runTask, member], [group], actions), now: () => NOW, uuid })

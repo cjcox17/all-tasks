@@ -81,6 +81,7 @@ function fakeController(snapshot?: Partial<ControllerSnapshot>): BoardController
     selectedTaskId: undefined,
     executionOptions: { workspaces: [], presets: [], models: [], endpoints: [] },
     workspaceDefaults: {},
+    workspacePaused: {},
     pendingTaskIds: [],
     ...snapshot,
   }

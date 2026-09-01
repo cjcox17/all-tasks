@@ -1190,5 +1190,4 @@ describe('pause / continue affordances', () => {
     expect(container.textContent).toContain(t('group.paused'))
     expect(container.querySelector(`button[aria-label="${t('group.continue')}"]`)).not.toBeNull()
   })
-  })
 })

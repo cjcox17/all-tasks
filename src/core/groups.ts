@@ -98,7 +98,8 @@ export interface TaskGroupRecord {
    * stop-group action, which also cancels every open member execution.
    */
   stopped?: boolean
-   * whether the group is paused: every open member execution is halted (kept
+  /**
+   * Whether the group is paused: every open member execution is halted (kept
    * alive and resumable) and no member may launch until the group is
    * continued. Set by the pause-group action, which pauses each member's
    * session without settling it; continue-group re-prompts the paused members
@@ -715,5 +716,4 @@ export function groupSharesSession(group: Pick<TaskGroupRecord, 'mode' | 'mainta
  */
 export function groupCompactsBetween(group: Pick<TaskGroupRecord, 'mode' | 'maintainSession' | 'compactBetween'>): boolean {
   return groupSharesSession(group) && group.compactBetween === true
-}
 }
