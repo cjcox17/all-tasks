@@ -243,9 +243,9 @@ describe('NewTaskModal workspace defaults', () => {
     // The endpoint order editor lists the defaulted endpoint.
     const endpointRow = Array.from(container.querySelectorAll('li')).find(li => li.textContent?.includes('DeepSeek Official'))
     expect(endpointRow).not.toBeNull()
-    // The unapproved default is on.
+    // The approval toggle follows the workspace default (off = starts unapproved).
     const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
-    expect(checkbox.checked).toBe(true)
+    expect(checkbox.checked).toBe(false)
 
     setFieldValue(container.querySelector('input') as HTMLInputElement, 'Pinned task')
     const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
@@ -262,26 +262,27 @@ describe('NewTaskModal workspace defaults', () => {
     expect(input.approved).toBe(false)
   })
 
-  it('manual creation stays approved unless the unapproved toggle is turned on', async () => {
-    // Without the toggle: the create input carries no approval flag.
+  it('manual creation starts approved unless the approval toggle is turned off', async () => {
+    // Toggle on (the default): the create input carries no approval flag.
     {
       const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
       const { container } = await renderModal(createTaskConfirmed)
       setFieldValue(container.querySelector('input') as HTMLInputElement, 'Plain task')
       const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
-      expect(checkbox.checked).toBe(false)
+      expect(checkbox.checked).toBe(true)
       const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
       await act(async () => { submit.click() })
       expect(createTaskConfirmed).toHaveBeenCalledOnce()
       expect(createTaskConfirmed.mock.calls[0][0].approved).toBeUndefined()
     }
-    // With the toggle: the task is minted unapproved.
+    // Toggle off: the task is minted unapproved.
     {
       const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
       const { container } = await renderModal(createTaskConfirmed)
       setFieldValue(container.querySelector('input') as HTMLInputElement, 'Gated task')
       const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement
       await act(async () => { checkbox.click() })
+      expect(checkbox.checked).toBe(false)
       const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
       await act(async () => { submit.click() })
       expect(createTaskConfirmed).toHaveBeenCalledOnce()

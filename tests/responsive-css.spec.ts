@@ -57,7 +57,7 @@ describe('board responsive css', () => {
   })
 
   it('keeps phone actions reachable with touch-sized controls', () => {
-    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.primaryButton,[\s\S]*?\.scheduleToggle\s*\{[^}]*min-height:\s*44px/s)
+    expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.primaryButton,[\s\S]*?\.scheduleToggle,[\s\S]*?\.approvalToggle\s*\{[^}]*min-height:\s*44px/s)
     expect(css).toMatch(/\.modalFooter\s*\{[^}]*position:\s*sticky[^}]*bottom:\s*0/s)
     expect(css).toMatch(/\.detailFooter\s*\{[^}]*flex-wrap:\s*wrap/s)
   })
