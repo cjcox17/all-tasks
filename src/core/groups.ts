@@ -98,8 +98,7 @@ export interface TaskGroupRecord {
    * stop-group action, which also cancels every open member execution.
    */
   stopped?: boolean
-  /**
-   * Whether the group is paused: every open member execution is halted (kept
+   * whether the group is paused: every open member execution is halted (kept
    * alive and resumable) and no member may launch until the group is
    * continued. Set by the pause-group action, which pauses each member's
    * session without settling it; continue-group re-prompts the paused members
@@ -107,6 +106,22 @@ export interface TaskGroupRecord {
    * settles members as cancelled while pause keeps them open.
    */
   paused?: boolean
+  /**
+   * Sequential only: reuse the same DSH session for every member instead of
+   * creating a fresh session per task. The first launched member creates the
+   * session (its workspace/preset compose it); every later member reuses that
+   * session, so the conversation context carries across tasks. Members must
+   * share the same effective workspace and agent preset — a member pinned to
+   * a different one fails closed before its prompt.
+   */
+  maintainSession?: boolean
+  /**
+   * Sequential only (with `maintainSession`): run `/compact` on the shared
+   * session before each member's prompt, summarizing the accumulated context
+   * into a checkpoint while keeping its key content — so a long group stays
+   * within the context window without losing the conversation.
+   */
+  compactBetween?: boolean
   /** Optional group cron; when enabled members inherit it (their cron is ignored). */
   schedule?: GroupScheduleRule
   /** Member task ids in manual order (drives sequential starts and display). */
@@ -135,6 +150,10 @@ export interface GroupCreateInput {
   allowedHours?: DailyWindow
   /** Only launch members inside the global off-peak window. */
   offPeakOnly?: boolean
+  /** Sequential only: reuse one DSH session for every member (context continuity). */
+  maintainSession?: boolean
+  /** Sequential only (with maintainSession): run /compact on the shared session between members. */
+  compactBetween?: boolean
   /** Optional cron requested at creation; armed only when enabled and valid. */
   schedule?: { enabled: boolean; cron: string }
 }
@@ -223,6 +242,8 @@ export function createGroup(input: GroupCreateInput, now: number, id: string): T
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(allowedHours === undefined ? {} : { allowedHours }),
     offPeakOnly: input.offPeakOnly === true,
+    ...(input.maintainSession === true ? { maintainSession: true } : {}),
+    ...(input.compactBetween === true ? { compactBetween: true } : {}),
     ...(schedule === undefined ? {} : { schedule }),
     order: [],
     createdAt: now,
@@ -310,6 +331,10 @@ export interface GroupUpdatePatch {
   /** `null` clears the allowed-hours window. */
   allowedHours?: DailyWindow | null
   offPeakOnly?: boolean
+  /** Sequential only: reuse one DSH session for every member (context continuity). */
+  maintainSession?: boolean
+  /** Sequential only (with maintainSession): run /compact on the shared session between members. */
+  compactBetween?: boolean
   /** Stop (true) or resume (false) the group: no member launches while stopped. */
   stopped?: boolean
   /** `null` removes the schedule rule; an object sets it (cron validated when enabled). */
@@ -387,6 +412,14 @@ export function applyUpdateGroup(
   if ('stopped' in patch) {
     if (patch.stopped === true) next.stopped = true
     else delete next.stopped
+  }
+  if ('maintainSession' in patch) {
+    if (patch.maintainSession === true) next.maintainSession = true
+    else delete next.maintainSession
+  }
+  if ('compactBetween' in patch) {
+    if (patch.compactBetween === true) next.compactBetween = true
+    else delete next.compactBetween
   }
   if ('maxParallel' in patch) {
     if (maxParallel !== undefined) next.maxParallel = maxParallel
@@ -508,6 +541,8 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
       offPeakOnly: row.offPeakOnly === true,
       ...(row.stopped === true ? { stopped: true } : {}),
       ...(row.paused === true ? { paused: true } : {}),
+      ...(row.maintainSession === true ? { maintainSession: true } : {}),
+      ...(row.compactBetween === true ? { compactBetween: true } : {}),
       ...(schedule === undefined ? {} : { schedule }),
       order: normalizeGroupOrder(row.order, memberIds),
       createdAt,
@@ -637,7 +672,7 @@ export interface GroupRuntimeStatus {
   pending: number
   /**
    * Why held members wait, in first-seen order and deduplicated ('group' |
-   * 'window' | 'endpoint'); empty when nothing is pending.
+   * 'window' | 'endpoint' | 'workspace'); empty when nothing is pending.
    */
   pendingReasons: readonly ExecutionQueuedReason[]
 }
@@ -662,4 +697,23 @@ export function groupRuntimeStatus(group: TaskGroupRecord, tasks: readonly TaskR
     }
   }
   return { running, pending, pendingReasons }
+}
+
+/**
+ * Whether a sequential group maintains one DSH session across its members.
+ * Only sequential mode may share a session (parallel members would collide on
+ * one conversation); the flag is deliberately ignored for parallel groups.
+ */
+export function groupSharesSession(group: Pick<TaskGroupRecord, 'mode' | 'maintainSession'>): boolean {
+  return group.mode === 'sequential' && group.maintainSession === true
+}
+
+/**
+ * Whether a sequential group compacts its shared session between members.
+ * Compaction only makes sense when the session is shared, so the flag is
+ * honored only when `maintainSession` is also enabled.
+ */
+export function groupCompactsBetween(group: Pick<TaskGroupRecord, 'mode' | 'maintainSession' | 'compactBetween'>): boolean {
+  return groupSharesSession(group) && group.compactBetween === true
+}
 }

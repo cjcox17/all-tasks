@@ -8,6 +8,14 @@ function request<T>(payload: T) {
   return { rpcId: `task-board-${crypto.randomUUID()}` as RpcId, payload }
 }
 
+/**
+ * Bound on the `/compact` command dispatched on a maintain-session group's
+ * shared session before the next member's prompt. Compaction summarizes the
+ * accumulated conversation through the LLM, which can take a while on a long
+ * context; the bound is deliberately generous but still finite.
+ */
+const COMPACT_TIMEOUT_MS = 600_000
+
 function failure(error: { code: string; message: string }): Error {
   return new Error(`${error.code}: ${error.message}`)
 }
@@ -152,6 +160,68 @@ export class HostExecutionRunner {
     }
   }
 
+  /** Whether a session still exists (the shared session of a maintain-session group). */
+  async sessionExists(sessionId: string): Promise<boolean> {
+    const response = await this.api.sessions.list(request({}))
+    return response.result.ok && response.result.value.items.some(item => item.sessionId === sessionId)
+  }
+
+  /**
+   * Launch one execution into an existing session (a maintain-session group's
+   * shared conversation). The session's workspace/preset were composed when
+   * the first member created it and cannot change; the member's own model and
+   * permission pins are still applied per run, and `/compact` is dispatched
+   * before the prompt when the group compacts between members — so a long
+   * sequence stays within the context window while the earlier conversation
+   * remains available as a summary.
+   * @param task - the task being run.
+   * @param route - the endpoint router's resolved model selection (provider +
+   *   model + optional effort); absent means the task's own model pin applies.
+   * @param sessionId - the shared session to continue.
+   * @param compact - run `/compact` on the shared session before the prompt.
+   */
+  async launchShared(
+    task: TaskRecord,
+    route: { provider: string; model: string; reasoningEffort?: string } | undefined,
+    sessionId: string,
+    compact: boolean,
+  ): Promise<string> {
+    const executionSessionId = sessionId as ExecutionSessionId
+    try {
+      if (compact) {
+        if (this.commands === undefined) throw new Error('compact command dispatcher is unavailable')
+        const command = await this.commands.execute(executionSessionId, '/compact', AbortSignal.timeout(COMPACT_TIMEOUT_MS))
+        if (command === undefined) throw new Error('compact command was not acknowledged')
+        if (command.kind !== 'success') throw new Error(command.text ?? 'compact command failed')
+      }
+      const selection = route ?? task.model
+      if (selection !== undefined) {
+        const selected = await this.api.sessions.selectModel(request({
+          sessionId: executionSessionId,
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+        }))
+        if (!selected.result.ok) throw failure(selected.result.error)
+      }
+      if (task.permission !== undefined) {
+        if (this.commands === undefined) throw new Error('permission command dispatcher is unavailable')
+        const command = await this.commands.execute(executionSessionId, `/permission ${task.permission}`, AbortSignal.timeout(30_000))
+        if (command === undefined) throw new Error('permission command was not acknowledged')
+        if (command.kind !== 'success') throw new Error(command.text ?? 'permission command failed')
+      }
+      const prompt = await this.api.sessions.prompt(request({
+        sessionId: executionSessionId,
+        mode: 'queue' as const,
+        content: [{ type: 'text' as const, text: task.prompt !== '' ? task.prompt : task.title }],
+      }))
+      if (!prompt.result.ok) throw failure(prompt.result.error)
+    } catch (error) {
+      throw new SessionLaunchError(sessionId, error)
+    }
+    return sessionId
+  }
+
   /**
    * Stop one execution's session: cancel the active turn (the board's stop
    * action settles the ledger first, then fires this so the agent actually
@@ -183,8 +253,14 @@ export class HostExecutionRunner {
    * already fetched this poll tick; otherwise inspect lists sessions itself.
    * Sharing the list keeps a poll with E open executions at one list RPC
    * instead of 1 + E.
+   * @param launchedAt - when the execution's session was actually attached; the
+   *   scan floor is `max(startedAt, launchedAt)`. A queued run has a stale
+   *   `startedAt`, and a shared (maintain-session) session holds the previous
+   *   member's turn — both must not settle this execution, so the launch
+   *   instant is the authoritative boundary.
    */
-  async inspect(sessionId: string, startedAt = 0, sessions?: readonly SessionSummary[]): Promise<ExecutionInspection> {
+  async inspect(sessionId: string, startedAt = 0, sessions?: readonly SessionSummary[], launchedAt?: number): Promise<ExecutionInspection> {
+    const since = Math.max(startedAt, launchedAt ?? 0)
     let items: readonly SessionSummary[]
     if (sessions !== undefined) {
       items = sessions
@@ -224,7 +300,7 @@ export class HostExecutionRunner {
         const time = entry.event.time
         return typeof time !== 'number' ? oldest : oldest === undefined ? time : Math.min(oldest, time)
       }, undefined)
-      if (!history.result.value.hasMore || (oldestTime !== undefined && oldestTime <= startedAt)) {
+      if (!history.result.value.hasMore || (oldestTime !== undefined && oldestTime <= since)) {
         reachedExecutionBoundary = true
         break
       }
@@ -238,7 +314,7 @@ export class HostExecutionRunner {
     if (!reachedExecutionBoundary) return { outcome: 'pending' }
     const turnEnd = events
       .filter(entry => entry.event.type === 'turn/end' && (
-        startedAt <= 0 || (typeof entry.event.time === 'number' && entry.event.time >= startedAt)
+        since <= 0 || (typeof entry.event.time === 'number' && entry.event.time >= since)
       ))
       .sort((a, b) => (a.event.seq ?? Number.MAX_SAFE_INTEGER) - (b.event.seq ?? Number.MAX_SAFE_INTEGER))[0]
     if (turnEnd === undefined) {
@@ -248,8 +324,8 @@ export class HostExecutionRunner {
     }
     this.scanMemos.delete(sessionId)
     const outcome = turnEndOutcome(turnEnd.event.data)
-    const answer = extractSummary(events, startedAt)
-    const usage = extractUsage(events, startedAt)
+    const answer = extractSummary(events, since)
+    const usage = extractUsage(events, since)
     if (outcome === 'failed') {
       return {
         outcome: 'failed',

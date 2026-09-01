@@ -364,6 +364,101 @@ describe('HostExecutionRunner model pin', () => {
     await expect(launch).rejects.toMatchObject({ sessionId: 'session-a', message: expect.stringContaining('model is not served') })
     expect(prompt).not.toHaveBeenCalled()
   })
+
+  it('launches into a shared session without creating a new one', async () => {
+    const create = vi.fn()
+    const rename = vi.fn()
+    const execute = vi.fn(async () => ({ kind: 'success' as const }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = {
+      sessions: { create, rename, prompt },
+    }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy, { execute })
+    await expect(runner.launchShared(configuredTask(), undefined, 'shared-session', false)).resolves.toBe('shared-session')
+    expect(create).not.toHaveBeenCalled()
+    expect(rename).not.toHaveBeenCalled()
+    expect(prompt).toHaveBeenCalledOnce()
+    expect((prompt.mock.calls[0][0] as { payload?: unknown }).payload).toMatchObject({ sessionId: 'shared-session', mode: 'queue' })
+  })
+
+  it('runs /compact on the shared session before the prompt when requested', async () => {
+    const order: string[] = []
+    const execute = vi.fn(async (_sessionId: string, line: string) => {
+      order.push(line)
+      return { kind: 'success' as const }
+    })
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => {
+      order.push('prompt')
+      return ok(request, { accepted: true })
+    })
+    const api = { sessions: { prompt } }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy, { execute })
+    await expect(runner.launchShared(configuredTask(), undefined, 'shared-session', true)).resolves.toBe('shared-session')
+    expect(order).toEqual(['/compact', '/permission workspace-write', 'prompt'])
+    expect(execute).toHaveBeenCalledWith('shared-session', '/compact', expect.any(AbortSignal))
+  })
+
+  it('fails closed when the compact command is unavailable or reports an error', async () => {
+    const prompt = vi.fn()
+    const unavailable = new HostExecutionRunner({ sessions: { prompt } } as unknown as ApiProxy)
+    await expect(unavailable.launchShared(configuredTask(), undefined, 'shared-session', true)).rejects.toThrow('compact command dispatcher is unavailable')
+    expect(prompt).not.toHaveBeenCalled()
+
+    const rejected = new HostExecutionRunner({ sessions: { prompt } } as unknown as ApiProxy, {
+      execute: async () => ({ kind: 'error' as const, text: 'compaction failed' }),
+    })
+    await expect(rejected.launchShared(configuredTask(), undefined, 'shared-session', true)).rejects.toMatchObject({
+      name: 'SessionLaunchError',
+      sessionId: 'shared-session',
+      message: expect.stringContaining('compaction failed'),
+    })
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('applies a per-member model selection and permission on the shared session', async () => {
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload?: unknown }) => ok(request, { selected: true }))
+    const execute = vi.fn(async (_sessionId: string, line: string) => {
+      expect(line).toBe('/permission workspace-write')
+      return { kind: 'success' as const }
+    })
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = { sessions: { selectModel, prompt } }
+    const task = { ...configuredTask(), model: { provider: 'deepseek', model: 'deepseek-chat' } }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy, { execute })
+    await expect(runner.launchShared(task, undefined, 'shared-session', false)).resolves.toBe('shared-session')
+    expect(selectModel).toHaveBeenCalledOnce()
+    expect((selectModel.mock.calls[0][0] as { payload?: unknown }).payload).toMatchObject({ sessionId: 'shared-session', provider: 'deepseek', model: 'deepseek-chat' })
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('checks whether a shared session still exists', async () => {
+    const list = async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a' }, { sessionId: 'session-b' }] })
+    const runner = new HostExecutionRunner({ sessions: { list } } as unknown as ApiProxy)
+    await expect(runner.sessionExists('session-a')).resolves.toBe(true)
+    await expect(runner.sessionExists('session-gone')).resolves.toBe(false)
+  })
+
+  it('scans a shared session from the launch instant, never an earlier member\'s turn', async () => {
+    // A queued run has a stale startedAt; the launchedAt boundary must skip the
+    // previous member's turn/end (a maintain-session group shares one session).
+    const history = vi.fn(async (request: { rpcId: unknown }) => ok(request, {
+      events: [
+        { event: { type: 'turn/end', seq: 10, time: 1_100, data: { reason: { kind: 'complete' } } } }, // previous member
+        { event: { type: 'turn/end', seq: 20, time: 2_000, data: { reason: { kind: 'complete' } } } }, // this member
+      ],
+      hasMore: false,
+    }))
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'shared-session', running: false }] }),
+        history,
+      },
+    }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy)
+    // startedAt (queue time) = 900 < the previous turn; launchedAt = 1_500 skips it.
+    await expect(runner.inspect('shared-session', 900, undefined, 1_500)).resolves.toEqual({ outcome: 'succeeded' })
+    await expect(runner.inspect('shared-session', 1_500)).resolves.toEqual({ outcome: 'succeeded' })
+  })
 })
 
 describe('pause / continue runner behavior', () => {

@@ -200,14 +200,14 @@ describe('group action gate', () => {
       requestId: 'create-group',
       action: {
         kind: 'create-group', id: 'g1',
-        input: { name: ' Nightly ', workspaceId: ' ws-1 ', mode: 'parallel', maxParallel: 2, endpoints: [' cloud ', 'local'], allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' } },
+        input: { name: ' Nightly ', workspaceId: ' ws-1 ', mode: 'parallel', maxParallel: 2, endpoints: [' cloud ', 'local'], allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, maintainSession: true, compactBetween: true, schedule: { enabled: true, cron: '0 2 * * *' } },
       },
     })
     expect(parsed?.action.kind).toBe('create-group')
     if (parsed?.action.kind !== 'create-group') throw new Error('expected create-group')
     expect(parsed.action.input).toMatchObject({
       name: ' Nightly ', workspaceId: 'ws-1', mode: 'parallel', maxParallel: 2, endpoints: ['cloud', 'local'],
-      allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, schedule: { enabled: true, cron: '0 2 * * *' },
+      allowedHours: { start: '22:00', end: '06:00' }, offPeakOnly: true, maintainSession: true, compactBetween: true, schedule: { enabled: true, cron: '0 2 * * *' },
     })
   })
 
@@ -230,6 +230,8 @@ describe('group action gate', () => {
       { kind: 'create-group', id: 'g1', input: { name: 'A', allowedHours: { start: '99:99', end: '00:00' } } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', offPeakOnly: 'yes' } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', workspaceId: 5 } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', maintainSession: 'yes' } },
+      { kind: 'create-group', id: 'g1', input: { name: 'A', compactBetween: 1 } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', schedule: { enabled: 'yes', cron: '0 9 * * *' } } },
       { kind: 'create-group', id: 'g1', input: { name: 'A', extra: 1 } },
       { kind: 'create-group', id: 'g1' },
@@ -242,12 +244,14 @@ describe('group action gate', () => {
   it('accepts a group update patch and clears fields with null', () => {
     const parsed = parseActionEnvelope({
       requestId: 'update-group',
-      action: { kind: 'update-group', groupId: 'g1', patch: { name: 'Renamed', maxParallel: null, endpoints: null, allowedHours: null, schedule: null, offPeakOnly: false } },
+      action: { kind: 'update-group', groupId: 'g1', patch: { name: 'Renamed', maxParallel: null, endpoints: null, allowedHours: null, schedule: null, offPeakOnly: false, maintainSession: true, compactBetween: true } },
     })
     expect(parsed?.action.kind).toBe('update-group')
     if (parsed?.action.kind !== 'update-group') throw new Error('expected update-group')
     expect(parsed.action.patch.maxParallel).toBeNull()
     expect(parsed.action.patch.schedule).toBeNull()
+    expect(parsed.action.patch.maintainSession).toBe(true)
+    expect(parsed.action.patch.compactBetween).toBe(true)
   })
 
   it('rejects malformed group update patches', () => {
@@ -257,6 +261,8 @@ describe('group action gate', () => {
       { maxParallel: 'three' },
       { endpoints: 5 },
       { allowedHours: { start: '24:00', end: '00:00' } },
+      { maintainSession: 'yes' },
+      { compactBetween: 'no' },
       { schedule: { enabled: 'yes', cron: '0 9 * * *' } },
       { unknown: 1 },
     ]) {

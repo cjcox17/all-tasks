@@ -1,6 +1,6 @@
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRouterConfig, type RouteDecision } from './core/endpoints.ts'
-import { effectiveEndpointIds, groupCapacityFull, groupWindowOpen } from './core/groups.ts'
+import { effectiveEndpointIds, groupCapacityFull, groupCompactsBetween, groupSharesSession, groupWindowOpen } from './core/groups.ts'
 import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
 import { resolveExecutionTargets } from './core/workspace-defaults.ts'
@@ -479,7 +479,11 @@ export class TaskBoardHostService {
 
   private async launch(task: TaskRecord, executionId: string, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
     try {
-      const sessionId = await this.runner.launch(this.withWorkspaceDefaults(task), route)
+      const effective = this.withWorkspaceDefaults(task)
+      const shared = this.sharedSessionFor(effective)
+      const sessionId = shared === undefined || !(await this.runner.sessionExists(shared.sessionId))
+        ? await this.runner.launch(effective, route)
+        : await this.runner.launchShared(effective, route, shared.sessionId, shared.compact)
       this.ledger.attachSession(task.id, executionId, sessionId)
       // The run may have been paused while its launch was in flight (no
       // session existed yet, so the pause action could not cancel it). A
@@ -498,6 +502,31 @@ export class TaskBoardHostService {
       // A slot just freed (or a launch failed): re-check anyone still queued.
       this.scheduleRoutePass()
     }
+  }
+
+  /**
+   * The shared-session launch for a maintain-session sequential group member,
+   * or undefined when this task should get a fresh session. The group's shared
+   * session is the newest settled member execution's session; the member's own
+   * workspace/preset pins must equal the shared session's composition (the
+   * newest settled member's effective targets) — the session cannot change
+   * workspace or preset after creation, so a differing pin fails closed before
+   * the prompt instead of silently running in the wrong context.
+   */
+  private sharedSessionFor(task: TaskRecord): { sessionId: string; compact: boolean } | undefined {
+    if (task.groupId === undefined) return undefined
+    const group = this.ledger.groupById(task.groupId)
+    if (group === undefined || !groupSharesSession(group)) return undefined
+    const shared = this.ledger.groupSharedSession(group.id)
+    if (shared === undefined) return undefined
+    const previous = this.ledger.taskById(shared.taskId)
+    if (previous !== undefined) {
+      const previousEffective = this.withWorkspaceDefaults(previous)
+      if (previousEffective.workspaceId !== task.workspaceId || previousEffective.mode !== task.mode) {
+        throw new Error('maintain-session group members must share the same workspace and agent preset')
+      }
+    }
+    return { sessionId: shared.sessionId, compact: groupCompactsBetween(group) }
   }
 
   /**
@@ -555,7 +584,7 @@ export class TaskBoardHostService {
         // A continued run observes only events after its latest resume: the
         // pause's cancelled turn/end must never settle the run.
         const boundary = execution.watchFromAt ?? execution.startedAt
-        const result = await this.runner.inspect(execution.sessionId, boundary, sessions)
+        const result = await this.runner.inspect(execution.sessionId, boundary, sessions, execution.launchedAt)
         if (result.outcome === 'pending') continue
         this.ledger.settle(
           execution.taskId,
