@@ -21,6 +21,8 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
+  /** Show message/tool times and per-turn token counts in the session view. */
+  sessionTimestamps?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
   /** Cost estimate: USD per 1M input tokens (0 = not configured). */
@@ -51,6 +53,8 @@ export interface TaskBoardSettingsCardState extends CardShell {
   costPerMillionInputTokens: CardFieldState
   /** Cost estimate: USD per 1M output tokens. */
   costPerMillionOutputTokens: CardFieldState
+  /** Session-view timestamp/token flag. */
+  sessionTimestamps: CardFieldState
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -74,6 +78,7 @@ export class TaskBoardSettingsCardController {
       booleanField('preventIdleSleep'),
       numberField('costPerMillionInputTokens', { min: 0 }),
       numberField('costPerMillionOutputTokens', { min: 0 }),
+      booleanField('sessionTimestamps'),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -86,6 +91,7 @@ export class TaskBoardSettingsCardController {
       preventIdleSleep: this.form.field('preventIdleSleep'),
       costPerMillionInputTokens: this.form.field('costPerMillionInputTokens'),
       costPerMillionOutputTokens: this.form.field('costPerMillionOutputTokens'),
+      sessionTimestamps: this.form.field('sessionTimestamps'),
     }
   }
 
@@ -211,6 +217,18 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
         {...state.costPerMillionOutputTokens}
         onEdit={(text) => { props.edit('costPerMillionOutputTokens', text) }}
         onReset={() => { props.resetField('costPerMillionOutputTokens') }}
+      />
+      <BooleanField
+        id="settings-task-board-session-timestamps"
+        label={t('settings.sessionTimestamps')}
+        hint={t('settings.sessionTimestampsHint')}
+        inheritLabel={t('settings.inherit')}
+        onLabel={t('settings.on')}
+        offLabel={t('settings.off')}
+        {...fieldProps}
+        {...state.sessionTimestamps}
+        onEdit={(text) => { props.edit('sessionTimestamps', text) }}
+        onReset={() => { props.resetField('sessionTimestamps') }}
       />
       <EndpointsEditor t={t} disabled={disabled} />
       <p>

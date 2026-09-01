@@ -39,6 +39,7 @@ A hot-pluggable DeepSeek Harness (DSH) Web GUI plugin with a Host-authoritative 
 - **Deterministic recovery**: a running execution with a recorded session is observed after restart; an interrupted start without a session id is cancelled and is not resent. A cancelled run (a user stop, or a session that vanished mid-run) settles as cancelled and the task moves to the **Failed** column — a stop is never a success.
 - **Live synchronization**: mutations return a full revisioned snapshot; SSE announces revision, scheduler, and power changes, while reconnect and page visibility recovery fetch a full snapshot.
 - **Optional idle-sleep protection**: off by default; when enabled it covers every running DSH session, enabled non-archived task-board schedules, and unknown session state.
+- **Session-view timestamps and token counts**: the main session view shows what time each message and tool call ran at. User-message start clocks and the assistant turn end/duration labels (which DSH hides until the row is hovered) stay visible, every tool row carries an always-visible `HH:MM:SS · duration` chip read from the session event timestamps (a `M/D` or `Y/M/D` prefix is added for older days), and each turn tail shows that turn's input/output token counts (`Input 1.2K tok · Output 350 tok`) read from the assistant usage event. On by default; the **Settings → Plugins → All Tasks → Show times and token counts in the session view** switch restores the official hover-only behavior.
 - **System-prompt injection**: the Host registers a `plugin:task-board` section (order 200) through `SystemPrompt.section`, and the task-board settings can disable the announcement without disabling the board. The guidance also reminds agents to close any visible `todo_write` plan before the final answer.
 
 ## Architecture and protocol
@@ -79,6 +80,7 @@ dsh plugin --profile web add link:$(pwd)
 | `enabled` | `true` | Enables the Host service and browser board. |
 | `announceToAgent` | `false` | Opt-in: when true, adds the task-board guidance section to agent system prompts. |
 | `preventIdleSleep` | `false` | Holds one system idle-sleep assertion while any DSH session runs, any schedule is enabled, or session state is unknown. |
+| `sessionTimestamps` | `true` | Shows what time each message and tool call ran at in the main session view — message clocks stay visible, every tool row gets a start-time + duration chip — and each turn tail shows that turn's input/output token counts. |
 | `trustedProxyHosts` | `[]` | Canonical `host[:port]` authorities accepted only through the authenticated loopback reverse-proxy path. |
 | `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | Environment variable containing the reverse-proxy token; the token itself is never stored in plugin config. |
 | `endpointMaxWaitHours` | `24` | How long a queued run may wait for an eligible endpoint before it settles failed. |
