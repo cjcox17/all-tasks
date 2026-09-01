@@ -108,15 +108,15 @@ describe('HostTaskLedger', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
     const first = ledger.applyRequest('same-request', {
-      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' },
+      kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' },
     })
     const duplicate = ledger.applyRequest('same-request', {
-      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' },
+      kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' },
     })
     expect(duplicate.state).toEqual(first.state)
     expect(ledger.state().tasks.map(value => value.id)).toEqual(['task-a'])
     expect(() => ledger.applyRequest('same-request', {
-      kind: 'create', id: 'task-b', input: { title: 'B', description: '', prompt: '' },
+      kind: 'create', id: 'task-b', input: { source: 'user', title: 'B', description: '', prompt: '' },
     })).toThrow('different action')
     expect(readdirSync(root).filter(name => name.includes('.tmp-'))).toEqual([])
     ledger.dispose()
@@ -197,7 +197,7 @@ describe('HostTaskLedger', () => {
     ledger.applyRequest('create-scheduled', {
       kind: 'create',
       id: 'scheduled',
-      input: { title: 'Scheduled', description: '', prompt: '', schedule: { enabled: true, cron: '* * * * *' } },
+      input: { source: 'user', title: 'Scheduled', description: '', prompt: '', schedule: { enabled: true, cron: '* * * * *' } },
     })
 
     const runtime = ledger.runtimeView()
@@ -227,7 +227,7 @@ describe('HostTaskLedger', () => {
   it('cancels a running record without a session id after restart instead of resending it', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.dispose()
     const restarted = new HostTaskLedger(root, () => NOW + 1000)
@@ -239,7 +239,7 @@ describe('HostTaskLedger', () => {
   it('persists request fingerprints and scheduler metadata across Host restarts', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     ledger.setScheduler({ lastTickAt: NOW })
     ledger.dispose()
@@ -432,7 +432,7 @@ describe('HostTaskLedger', () => {
 
   it('rejects moving or deleting a task while any execution remains open', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     expect(() => ledger.applyRequest('move', { kind: 'move', taskId: 'task-a', status: 'todo' })).toThrow('cannot be moved')
     expect(() => ledger.applyRequest('delete', { kind: 'delete', taskId: 'task-a' })).toThrow('cannot be deleted')
@@ -488,7 +488,7 @@ describe('HostTaskLedger', () => {
 
   it('edits task content only before the first execution and keeps targets editable after', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: 'd', prompt: 'p' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: 'd', prompt: 'p' } })
     const edited = ledger.applyRequest('update', { kind: 'update', taskId: 'task-a', patch: { title: 'B', description: 'd2', prompt: 'p2' } })
     expect(edited.state.tasks[0]).toMatchObject({ title: 'B', description: 'd2', prompt: 'p2' })
 
@@ -512,7 +512,7 @@ describe('HostTaskLedger', () => {
   it('rejects a newly armed cron with no reachable occurrence', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     expect(() => ledger.applyRequest('create', {
-      kind: 'create', id: 'impossible', input: {
+      kind: 'create', id: 'impossible', input: { source: 'user',
         title: 'Impossible', description: '', prompt: '', schedule: { enabled: true, cron: '0 0 30 2 *' },
       },
     })).toThrow('invalid schedule')
@@ -522,7 +522,7 @@ describe('HostTaskLedger', () => {
   it('persists scheduler heartbeats to a sidecar without rewriting the ledger document', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const before = readFileSync(join(root, 'ledger-v2.json'), 'utf8')
     ledger.setScheduler({ lastTickAt: NOW + 30_000 })
     ledger.setScheduler({ lastTickAt: NOW + 60_000 })
@@ -538,7 +538,7 @@ describe('HostTaskLedger', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
     ledger.setScheduler({ lastTickAt: NOW + 30_000 })
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     // Full commit persists lastTickAt; a sidecar left over from an earlier
     // crash must not roll it back, and a newer sidecar must win.
     writeFileSync(join(root, 'scheduler-v2.json'), JSON.stringify({ lastTickAt: NOW - 5_000 }), 'utf8')
@@ -564,7 +564,7 @@ describe('HostTaskLedger', () => {
 
   it('stops one task: settles its open execution as cancelled and returns the session to cancel', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     const executionId = opened.state.tasks[0].executions[0].id
     ledger.attachSession('task-a', executionId, 'session-a')
@@ -580,7 +580,7 @@ describe('HostTaskLedger', () => {
 
   it('stops a task with only a queued run (no session yet)', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const opened = ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })
     const executionId = opened.state.tasks[0].executions[0].id
     ledger.markQueued('task-a', executionId, 'cloud', NOW, 'endpoint')
@@ -593,8 +593,8 @@ describe('HostTaskLedger', () => {
   it('stops a whole group: cancels every open member execution, marks it stopped, and reports sessions', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
-    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { source: 'user', title: 'B', description: '', prompt: '', groupId: 'g1' } })
     const a = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
     const b = ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
     const aExec = a.state.tasks.find(value => value.id === 'a')!.executions[0].id
@@ -620,8 +620,8 @@ describe('HostTaskLedger', () => {
   it('moves a whole group to a manual column and refuses while a member runs', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
-    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { source: 'user', title: 'B', description: '', prompt: '', groupId: 'g1' } })
 
     const moved = ledger.applyRequest('move-group', { kind: 'move-group', groupId: 'g1', status: 'todo' })
     const tasks = moved.state.tasks
@@ -637,9 +637,9 @@ describe('HostTaskLedger', () => {
   it('starts a whole group: opens runs for every runnable member in group order, skipping running and unapproved ones', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
-    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
-    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { source: 'user', title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { source: 'user', title: 'C', description: '', prompt: '', groupId: 'g1' } })
     // b is already running (open execution), c is unapproved.
     ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
     ledger.applyRequest('unapprove-c', { kind: 'set-approved', taskId: 'c', approved: false })
@@ -667,7 +667,7 @@ describe('HostTaskLedger', () => {
     // No members yet: nothing to start.
     expect(() => ledger.applyRequest('run-group-empty', { kind: 'run-group', groupId: 'g1' })).toThrow('no runnable members')
 
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
     expect(() => ledger.applyRequest('run-group-stopped', { kind: 'run-group', groupId: 'g1' })).toThrow('group is stopped')
 
@@ -683,7 +683,7 @@ describe('HostTaskLedger', () => {
     // Sequential group with three runnable members: only the first opens.
     ledger.applyRequest('seq', { kind: 'create-group', id: 'g-seq', input: { name: 'Seq', mode: 'sequential' } })
     for (const id of ['s1', 's2', 's3']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-seq' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g-seq' } })
     }
     const seq = ledger.applyRequest('run-seq', { kind: 'run-group', groupId: 'g-seq' })
     expect(seq.runs?.map(run => run.task.id)).toEqual(['s1'])
@@ -693,7 +693,7 @@ describe('HostTaskLedger', () => {
     // Parallel group capped at two: the first two open, the third stays put.
     ledger.applyRequest('par', { kind: 'create-group', id: 'g-par', input: { name: 'Par', mode: 'parallel', maxParallel: 2 } })
     for (const id of ['p1', 'p2', 'p3']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-par' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g-par' } })
     }
     const par = ledger.applyRequest('run-par', { kind: 'run-group', groupId: 'g-par' })
     expect(par.runs?.map(run => run.task.id)).toEqual(['p1', 'p2'])
@@ -702,7 +702,7 @@ describe('HostTaskLedger', () => {
     // An uncapped parallel group opens every runnable member.
     ledger.applyRequest('par2', { kind: 'create-group', id: 'g-free', input: { name: 'Free', mode: 'parallel' } })
     for (const id of ['f1', 'f2', 'f3']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-free' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g-free' } })
     }
     const free = ledger.applyRequest('run-free', { kind: 'run-group', groupId: 'g-free' })
     expect(free.runs?.map(run => run.task.id)).toEqual(['f1', 'f2', 'f3'])
@@ -725,9 +725,33 @@ describe('HostTaskLedger', () => {
     expect(ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' }).state.tasks[0]!.status).toBe('running')
   })
 
+  it('mints a programmatic (api/event) create unapproved and keeps a user create approved', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    // A protocol create without an explicit origin (scripts, tools, agents):
+    // the wire sanitizer defaults it to `api`, and the ledger gates it.
+    ledger.applyRequest('create-api', { kind: 'create', id: 'api-task', input: { title: 'Script task', description: '', prompt: '' } })
+    const apiTask = ledger.state().tasks.find(task => task.id === 'api-task')!
+    expect(apiTask.source).toBe('api')
+    expect(apiTask.approved).toBe(false)
+    expect(() => ledger.applyRequest('run', { kind: 'run', taskId: 'api-task' })).toThrow('task is not approved')
+    // The board dialog claims `user`: approved as before.
+    ledger.applyRequest('create-user', { kind: 'create', id: 'user-task', input: { title: 'My task', description: '', prompt: '', source: 'user' } })
+    const userTask = ledger.state().tasks.find(task => task.id === 'user-task')!
+    expect(userTask.source).toBe('user')
+    expect(userTask.approved).toBeUndefined()
+    // An explicit approved:true overrides the programmatic default (autoRun events).
+    ledger.applyRequest('create-event-run', { kind: 'create', id: 'event-task', input: { title: 'Alert', description: '', prompt: '', source: 'event', approved: true } })
+    const eventTask = ledger.state().tasks.find(task => task.id === 'event-task')!
+    expect(eventTask.source).toBe('event')
+    expect(eventTask.approved).toBeUndefined()
+    // Approving an api task clears the gate so it can run.
+    ledger.applyRequest('approve', { kind: 'set-approved', taskId: 'api-task', approved: true })
+    expect(ledger.applyRequest('run', { kind: 'run', taskId: 'api-task' }).state.tasks[0]!.status).toBe('running')
+  })
+
   it('unapproves a task through set-approved and refuses every run path', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } })
+    ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { source: 'user', title: 'A', description: '', prompt: '' } })
     const gated = ledger.applyRequest('unapprove', { kind: 'set-approved', taskId: 'task-a', approved: false })
     expect(gated.state.tasks[0]!.approved).toBe(false)
     expect(() => ledger.applyRequest('run', { kind: 'run', taskId: 'task-a' })).toThrow('task is not approved')
@@ -763,7 +787,7 @@ describe('HostTaskLedger', () => {
   it('excludes unapproved members from the group runtime runnable set', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1', approved: false } })
     const view = ledger.groupRuntimeViews()[0]!
     expect(view.members.find(member => member.taskId === 'a')!.runnable).toBe(true)
@@ -861,7 +885,7 @@ describe('HostTaskLedger reorder + order invariants', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
     for (const id of ['a', 'b', 'c', 'd']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '' } })
     }
     expect(ledger.state().tasks.map(t => t.id)).toEqual(['a', 'b', 'c', 'd'])
     ledger.applyRequest('reorder-1', { kind: 'reorder', taskId: 'c', beforeTaskId: 'b' })
@@ -879,7 +903,7 @@ describe('HostTaskLedger reorder + order invariants', () => {
   it('rejects a reorder whose task or target does not exist', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'a', description: '', prompt: '' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { source: 'user', title: 'a', description: '', prompt: '' } })
     expect(() => ledger.applyRequest('bad-1', { kind: 'reorder', taskId: 'missing', beforeTaskId: null })).toThrow('task not found')
     expect(() => ledger.applyRequest('bad-2', { kind: 'reorder', taskId: 'a', beforeTaskId: 'missing' })).toThrow('target task not found')
     ledger.dispose()
@@ -891,7 +915,7 @@ describe('HostTaskLedger reorder + order invariants', () => {
     ledger.applyRequest('create-group-a', { kind: 'create-group', id: 'g-a', input: { name: 'A' } })
     ledger.applyRequest('create-group-b', { kind: 'create-group', id: 'g-b', input: { name: 'B' } })
     for (const id of ['t1', 't2', 't3']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-a' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g-a' } })
     }
     ledger.applyRequest('move-member', { kind: 'update', taskId: 't2', patch: { groupId: 'g-b' } })
     const groups = ledger.state().groups
@@ -906,8 +930,8 @@ describe('HostTaskLedger reorder + order invariants', () => {
     const root = tempRoot()
     const ledger = new HostTaskLedger(root, () => NOW)
     ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
-    ledger.applyRequest('create-t1', { kind: 'create', id: 't1', input: { title: 't1', description: '', prompt: '', groupId: 'g1' } })
-    ledger.applyRequest('create-t2', { kind: 'create', id: 't2', input: { title: 't2', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-t1', { kind: 'create', id: 't1', input: { source: 'user', title: 't1', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-t2', { kind: 'create', id: 't2', input: { source: 'user', title: 't2', description: '', prompt: '', groupId: 'g1' } })
     // Simulate an order that lost its tail member (e.g. a stale partial write).
     ledger.applyRequest('set-group-order', { kind: 'set-group-order', groupId: 'g1', order: ['t1'] })
     expect(ledger.state().groups[0].order).toEqual(['t1', 't2'])
@@ -924,7 +948,7 @@ describe('HostTaskLedger edit does not reorder group members', () => {
     const ledger = new HostTaskLedger(root, () => NOW)
     ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
     for (const id of ['t1', 't2', 't3']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g1' } })
     }
     expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
     // Content edit: title/description/prompt only — membership must be intact.
@@ -944,7 +968,7 @@ describe('HostTaskLedger edit does not reorder group members', () => {
     const ledger = new HostTaskLedger(root, () => NOW)
     ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
     for (const id of ['t1', 't2']) {
-      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { source: 'user', title: id, description: '', prompt: '', groupId: 'g1' } })
     }
     ledger.applyRequest('ungroup-t1', { kind: 'update', taskId: 't1', patch: { groupId: null } })
     const state = ledger.state()

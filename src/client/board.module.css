@@ -800,6 +800,22 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 1px 8px;
 }
 
+/* Origin pill on the card meta row: marks tasks that were NOT created through
+   the board dialog (a script/tool via the API, or the event webhook), so a
+   card that "shows up by itself" is immediately identifiable. The business
+   alias is the theme's neutral blue/info tint; a hex fallback covers themes
+   that do not define it. */
+.cardSource {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-business-primary, #2f6f8f);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2f6f8f) 12%, transparent);
+  border: 1px solid var(--dsw-alias-state-business-primary, #2f6f8f);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 /* Wrapper for an unapproved standalone card: the card plus its inline
    approve button (the card itself is a <button>, so the action sits beside it). */
 .cardWrap {
@@ -1201,6 +1217,12 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   color: var(--dsw-alias-state-warn-primary);
   background: var(--dsw-alias-state-warn-secondary);
   border: 1px solid var(--dsw-alias-state-warn-primary);
+}
+
+.taskBadge[data-kind='source'] {
+  color: var(--dsw-alias-state-business-primary, #2f6f8f);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2f6f8f) 12%, transparent);
+  border: 1px solid var(--dsw-alias-state-business-primary, #2f6f8f);
 }
 
 /* A workspace with nothing on board shows a quiet hint when expanded. */

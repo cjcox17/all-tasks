@@ -44,7 +44,7 @@ function setup(ledger: HostTaskLedger): void {
   ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'Seq', mode: 'sequential' } })
   for (const [id, title] of [['a', 'Member A'], ['b', 'Member B'], ['c', 'Member C']] as const) {
     ledger.applyRequest(`create-${id}`, {
-      kind: 'create', id, input: { title, description: '', prompt: 'work', groupId: 'g1' },
+      kind: 'create', id, input: { source: 'user', title, description: '', prompt: 'work', groupId: 'g1' },
     })
   }
 }
@@ -142,7 +142,7 @@ describe('sequential group launch guarantees', () => {
     const ledger = new HostTaskLedger(root())
     setup(ledger)
     ledger.applyRequest('create-standalone', {
-      kind: 'create', id: 'standalone', input: { title: 'Lone', description: '', prompt: 'work' },
+      kind: 'create', id: 'standalone', input: { source: 'user', title: 'Lone', description: '', prompt: 'work' },
     })
     const { service, create } = harness(ledger)
 

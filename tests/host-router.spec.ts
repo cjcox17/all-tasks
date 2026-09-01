@@ -93,7 +93,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
     ]), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
+      kind: 'create', id: 't1', input: { source: 'user', title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'] },
     })
 
     service.apply('run-1', { kind: 'run', taskId: 't1' })
@@ -116,7 +116,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'] }),
     ]), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
         model: { provider: 'deepseek', model: 'deepseek-chat' },
       },
@@ -142,7 +142,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       endpoint({ id: 'cloud', provider: 'deepseek', models: ['deepseek-reasoner'], defaultModel: 'deepseek-reasoner' }),
     ]), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work',
         model: { provider: 'deepseek', model: 'deepseek-chat' },
         endpoints: ['cloud'],
@@ -162,7 +162,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' }),
     ]), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work', endpoints: ['local', 'cloud'],
         model: { provider: 'deepseek', model: 'deepseek-chat' },
       },
@@ -185,7 +185,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       { endpointMaxWaitHours: 2 },
     ), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
         model: { provider: 'deepseek', model: 'deepseek-chat' },
       },
@@ -214,7 +214,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       { defaultEndpoints: ['cloud'] },
     ), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: { title: 'Task', description: '', prompt: 'work' },
+      kind: 'create', id: 't1', input: { source: 'user', title: 'Task', description: '', prompt: 'work' },
     })
     service.apply('run-1', { kind: 'run', taskId: 't1' })
     await flush()
@@ -233,7 +233,7 @@ describe('TaskBoardHostService endpoint routing', () => {
     {
       const first = harness(dir, blockedConfig, () => now)
       first.ledger.applyRequest('create', {
-        kind: 'create', id: 't1', input: {
+        kind: 'create', id: 't1', input: { source: 'user',
           title: 'Task', description: '', prompt: 'work', endpoints: ['cloud'],
           model: { provider: 'deepseek', model: 'deepseek-chat' },
         },
@@ -267,7 +267,7 @@ describe('TaskBoardHostService endpoint routing', () => {
     const dir = root()
     const { service, ledger, selectModel } = harness(dir, routerConfig([]), () => now)
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work',
         model: { provider: 'deepseek', model: 'deepseek-chat' },
       },
@@ -297,7 +297,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       },
     })
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work', workspaceId: 'ws-a',
       },
     })
@@ -358,7 +358,7 @@ describe('TaskBoardHostService endpoint routing', () => {
       },
     })
     ledger.applyRequest('create', {
-      kind: 'create', id: 't1', input: {
+      kind: 'create', id: 't1', input: { source: 'user',
         title: 'Task', description: '', prompt: 'work', workspaceId: 'ws-a',
         mode: 'coder',
         model: { provider: 'deepseek', model: 'deepseek-reasoner' },
@@ -411,7 +411,7 @@ describe('ledger queued-run bookkeeping', () => {
   it('markQueued / attachEndpoint / queuedRuns round-trip', () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const ledger = new HostTaskLedger(root(), () => now)
-    const base = createTask({ title: 'Task', description: '', prompt: 'work' }, now, 't1')
+    const base = createTask({ title: 'Task', description: '', prompt: 'work', source: 'user' }, now, 't1')
     ledger.applyRequest('create', { kind: 'create', id: 't1', input: base })
 
     // Reuse the ledger's own open path: start an execution, then queue it.

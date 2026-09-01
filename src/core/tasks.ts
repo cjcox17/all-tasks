@@ -159,6 +159,26 @@ export interface TaskRecord {
    * tasks remain fully manageable.
    */
   approved?: boolean
+  /**
+   * Origin of the task: `user` means it was created through the board's
+   * new-task dialog; `api` means it was minted programmatically through the
+   * protocol `create` action (a script, another tool, or an agent) without an
+   * explicit origin; `event` means an inbound event source (the webhook)
+   * created it. Absent on legacy records behaves as `user`. The origin is
+   * display-only on the board — it never gates execution by itself — but a
+   * non-user origin mints the task unapproved at creation time (see
+   * {@link applyCreateTask}), so a programmatically created task can never
+   * run until a human approves it.
+   */
+  source?: TaskSource
+}
+
+/** Origin of a task: who created it (see `TaskRecord.source`). */
+export type TaskSource = 'user' | 'api' | 'event'
+
+/** Whether an unknown value is a known task origin. */
+export function isTaskSource(value: unknown): value is TaskSource {
+  return value === 'user' || value === 'api' || value === 'event'
 }
 
 /**
@@ -274,6 +294,15 @@ export interface NewTaskInput {
    * this; the board's manual dialog never does.
    */
   approved?: boolean
+  /**
+   * Origin of the task being created. The board's new-task dialog always
+   * passes `user`; the event webhook passes `event`; any other protocol
+   * `create` caller may omit it, in which case the wire sanitizer defaults it
+   * to `api` (programmatic). A non-user origin mints the task unapproved at
+   * creation unless `approved: true` is passed explicitly (see
+   * {@link applyCreateTask}).
+   */
+  source?: TaskSource
 }
 
 /** The five kanban columns, in display order. */
@@ -330,6 +359,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     groupId: normalizeTargetId(input.groupId),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
     ...(input.approved === false ? { approved: false } : {}),
+    ...(input.source === undefined ? { source: 'api' } : { source: input.source }),
   }
 }
 

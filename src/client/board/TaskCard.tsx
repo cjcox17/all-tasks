@@ -95,6 +95,14 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart }: {
       {task.description !== '' && <span className={css.cardExcerpt}>{task.description}</span>}
       <span className={css.cardMeta}>
         <span className={css.cardTime}>{t('board.updated')} {formatTime(task.updatedAt)}</span>
+        {!archived && task.source !== undefined && task.source !== 'user' && (
+          <span
+            className={css.cardSource}
+            title={t(task.source === 'event' ? 'card.source.eventHint' : 'card.source.apiHint')}
+          >
+            {t(task.source === 'event' ? 'card.source.event' : 'card.source.api')}
+          </span>
+        )}
         {!archived && (task.approved === false
           ? (
             <span className={css.cardUnapproved} title={t('card.unapprovedHint')}>

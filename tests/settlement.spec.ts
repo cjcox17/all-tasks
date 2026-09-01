@@ -20,7 +20,7 @@ afterEach(() => {
 describe('HostTaskLedger settlement', () => {
   it('stores the summary and emits one settlement event', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create-1', { kind: 'create', id: 't1', input: { title: 'T', description: '', prompt: 'p' } })
+    ledger.applyRequest('create-1', { kind: 'create', id: 't1', input: { source: 'user', title: 'T', description: '', prompt: 'p' } })
     ledger.applyRequest('run-1', { kind: 'run', taskId: 't1' })
     const executionId = ledger.state().tasks[0].executions[0].id
     const events: SettlementEvent[] = []
@@ -37,7 +37,7 @@ describe('HostTaskLedger settlement', () => {
 
   it('does not emit for an unknown or already-settled execution', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create-1', { kind: 'create', id: 't1', input: { title: 'T', description: '', prompt: 'p' } })
+    ledger.applyRequest('create-1', { kind: 'create', id: 't1', input: { source: 'user', title: 'T', description: '', prompt: 'p' } })
     ledger.applyRequest('run-1', { kind: 'run', taskId: 't1' })
     const executionId = ledger.state().tasks[0].executions[0].id
     const events: SettlementEvent[] = []

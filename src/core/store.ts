@@ -11,7 +11,7 @@
  */
 import { isValidCron } from './schedule.ts'
 import { normalizeEndpointList } from './endpoints.ts'
-import { isTaskPermission, isTaskStatus, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
+import { isTaskPermission, isTaskSource, isTaskStatus, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
 
 /** Persistence seam for the task ledger. */
 export interface TaskStore {
@@ -66,6 +66,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
   if (record.endpoints !== undefined && !Array.isArray(record.endpoints)) return false
   if (record.groupId !== undefined && typeof record.groupId !== 'string') return false
   if (record.approved !== undefined && typeof record.approved !== 'boolean') return false
+  if (record.source !== undefined && !isTaskSource(record.source)) return false
   if (!Array.isArray(record.executions)) return false
   for (const execution of record.executions) {
     if (typeof execution !== 'object' || execution === null) return false

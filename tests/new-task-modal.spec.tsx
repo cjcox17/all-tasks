@@ -127,6 +127,16 @@ describe('NewTaskModal model + reasoning-effort pin', () => {
     expect(input.model).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' })
   })
 
+  it('claims the user origin on the created task (dialog creates are never programmatic)', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed)
+    setFieldValue(container.querySelector('input') as HTMLInputElement, 'My task')
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    expect(createTaskConfirmed.mock.calls[0][0].source).toBe('user')
+  })
+
   it('submits the model without an effort for the deployment default', async () => {
     const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
     const { container } = await renderModal(createTaskConfirmed)
