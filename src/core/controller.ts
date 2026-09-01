@@ -17,6 +17,7 @@ import {
   applyDeleteGroup,
   applyUpdateGroup,
   orderedGroupMembers,
+  taskMatchesGroupScope,
   withGroupMembershipChange,
   withGroupOrder,
   type GroupCreateInput,
@@ -312,6 +313,12 @@ export class BoardController {
     const id = this.uuid()
     const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id)
     if (task === undefined) return undefined
+    // Mirror the Host ledger: membership requires the task's workspace pin to
+    // equal the group's workspace scope (absent = unassigned).
+    if (task.groupId !== undefined) {
+      const group = this.groups.find(candidate => candidate.id === task.groupId)
+      if (group === undefined || !taskMatchesGroupScope(task, group)) return undefined
+    }
     this.tasks = [...tasks]
     // Legacy path only: the Host ledger syncs the group order on its own.
     if (task.groupId !== undefined && this.groups.some(group => group.id === task.groupId)) {
@@ -347,18 +354,39 @@ export class BoardController {
     const task = this.tasks.find(candidate => candidate.id === id)
     if (task === undefined) return false
     const previous = task.groupId
-    // Mirror the Host ledger: a running member keeps its group's capacity slot
-    // until its execution settles; moving it between groups (or out) would let
-    // the old group start a second member while the first is still running.
-    const nextGroupId = 'groupId' in patch
+    // Mirror the Host ledger: the workspace the task lands in after the patch.
+    const nextWorkspaceId = 'workspaceId' in patch
+      ? (patch.workspaceId === undefined ? undefined : patch.workspaceId.trim() === '' ? undefined : patch.workspaceId.trim())
+      : task.workspaceId
+    const explicitGroupChange = 'groupId' in patch
+    let nextGroupId = explicitGroupChange
       ? (patch.groupId === null || patch.groupId === undefined ? undefined : patch.groupId.trim() === '' ? undefined : patch.groupId.trim())
       : previous
+    if (nextGroupId !== undefined) {
+      const group = this.groups.find(candidate => candidate.id === nextGroupId)
+      // A group is workspace-scoped: an explicit mismatched join is refused;
+      // an implicit keep-through (only the workspace moved) ungroups the task.
+      if (group === undefined) return false
+      if (group.workspaceId !== nextWorkspaceId) {
+        if (explicitGroupChange) return false
+        nextGroupId = undefined
+      }
+    }
+    // A running member keeps its group's capacity slot until its execution
+    // settles; moving it between groups (or out) would let the old group start
+    // a second member while the first is still running.
     if (previous !== nextGroupId && (task.status === 'running' || task.executions.some(execution => execution.endedAt === undefined))) {
       return false
     }
-    this.tasks = [...applyUpdateTask(this.tasks, id, patch, this.now())]
+    // When the workspace move implicitly ungrouped the task, its own groupId
+    // must clear too — not just the group's member order.
+    const membershipChanged = previous !== nextGroupId
+    const effectivePatch = membershipChanged && nextGroupId === undefined && previous !== undefined
+      ? { ...patch, groupId: null }
+      : patch
+    this.tasks = [...applyUpdateTask(this.tasks, id, effectivePatch, this.now())]
     // Legacy path only: the Host ledger syncs the group order on its own.
-    if (previous !== nextGroupId) {
+    if (membershipChanged) {
       this.groups = withGroupMembershipChange(this.groups, id, previous, nextGroupId, this.now())
     }
     this.persistAndNotify()

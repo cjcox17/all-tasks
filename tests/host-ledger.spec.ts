@@ -930,8 +930,8 @@ describe('HostTaskLedger edit does not reorder group members', () => {
     // Content edit: title/description/prompt only — membership must be intact.
     ledger.applyRequest('edit-t1', { kind: 'update', taskId: 't1', patch: { title: 't1 v2', description: 'd', prompt: 'p' } })
     expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
-    // Target edit: workspace/model/etc. without a groupId — same guarantee.
-    ledger.applyRequest('edit-t2', { kind: 'update', taskId: 't2', patch: { workspaceId: 'ws-1' } })
+    // Target edit: mode/model/etc. without a groupId — same guarantee.
+    ledger.applyRequest('edit-t2', { kind: 'update', taskId: 't2', patch: { mode: 'planner' } })
     expect(ledger.state().groups[0].order).toEqual(['t1', 't2', 't3'])
     // The edited tasks stay members of the group.
     const group = ledger.state().groups[0]
@@ -950,6 +950,110 @@ describe('HostTaskLedger edit does not reorder group members', () => {
     const state = ledger.state()
     expect(state.tasks.find(t => t.id === 't1')?.groupId).toBeUndefined()
     expect(state.groups[0].order).toEqual(['t2'])
+    ledger.dispose()
+  })
+})
+
+describe('HostTaskLedger workspace-scoped groups', () => {
+  it('refuses to create a task in a group of another workspace scope', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group', { kind: 'create-group', id: 'g-a', input: { name: 'A', workspaceId: 'ws-a' } })
+    // Matching scope joins fine.
+    ledger.applyRequest('create-ok', { kind: 'create', id: 't-ok', input: { title: 'ok', description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g-a' } })
+    expect(ledger.state().tasks.find(t => t.id === 't-ok')?.groupId).toBe('g-a')
+    // A mismatched pin fails closed, leaving the ledger untouched.
+    expect(() => ledger.applyRequest('create-bad', { kind: 'create', id: 't-bad', input: { title: 'bad', description: '', prompt: '', workspaceId: 'ws-b', groupId: 'g-a' } }))
+      .toThrow('group does not belong to the task workspace')
+    expect(ledger.state().tasks.some(t => t.id === 't-bad')).toBe(false)
+    // An unassigned task can never join a workspace-scoped group.
+    expect(() => ledger.applyRequest('create-unassigned', { kind: 'create', id: 't-u', input: { title: 'u', description: '', prompt: '', groupId: 'g-a' } }))
+      .toThrow('group does not belong to the task workspace')
+    ledger.dispose()
+  })
+
+  it('refuses an explicit group join across scopes on update', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group-a', { kind: 'create-group', id: 'g-a', input: { name: 'A', workspaceId: 'ws-a' } })
+    ledger.applyRequest('create-group-b', { kind: 'create-group', id: 'g-b', input: { name: 'B', workspaceId: 'ws-b' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'a', description: '', prompt: '', workspaceId: 'ws-a' } })
+    expect(() => ledger.applyRequest('join-b', { kind: 'update', taskId: 'a', patch: { groupId: 'g-b' } }))
+      .toThrow('group does not belong to the task workspace')
+    expect(ledger.state().tasks.find(t => t.id === 'a')?.groupId).toBeUndefined()
+    ledger.dispose()
+  })
+
+  it('auto-ungroups a task whose workspace moves away from its group\'s scope', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create-group', { kind: 'create-group', id: 'g1', input: { name: 'G', workspaceId: 'ws-a' } })
+    for (const id of ['t1', 't2']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', workspaceId: 'ws-a', groupId: 'g1' } })
+    }
+    // Moving t1 to another workspace leaves the group (task field + order).
+    ledger.applyRequest('move-ws', { kind: 'update', taskId: 't1', patch: { workspaceId: 'ws-b' } })
+    const state = ledger.state()
+    expect(state.tasks.find(t => t.id === 't1')?.workspaceId).toBe('ws-b')
+    expect(state.tasks.find(t => t.id === 't1')?.groupId).toBeUndefined()
+    expect(state.groups[0].order).toEqual(['t2'])
+    // Moving INTO a matching workspace group keeps membership (still scoped).
+    ledger.applyRequest('create-group-b', { kind: 'create-group', id: 'g-b', input: { name: 'B', workspaceId: 'ws-b' } })
+    ledger.applyRequest('join-b', { kind: 'update', taskId: 't1', patch: { workspaceId: 'ws-b', groupId: 'g-b' } })
+    expect(ledger.state().tasks.find(t => t.id === 't1')?.groupId).toBe('g-b')
+    ledger.dispose()
+  })
+
+  it('migrates legacy global groups to their members\' workspace on load', () => {
+    const root = tempRoot()
+    // Craft a pre-scope ledger: a group row without workspaceId joined by
+    // ws-a tasks — exactly what the old global-group code persisted.
+    writeFileSync(join(root, 'ledger-v2.json'), JSON.stringify({
+      schemaVersion: 2,
+      revision: 0,
+      tasks: [
+        { id: 't1', title: 't1', description: '', prompt: '', status: 'todo', createdAt: NOW, updatedAt: NOW, executions: [], workspaceId: 'ws-a', groupId: 'g1' },
+        { id: 't2', title: 't2', description: '', prompt: '', status: 'todo', createdAt: NOW, updatedAt: NOW, executions: [], workspaceId: 'ws-a', groupId: 'g1' },
+      ],
+      groups: [{ id: 'g1', name: 'Legacy', mode: 'sequential', offPeakOnly: false, order: ['t2'], createdAt: NOW, updatedAt: NOW }],
+      workspaceDefaults: {},
+      scheduler: { timeZone: 'UTC' },
+      recentRequests: [],
+    }))
+
+    const ledger = new HostTaskLedger(root, () => NOW)
+    expect(ledger.state().groups[0].workspaceId).toBe('ws-a')
+    expect(ledger.state().groups[0].order).toEqual(['t2', 't1'])
+    expect(ledger.state().tasks.filter(t => t.groupId === 'g1').map(t => t.id)).toEqual(['t1', 't2'])
+    // The migrated scope is persisted on the next commit.
+    ledger.applyRequest('touch', { kind: 'update', taskId: 't1', patch: { title: 't1 v2' } })
+    const onDisk = JSON.parse(readFileSync(join(root, 'ledger-v2.json'), 'utf8')) as { groups: Array<Record<string, unknown>> }
+    expect(onDisk.groups[0].workspaceId).toBe('ws-a')
+    ledger.dispose()
+  })
+
+  it('drops members whose workspace never matched a group scope on load', () => {
+    const root = tempRoot()
+    // A legacy group whose members are split across workspaces flattens to
+    // the unassigned scope: pinned members are ungrouped, the order heals.
+    writeFileSync(join(root, 'ledger-v2.json'), JSON.stringify({
+      schemaVersion: 2,
+      revision: 0,
+      tasks: [
+        { id: 't1', title: 't1', description: '', prompt: '', status: 'todo', createdAt: NOW, updatedAt: NOW, executions: [], workspaceId: 'ws-a', groupId: 'g1' },
+        { id: 't2', title: 't2', description: '', prompt: '', status: 'todo', createdAt: NOW, updatedAt: NOW, executions: [], workspaceId: 'ws-b', groupId: 'g1' },
+        { id: 't3', title: 't3', description: '', prompt: '', status: 'todo', createdAt: NOW, updatedAt: NOW, executions: [], groupId: 'g1' },
+      ],
+      groups: [{ id: 'g1', name: 'Mixed', mode: 'sequential', offPeakOnly: false, order: ['t1', 't2', 't3'], createdAt: NOW, updatedAt: NOW }],
+      workspaceDefaults: {},
+      scheduler: { timeZone: 'UTC' },
+      recentRequests: [],
+    }))
+
+    const ledger = new HostTaskLedger(root, () => NOW)
+    expect(ledger.state().groups[0].workspaceId).toBeUndefined()
+    expect(ledger.state().groups[0].order).toEqual(['t3'])
+    expect(ledger.state().tasks.filter(t => t.groupId === 'g1').map(t => t.id)).toEqual(['t3'])
     ledger.dispose()
   })
 })

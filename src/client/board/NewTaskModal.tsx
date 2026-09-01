@@ -98,6 +98,21 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
     ? nextRunAtMs(scheduleCron, Date.now())
     : undefined
 
+  // Groups are workspace-scoped: the picker offers only the groups of the
+  // selected workspace (no selection = the unassigned scope).
+  const workspaceScope = workspaceId === '' ? undefined : workspaceId
+  const scopeGroups = groups.filter(group => group.workspaceId === workspaceScope)
+
+  const changeWorkspace = (next: string): void => {
+    setWorkspaceId(next)
+    // A group picked for the previous workspace cannot follow the task into
+    // another scope (membership is workspace-locked Host-side).
+    const nextScope = next === '' ? undefined : next
+    if (groupId !== '' && !groups.some(group => group.id === groupId && group.workspaceId === nextScope)) {
+      setGroupId('')
+    }
+  }
+
   return (
     <ModalShell
       ariaLabel={t('board.new')}
@@ -125,7 +140,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
             onChange={event => { setGroupId(event.target.value) }}
           >
             <option value="">{t('exec.group.default')}</option>
-            {groups.map(group => (
+            {scopeGroups.map(group => (
               <option key={group.id} value={group.id}>{group.name}</option>
             ))}
           </select>
@@ -136,7 +151,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
           <select
             className={css.select}
             value={workspaceId}
-            onChange={event => { setWorkspaceId(event.target.value) }}
+            onChange={event => { changeWorkspace(event.target.value) }}
           >
             <option value="">{t('exec.workspace.recent')}</option>
             {options.workspaces.map(workspace => (

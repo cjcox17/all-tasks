@@ -11,7 +11,7 @@
  * Cards open the task detail (never execute directly); the kanban header
  * offers filter, unapproved-only, archive, new-task, and new-group controls.
  */
-import { memo, useCallback, useEffect, useState, type DragEvent as ReactDragEvent } from 'react'
+import { memo, useCallback, useEffect, useState, type DragEvent as ReactDragEvent, type ReactElement } from 'react'
 import { selectedTaskOf, type BoardController } from '../../core/controller.ts'
 import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
 import { COLUMNS, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
@@ -309,6 +309,13 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     snapshot.tasks.some(task => task.groupId === groupId && canStartTask(task)),
   [snapshot.tasks])
 
+  // Groups are workspace-scoped: a workspace kanban shows only the groups of
+  // that workspace (the unassigned-scope groups render inside its Unassigned
+  // section below); the All overview spans every workspace's groups.
+  const scopeGroups = workspaceId === undefined
+    ? snapshot.groups
+    : snapshot.groups.filter(group => group.workspaceId === workspaceId)
+
   const workspaceTitle = workspaceId === undefined
     ? t('board.title')
     : snapshot.executionOptions.workspaces.find(workspace => workspace.workspaceId === workspaceId)?.title ?? workspaceId
@@ -373,13 +380,18 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     const target = event.target as Element
     const groupEl = target.closest('[data-group]')
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
-      setDropTarget({
-        column,
-        zone: 'group',
-        groupId: groupEl.dataset.group,
-        y: event.clientY - groupEl.getBoundingClientRect().top,
-      })
-      return
+      // A group of another workspace scope is not a drop target for this task
+      // (membership is workspace-locked); treat the hover as the column.
+      const group = snapshot.groups.find(candidate => candidate.id === groupEl.dataset.group)
+      if (group !== undefined && dragged.workspaceId === group.workspaceId) {
+        setDropTarget({
+          column,
+          zone: 'group',
+          groupId: groupEl.dataset.group,
+          y: event.clientY - groupEl.getBoundingClientRect().top,
+        })
+        return
+      }
     }
     if (target.closest('[data-dsh-part="unassigned"]') !== null) {
       setDropTarget({ column, zone: 'unassigned', y })
@@ -438,7 +450,10 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     const groupEl = target.closest('[data-group]')
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
       const group = snapshot.groups.find(candidate => candidate.id === groupEl!.dataset.group)
-      if (group !== undefined) {
+      // Membership is workspace-locked: a task can only join (or reorder
+      // inside) a group of its own workspace scope; a foreign-scope group
+      // falls through to the column/unassigned handling below.
+      if (group !== undefined && dragged.workspaceId === group.workspaceId) {
         if (dragged.groupId === group.id) {
           // Reorder inside the group: the dragged member lands directly above
           // the member card under the pointer (midpoint split), mapped onto
@@ -466,8 +481,8 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           // the task's group in the detail view.
           void controller.updateTask(taskId, { groupId: group.id })
         }
+        return
       }
-      return
     }
     if (target.closest('[data-dsh-part="unassigned"]') !== null) {
       if (dragged.groupId !== undefined) void controller.updateTask(taskId, { groupId: null })
@@ -579,15 +594,47 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
             const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceId)
             const ungrouped = pinned.filter(task => task.groupId === undefined)
             const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
-            const grouped = snapshot.groups
+            const grouped = scopeGroups
               .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
               .filter(entry => entry.members.length > 0)
+            // In a workspace-scoped view the Unassigned section also hosts the
+            // unassigned-scope groups (only unassigned tasks can be members),
+            // so grouped unassigned tasks never disappear from the board.
+            const unassignedGrouped = workspaceId !== undefined
+              ? snapshot.groups
+                .filter(group => group.workspaceId === undefined)
+                .map(group => ({ group, members: orderedGroupMembers(group, unassigned) }))
+                .filter(entry => entry.members.length > 0)
+              : []
             // Groups with no members anywhere still show (in the todo column)
             // so they stay visible and manageable after creation.
             const emptyGroups = column.status === 'todo'
-              ? snapshot.groups.filter(group => !snapshot.tasks.some(task => task.groupId === group.id))
+              ? scopeGroups.filter(group => !snapshot.tasks.some(task => task.groupId === group.id))
               : []
             const overColumn = dropTarget?.column === column.status
+            // One group section renderer shared by the main, unassigned, and
+            // empty-group render sites (the callbacks are identical).
+            const renderGroupSection = (group: TaskGroupRecord, members: readonly TaskRecord[]): ReactElement => (
+              <GroupSection
+                key={group.id}
+                group={group}
+                members={members}
+                hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                canStart={canStartGroup(group.id)}
+                pendingIds={snapshot.pendingTaskIds}
+                timeZone={snapshot.host?.scheduler.timeZone}
+                onOpen={openTask}
+                onManage={() => { setGroupEditor({ group }) }}
+                onRunMember={id => { void controller.runTask(id) }}
+                onStopMember={id => { void controller.stopTask(id) }}
+                onApproveMember={id => { controller.setApproved(id, true) }}
+                onStartGroup={() => { void controller.runGroup(group.id) }}
+                onStopGroup={() => { void controller.stopGroup(group.id) }}
+                onResume={() => { void controller.resumeGroup(group.id) }}
+                onDragStart={startDrag}
+                dropTarget={dropTarget}
+              />
+            )
             return (
               <section
                 key={column.status}
@@ -629,7 +676,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       </div>
                     )
                   })}
-                  {workspaceId !== undefined && unassignedFlat.length > 0 && (
+                  {workspaceId !== undefined && (unassignedFlat.length > 0 || unassignedGrouped.length > 0) && (
                     <div
                       className={css.unassignedSection}
                       data-dsh-part="unassigned"
@@ -637,8 +684,9 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                     >
                       <header className={css.unassignedHeader}>
                         <span className={css.unassignedName}>{t('board.unassigned')}</span>
-                        <span className={css.groupCount}>{unassignedFlat.length}</span>
+                        <span className={css.groupCount}>{unassigned.length}</span>
                       </header>
+                      {unassignedGrouped.map(({ group, members }) => renderGroupSection(group, members))}
                       {unassignedFlat.map(task => {
                         const showAction = task.approved === false || canStartTask(task)
                         return (
@@ -662,48 +710,8 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       })}
                     </div>
                   )}
-                  {grouped.map(({ group, members }) => (
-                    <GroupSection
-                      key={group.id}
-                      group={group}
-                      members={members}
-                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
-                      canStart={canStartGroup(group.id)}
-                      pendingIds={snapshot.pendingTaskIds}
-                      timeZone={snapshot.host?.scheduler.timeZone}
-                      onOpen={openTask}
-                      onManage={() => { setGroupEditor({ group }) }}
-                      onRunMember={id => { void controller.runTask(id) }}
-                      onStopMember={id => { void controller.stopTask(id) }}
-                      onApproveMember={id => { controller.setApproved(id, true) }}
-                      onStartGroup={() => { void controller.runGroup(group.id) }}
-                      onStopGroup={() => { void controller.stopGroup(group.id) }}
-                      onResume={() => { void controller.resumeGroup(group.id) }}
-                      onDragStart={startDrag}
-                      dropTarget={dropTarget}
-                    />
-                  ))}
-                  {emptyGroups.map(group => (
-                    <GroupSection
-                      key={group.id}
-                      group={group}
-                      members={[]}
-                      hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
-                      canStart={canStartGroup(group.id)}
-                      pendingIds={snapshot.pendingTaskIds}
-                      timeZone={snapshot.host?.scheduler.timeZone}
-                      onOpen={openTask}
-                      onManage={() => { setGroupEditor({ group }) }}
-                      onRunMember={id => { void controller.runTask(id) }}
-                      onStopMember={id => { void controller.stopTask(id) }}
-                      onApproveMember={id => { controller.setApproved(id, true) }}
-                      onStartGroup={() => { void controller.runGroup(group.id) }}
-                      onStopGroup={() => { void controller.stopGroup(group.id) }}
-                      onResume={() => { void controller.resumeGroup(group.id) }}
-                      onDragStart={startDrag}
-                      dropTarget={dropTarget}
-                    />
-                  ))}
+                  {grouped.map(({ group, members }) => renderGroupSection(group, members))}
+                  {emptyGroups.map(group => renderGroupSection(group, []))}
                   {overColumn && dropTarget?.zone === 'column' && (
                     <div className={css.dropIndicator} style={{ top: Math.max(0, dropTarget.y) }} aria-hidden="true" />
                   )}
@@ -744,6 +752,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         <GroupModal
           controller={controller}
           group={groupEditor.group}
+          workspaceId={workspaceId}
           onClose={() => { setGroupEditor(undefined) }}
         />
       )}

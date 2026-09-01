@@ -602,21 +602,53 @@ describe('BoardController legacy group transitions', () => {
   })
 
   it('refuses to move a running member out of its group (the slot must not leak)', async () => {
-    const { store } = makeController()
+    const { store, sessions } = makeController()
+    const controller = new BoardController({ store, sessions, now: () => NOW, uuid })
+    controller.start()
+    // The group must exist before the member is seeded (the legacy path now
+    // validates membership against the group roster like the Host).
+    const group = await controller.createGroupConfirmed({ name: 'G' })
     const running = {
       ...createTask({ title: 'A', description: '', prompt: '' }, NOW, 'task-a'),
       status: 'running' as const,
-      groupId: 'g1',
+      groupId: group!.id,
       executions: [{ id: 'e1', sessionId: 's-1', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }],
     }
     store.save([running])
-    const controller = new BoardController({ store, sessions: new FakeSessions(), now: () => NOW, uuid })
-    controller.start()
+    controller.reloadFromStore()
 
     expect(await controller.updateTask('task-a', { groupId: null })).toBe(false)
-    expect(controller.getSnapshot().tasks[0].groupId).toBe('g1')
+    expect(controller.getSnapshot().tasks[0].groupId).toBe(group!.id)
     // Re-setting the same membership is not a move and stays allowed.
-    expect(await controller.updateTask('task-a', { groupId: 'g1' })).toBe(true)
+    expect(await controller.updateTask('task-a', { groupId: group!.id })).toBe(true)
+    controller.dispose()
+  })
+
+  it('enforces workspace scoping in the legacy path: mismatched joins are refused, workspace moves ungroup', async () => {
+    const { controller } = makeController()
+    const wsA = await controller.createGroupConfirmed({ name: 'A', workspaceId: 'ws-a' })
+    const wsB = await controller.createGroupConfirmed({ name: 'B', workspaceId: 'ws-b' })
+    expect(wsA?.workspaceId).toBe('ws-a')
+    expect(wsB?.workspaceId).toBe('ws-b')
+
+    // A matching-scope task joins fine.
+    const joined = controller.createTask({ title: 'Joined', description: '', prompt: '', workspaceId: 'ws-a', groupId: wsA!.id })
+    expect(joined?.groupId).toBe(wsA!.id)
+
+    // Mismatched creates are refused outright (leave the ledger untouched).
+    expect(controller.createTask({ title: 'Bad ws', description: '', prompt: '', workspaceId: 'ws-b', groupId: wsA!.id })).toBeUndefined()
+    expect(controller.createTask({ title: 'Unassigned', description: '', prompt: '', groupId: wsA!.id })).toBeUndefined()
+    expect(controller.getSnapshot().tasks).toHaveLength(1)
+
+    // An explicit mismatched join through update is refused.
+    expect(await controller.updateTask(joined!.id, { groupId: wsB!.id })).toBe(false)
+
+    // Moving the task to another workspace auto-ungroups it.
+    expect(await controller.updateTask(joined!.id, { workspaceId: 'ws-b' })).toBe(true)
+    const after = controller.getSnapshot().tasks.find(t => t.id === joined!.id)!
+    expect(after.workspaceId).toBe('ws-b')
+    expect(after.groupId).toBeUndefined()
+    expect(controller.groupMembers(wsA!.id)).toHaveLength(0)
     controller.dispose()
   })
 })

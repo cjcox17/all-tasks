@@ -208,6 +208,28 @@ describe('NewTaskModal group picker', () => {
     await act(async () => { submit.click() })
     expect(createTaskConfirmed.mock.calls[0][0].groupId).toBeUndefined()
   })
+
+  it('offers only the groups of the selected workspace scope', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const GROUP_A: TaskGroupRecord = { id: 'g-a', name: 'Alpha Group', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false, workspaceId: 'ws-a' }
+    const GROUP_U: TaskGroupRecord = { id: 'g-u', name: 'Open', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+    const WORKSPACES: readonly ExecutionWorkspaceOption[] = [
+      { workspaceId: 'ws-a', title: 'Alpha' },
+      { workspaceId: 'ws-b', title: 'Beta' },
+    ]
+    const { container } = await renderModal(createTaskConfirmed, [], [GROUP_A, GROUP_U], WORKSPACES)
+
+    // No workspace selected → only the unassigned-scope group is offered.
+    let groupOptions = Array.from(selectOf(container, 'g-u').querySelectorAll('option')).map(option => option.value)
+    expect(groupOptions).toContain('g-u')
+    expect(groupOptions).not.toContain('g-a')
+
+    // Selecting ws-a switches the roster to that workspace's groups only.
+    await act(async () => { setSelect(selectOf(container, 'ws-a'), 'ws-a') })
+    groupOptions = Array.from(selectOf(container, 'g-a').querySelectorAll('option')).map(option => option.value)
+    expect(groupOptions).toContain('g-a')
+    expect(groupOptions).not.toContain('g-u')
+  })
 })
 
 describe('NewTaskModal workspace defaults', () => {

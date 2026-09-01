@@ -131,6 +131,8 @@ export interface WorkspaceTaskDirectory {
  * Build the expandable directory for one workspace (or the whole board when
  * `workspaceId` is undefined). A scoped view keeps the group's members pinned
  * to that workspace plus its unpinned members, mirroring the kanban's scoping.
+ * Groups are workspace-scoped: a workspace row shows only the groups of that
+ * workspace; the All row spans every workspace's groups.
  */
 export function workspaceTaskDirectory(
   tasks: readonly TaskRecord[],
@@ -140,8 +142,11 @@ export function workspaceTaskDirectory(
   const onBoard = workspaceId === undefined
     ? tasks.filter(task => task.archivedAt === undefined)
     : tasks.filter(task => task.archivedAt === undefined && task.workspaceId === workspaceId)
+  const scopeGroups = workspaceId === undefined
+    ? groups
+    : groups.filter(group => group.workspaceId === workspaceId)
   const grouped: WorkspaceGroupEntry[] = []
-  for (const group of groups) {
+  for (const group of scopeGroups) {
     const members = orderedGroupMembers(group, onBoard)
     if (members.length > 0) grouped.push({ group, members })
   }
