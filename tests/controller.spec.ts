@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { BoardController, type ControllerDeps, type TaskBoardTransport } from '../src/core/controller.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import { InMemoryTaskStore } from '../src/core/store.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskBoardAction, TaskBoardEventPayload, TaskBoardSnapshot } from '../src/protocol.ts'
@@ -345,6 +346,70 @@ describe('run loop', () => {
     expect(actions).toEqual([{ kind: 'rerun', taskId: 'task-a' }])
     expect(controller.getSnapshot().tasks[0].status).toBe('running')
     controller.dispose()
+  })
+
+  it('runGroup requests a Host group run', async () => {
+    const initial = createTask({ title: '任务A', description: '', prompt: '干活' }, NOW, 'task-a')
+    const group: TaskGroupRecord = {
+      id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false,
+      order: ['task-a'], createdAt: NOW, updatedAt: NOW,
+    }
+    const running = { ...initial, status: 'running' as const, updatedAt: NOW + 1 }
+    const actions: TaskBoardAction[] = []
+    const withGroup = (tasks: TaskRecord[]): TaskBoardSnapshot => ({
+      schemaVersion: 2, revision: 1, tasks, groups: [group], workspaceDefaults: {},
+      scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
+      power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
+    })
+    const transport: TaskBoardTransport = {
+      bootstrap: async () => withGroup([initial]),
+      state: async () => withGroup([initial]),
+      action: async action => { actions.push(action); return withGroup([running]) },
+      subscribe: () => () => undefined,
+    }
+    const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport, now: () => NOW, uuid })
+    controller.start()
+    await controller.retryHostSync()
+
+    expect(await controller.runGroup('g1')).toBe(true)
+    expect(actions).toEqual([{ kind: 'run-group', groupId: 'g1' }])
+    expect(controller.getSnapshot().tasks[0].status).toBe('running')
+    controller.dispose()
+  })
+
+  it('runGroup refuses unknown or stopped groups and refuses without a Host transport', async () => {
+    const initial = createTask({ title: '任务A', description: '', prompt: '干活' }, NOW, 'task-a')
+    const group: TaskGroupRecord = {
+      id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, stopped: true,
+      order: ['task-a'], createdAt: NOW, updatedAt: NOW,
+    }
+    const actions: TaskBoardAction[] = []
+    const withGroup = (tasks: TaskRecord[]): TaskBoardSnapshot => ({
+      schemaVersion: 2, revision: 1, tasks, groups: [group], workspaceDefaults: {},
+      scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
+      power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
+    })
+    const transport: TaskBoardTransport = {
+      bootstrap: async () => withGroup([initial]),
+      state: async () => withGroup([initial]),
+      action: async action => { actions.push(action); return withGroup([initial]) },
+      subscribe: () => () => undefined,
+    }
+    const controller = new BoardController({ store: new InMemoryTaskStore(), sessions: new FakeSessions(), transport, now: () => NOW, uuid })
+    controller.start()
+    await controller.retryHostSync()
+
+    // Unknown group: refused locally, the Host is never contacted.
+    expect(await controller.runGroup('missing')).toBe(false)
+    // Stopped group: refused locally.
+    expect(await controller.runGroup('g1')).toBe(false)
+    expect(actions).toHaveLength(0)
+
+    // Without a Host transport the run is refused too.
+    const { controller: legacy } = makeController()
+    expect(await legacy.runGroup('g1')).toBe(false)
+    controller.dispose()
+    legacy.dispose()
   })
 
   it('refuses runs and reruns of archived tasks without contacting the Host', async () => {

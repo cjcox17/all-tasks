@@ -74,6 +74,8 @@ function fakeController(
     updateGroup: async () => true,
     deleteGroup: async () => true,
     setGroupOrder: async () => true,
+    runTask: async () => true,
+    runGroup: async () => true,
     stopTask: async () => true,
     stopGroup: async () => true,
     resumeGroup: async () => true,
@@ -428,6 +430,43 @@ describe('TaskBoard group sections', () => {
     expect(resumeCalls).toEqual(['g1'])
   })
 
+  it('starts the whole group from the banner when a member is runnable', async () => {
+    const runGroupCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      runGroup: async (id: string) => { runGroupCalls.push(id); return true },
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    const start = section!.querySelector(`button[aria-label="${t('group.start')}"]`) as HTMLButtonElement
+    expect(start).not.toBeNull()
+    expect(start.disabled).toBe(false)
+    await act(async () => { start.click() })
+    expect(runGroupCalls).toEqual(['g1'])
+  })
+
+  it('disables the group start button when no member is runnable and hides it for a stopped group', async () => {
+    // All members running: the start button is disabled (the Host also refuses).
+    const running: { container: HTMLElement } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Running A', status: 'running', groupId: 'g1' })],
+      groups: [GROUP],
+    })
+    let section = running.container.querySelector('[data-group="g1"]')
+    let start = section!.querySelector(`button[aria-label="${t('group.start')}"]`) as HTMLButtonElement
+    expect(start).not.toBeNull()
+    expect(start.disabled).toBe(true)
+    // A stopped group shows the resume button instead of the start button.
+    const stopped: { container: HTMLElement } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [{ ...GROUP, stopped: true }],
+    })
+    section = stopped.container.querySelector('[data-group="g1"]')
+    expect(section!.querySelector(`button[aria-label="${t('group.start')}"]`)).toBeNull()
+    expect(section!.querySelector(`button[aria-label="${t('group.resume')}"]`)).not.toBeNull()
+  })
+
   it('drops a dragged group banner onto a manual column and moves the whole group', async () => {
     const moveCalls: Array<{ id: string; status: string }> = []
     const { container } = await renderBoard({
@@ -452,6 +491,61 @@ describe('TaskBoard group sections', () => {
       )
     })
     expect(moveCalls).toEqual([{ id: 'g1', status: 'backlog' }])
+  })
+})
+
+describe('TaskBoard start buttons', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<TaskBoard controller={fakeController(snapshot, overrides)} />) })
+    // The kanban lives behind the workspace grid; open the All-tasks view.
+    await openAllTasks(container)
+    return { container }
+  }
+
+  it('shows a run button on a runnable todo card and starts it through the controller', async () => {
+    const runCalls: string[] = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Ready', status: 'todo' })],
+    }, {
+      runTask: async (id: string) => { runCalls.push(id); return true },
+    })
+    const run = container.querySelector(`button[aria-label="${t('card.run')}"]`) as HTMLButtonElement
+    expect(run).not.toBeNull()
+    await act(async () => { run.click() })
+    expect(runCalls).toEqual(['t1'])
+  })
+
+  it('offers a run button for runnable group members', async () => {
+    const runCalls: string[] = []
+    const GROUP: TaskGroupRecord = { id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1'], createdAt: 0, updatedAt: 0, offPeakOnly: false }
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      runTask: async (id: string) => { runCalls.push(id); return true },
+    })
+    const section = container.querySelector('[data-group="g1"]')
+    expect(section).not.toBeNull()
+    const run = section!.querySelector(`button[aria-label="${t('card.run')}"]`) as HTMLButtonElement
+    expect(run).not.toBeNull()
+    await act(async () => { run.click() })
+    expect(runCalls).toEqual(['t1'])
+  })
+
+  it('does not render a run button for running, done, unapproved, or archived tasks', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Running', status: 'running' }),
+        task({ id: 't2', title: 'Done', status: 'done' }),
+        task({ id: 't3', title: 'Pending', status: 'todo', approved: false }),
+        { ...task({ id: 't4', title: 'Archived', status: 'done' }), archivedAt: 1 },
+      ],
+    })
+    expect(container.querySelector(`button[aria-label="${t('card.run')}"]`)).toBeNull()
   })
 })
 

@@ -34,6 +34,32 @@ function matchesFilter(task: TaskRecord, filter: string): boolean {
 }
 
 /**
+ * Whether a task can be started from the board right now: on-board, approved,
+ * sitting in a manual column (backlog/todo), and without an open execution.
+ * Mirrors the Host ledger's runnable-member definition for group starts.
+ */
+function canStartTask(task: TaskRecord): boolean {
+  if (task.archivedAt !== undefined || task.approved === false) return false
+  if (task.status !== 'backlog' && task.status !== 'todo') return false
+  return !task.executions.some(execution => execution.endedAt === undefined)
+}
+
+/** The per-card start button (sits beside the card, like stop/approve). */
+function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) => void }) {
+  return (
+    <button
+      type="button"
+      className={css.runButton}
+      aria-label={t('card.run')}
+      title={t('card.run')}
+      onClick={() => { onRun(task.id) }}
+    >
+      ▶
+    </button>
+  )
+}
+
+/**
  * Memoized per-card adapter: with a stable `onOpen` from the board and an
  * immutable task record (only the changed card gets a new object ref), a card
  * re-renders only when its own task changes — not when a sibling card status,
@@ -46,14 +72,17 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
 
 /**
  * Group section header inside a column: name, member count, mode badge,
- * stop/resume, manage. The whole header is a drag source so a group can be
- * moved between manual columns in one action (see the column drop handler).
+ * start/stop/resume, manage. The whole header is a drag source so a group can
+ * be moved between manual columns in one action (see the column drop handler).
  */
-function GroupBanner({ group, count, running, onStop, onResume, onManage }: {
+function GroupBanner({ group, count, running, canStart, onStart, onStop, onResume, onManage }: {
   group: TaskGroupRecord
   count: number
   /** Whether any member has an open (running/queued) execution. */
   running: boolean
+  /** Whether any on-board member can be started right now. */
+  canStart: boolean
+  onStart: () => void
   onStop: () => void
   onResume: () => void
   onManage: () => void
@@ -78,6 +107,18 @@ function GroupBanner({ group, count, running, onStop, onResume, onManage }: {
       {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
       {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
       <span className={css.groupCount}>{count}</span>
+      {!stopped && (
+        <button
+          type="button"
+          className={css.ghostButton}
+          aria-label={t('group.start')}
+          title={t('group.startHint')}
+          disabled={!canStart}
+          onClick={onStart}
+        >
+          ▶
+        </button>
+      )}
       {stopped ? (
         <button
           type="button"
@@ -115,17 +156,21 @@ function GroupBanner({ group, count, running, onStop, onResume, onManage }: {
  * Every running/queued member gets a per-card stop button (so a group can be
  * stopped member-by-member from the board, without opening a session).
  */
-function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen, onManage, onStopMember, onApproveMember, onStopGroup, onResume }: {
+function GroupSection({ group, members, hasRunning, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onStopGroup, onResume }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Whether any board-wide member has a running execution (enables stop-group). */
   hasRunning: boolean
+  /** Whether any on-board member can be started right now (enables start-group). */
+  canStart: boolean
   pendingIds: readonly string[]
   timeZone?: string
   onOpen: (id: string) => void
   onManage: () => void
+  onRunMember: (id: string) => void
   onStopMember: (id: string) => void
   onApproveMember: (id: string) => void
+  onStartGroup: () => void
   onStopGroup: () => void
   onResume: () => void
 }) {
@@ -135,6 +180,8 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
         group={group}
         count={members.length}
         running={hasRunning}
+        canStart={canStart}
+        onStart={onStartGroup}
         onStop={onStopGroup}
         onResume={onResume}
         onManage={onManage}
@@ -154,7 +201,7 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
               ⏹
             </button>
           )}
-          {task.approved === false && (
+          {task.approved === false ? (
             <button
               type="button"
               className={css.approveButton}
@@ -164,7 +211,9 @@ function GroupSection({ group, members, hasRunning, pendingIds, timeZone, onOpen
             >
               ✓
             </button>
-          )}
+          ) : canStartTask(task) ? (
+            <RunTaskButton task={task} onRun={onRunMember} />
+          ) : null}
         </div>
       ))}
     </div>
@@ -198,6 +247,10 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     && (!unapprovedOnly || task.approved === false),
   )
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
+  /** Whether any on-board member of a group can be started right now. */
+  const canStartGroup = useCallback((groupId: string): boolean =>
+    snapshot.tasks.some(task => task.groupId === groupId && canStartTask(task)),
+  [snapshot.tasks])
 
   const workspaceTitle = workspaceId === undefined
     ? t('board.title')
@@ -346,44 +399,54 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                   <span className={css.columnCount}>{tasks.length}</span>
                 </header>
                 <div className={css.cards}>
-                  {ungrouped.map(task => (
-                    <div key={task.id} className={task.approved === false ? css.cardWrap : undefined}>
-                      <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
-                      {task.approved === false && (
-                        <button
-                          type="button"
-                          className={css.approveButton}
-                          aria-label={t('card.approve')}
-                          title={t('card.approve')}
-                          onClick={() => { controller.setApproved(task.id, true) }}
-                        >
-                          ✓
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                  {ungrouped.map(task => {
+                    const showAction = task.approved === false || canStartTask(task)
+                    return (
+                      <div key={task.id} className={showAction ? css.cardWrap : undefined}>
+                        <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                        {task.approved === false ? (
+                          <button
+                            type="button"
+                            className={css.approveButton}
+                            aria-label={t('card.approve')}
+                            title={t('card.approve')}
+                            onClick={() => { controller.setApproved(task.id, true) }}
+                          >
+                            ✓
+                          </button>
+                        ) : canStartTask(task) ? (
+                          <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
+                        ) : null}
+                      </div>
+                    )
+                  })}
                   {workspaceId !== undefined && unassignedFlat.length > 0 && (
                     <div className={css.unassignedSection} data-dsh-part="unassigned">
                       <header className={css.unassignedHeader}>
                         <span className={css.unassignedName}>{t('board.unassigned')}</span>
                         <span className={css.groupCount}>{unassignedFlat.length}</span>
                       </header>
-                      {unassignedFlat.map(task => (
-                        <div key={task.id} className={task.approved === false ? css.cardWrap : undefined}>
-                          <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
-                          {task.approved === false && (
-                            <button
-                              type="button"
-                              className={css.approveButton}
-                              aria-label={t('card.approve')}
-                              title={t('card.approve')}
-                              onClick={() => { controller.setApproved(task.id, true) }}
-                            >
-                              ✓
-                            </button>
-                          )}
-                        </div>
-                      ))}
+                      {unassignedFlat.map(task => {
+                        const showAction = task.approved === false || canStartTask(task)
+                        return (
+                          <div key={task.id} className={showAction ? css.cardWrap : undefined}>
+                            <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} />
+                            {task.approved === false ? (
+                              <button
+                                type="button"
+                                className={css.approveButton}
+                                aria-label={t('card.approve')}
+                                title={t('card.approve')}
+                                onClick={() => { controller.setApproved(task.id, true) }}
+                              >
+                                ✓
+                              </button>
+                            ) : canStartTask(task) ? (
+                              <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
+                            ) : null}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   {grouped.map(({ group, members }) => (
@@ -392,12 +455,15 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       group={group}
                       members={members}
                       hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      canStart={canStartGroup(group.id)}
                       pendingIds={snapshot.pendingTaskIds}
                       timeZone={snapshot.host?.scheduler.timeZone}
                       onOpen={openTask}
                       onManage={() => { setGroupEditor({ group }) }}
+                      onRunMember={id => { void controller.runTask(id) }}
                       onStopMember={id => { void controller.stopTask(id) }}
                       onApproveMember={id => { controller.setApproved(id, true) }}
+                      onStartGroup={() => { void controller.runGroup(group.id) }}
                       onStopGroup={() => { void controller.stopGroup(group.id) }}
                       onResume={() => { void controller.resumeGroup(group.id) }}
                     />
@@ -408,12 +474,15 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       group={group}
                       members={[]}
                       hasRunning={snapshot.tasks.some(t => t.groupId === group.id && t.status === 'running')}
+                      canStart={canStartGroup(group.id)}
                       pendingIds={snapshot.pendingTaskIds}
                       timeZone={snapshot.host?.scheduler.timeZone}
                       onOpen={openTask}
                       onManage={() => { setGroupEditor({ group }) }}
+                      onRunMember={id => { void controller.runTask(id) }}
                       onStopMember={id => { void controller.stopTask(id) }}
                       onApproveMember={id => { controller.setApproved(id, true) }}
+                      onStartGroup={() => { void controller.runGroup(group.id) }}
                       onStopGroup={() => { void controller.stopGroup(group.id) }}
                       onResume={() => { void controller.resumeGroup(group.id) }}
                     />

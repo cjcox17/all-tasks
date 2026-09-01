@@ -78,6 +78,7 @@ export type TaskBoardAction =
   | { kind: 'delete-group'; groupId: string }
   | { kind: 'set-group-order'; groupId: string; order: string[] }
   | { kind: 'stop-group'; groupId: string }
+  | { kind: 'run-group'; groupId: string }
   | { kind: 'move-group'; groupId: string; status: TaskStatus }
 
 export interface TaskBoardActionEnvelope {
@@ -380,6 +381,11 @@ export function parseActionEnvelope(value: unknown): TaskBoardActionEnvelope | u
       if (!exactKeys(action, ['kind', 'groupId'])) return undefined
       return typeof action.groupId === 'string' && action.groupId !== ''
         ? { requestId: envelope.requestId, action: { kind: 'stop-group', groupId: action.groupId } }
+        : undefined
+    case 'run-group':
+      if (!exactKeys(action, ['kind', 'groupId'])) return undefined
+      return typeof action.groupId === 'string' && action.groupId !== ''
+        ? { requestId: envelope.requestId, action: { kind: 'run-group', groupId: action.groupId } }
         : undefined
     case 'move-group':
       if (!exactKeys(action, ['kind', 'groupId', 'status'])) return undefined

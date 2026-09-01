@@ -673,7 +673,7 @@ export class HostTaskLedger {
     }
   }
 
-  applyRequest(requestId: string, action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; stopSessions?: string[] } {
+  applyRequest(requestId: string, action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; runs?: OpenedRun[]; stopSessions?: string[] } {
     const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex')
     const cached = this.requestCache.get(requestId)
     if (cached !== undefined) {
@@ -765,9 +765,10 @@ export class HostTaskLedger {
     this.commit()
   }
 
-  private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; stopSessions?: string[] } {
+  private apply(action: TaskBoardAction): { state: LedgerState; run?: OpenedRun; runs?: OpenedRun[]; stopSessions?: string[] } {
     const now = this.now()
     let run: OpenedRun | undefined
+    let runs: OpenedRun[] | undefined
     const stopSessions: string[] = []
     switch (action.kind) {
       case 'import': {
@@ -940,6 +941,33 @@ export class HostTaskLedger {
         this.document.workspaceDefaults = { ...this.document.workspaceDefaults, [action.workspaceId]: next }
         break
       }
+      case 'run-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
+        if (group === undefined) throw new Error('group not found')
+        if (group.stopped === true) throw new Error('group is stopped')
+        // Manual group start: open an execution for runnable members in group
+        // order (on-board, approved, backlog/todo, no open run), up to the
+        // group's launch capacity — sequential opens one member, parallel opens
+        // up to maxParallel (absent = unlimited). The router launches or queues
+        // each opened run (window/endpoint/capacity), and the group
+        // auto-advance chain starts the members beyond capacity as launched
+        // members settle, exactly as after a group cron.
+        const runnable = group.order
+          .map(id => this.document.tasks.find(task => task.id === id))
+          .filter((task): task is TaskRecord => task !== undefined
+            && task.archivedAt === undefined
+            && task.approved !== false
+            && (task.status === 'backlog' || task.status === 'todo')
+            && !hasOpenExecution(task))
+        if (runnable.length === 0) throw new Error('no runnable members')
+        const capacity = group.mode === 'sequential' ? 1 : group.maxParallel ?? Number.POSITIVE_INFINITY
+        runs = runnable.slice(0, capacity).map(task => startExecution(task, now, crypto.randomUUID()))
+        this.document.tasks = this.document.tasks.map(task => {
+          const opened = runs!.find(candidate => candidate.task.id === task.id)
+          return opened === undefined ? task : opened.task
+        })
+        break
+      }
       case 'move-group': {
         const group = this.document.groups.find(candidate => candidate.id === action.groupId)
         if (group === undefined) throw new Error('group not found')
@@ -1005,6 +1033,7 @@ export class HostTaskLedger {
     return {
       state: this.state(),
       ...(run === undefined ? {} : { run }),
+      ...(runs === undefined || runs.length === 0 ? {} : { runs }),
       ...(stopSessions.length > 0 ? { stopSessions } : {}),
     }
   }

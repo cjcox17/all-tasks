@@ -153,6 +153,9 @@ export class TaskBoardHostService {
     if (!this.active) throw new Error('task board is disabled')
     const result = this.ledger.applyRequest(requestId, action)
     if (result.run !== undefined) this.scheduleLaunch(result.run)
+    // A manual group start opens several runs at once; each is routed and
+    // launched (or queued) independently, exactly like a single-task run.
+    for (const opened of result.runs ?? []) this.scheduleLaunch(opened)
     // A stop/stop-group settles the ledger synchronously; the session cancel
     // RPC fires after so the agent actually halts (best-effort — a session
     // that is already gone is not an error).

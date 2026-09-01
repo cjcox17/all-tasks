@@ -755,6 +755,25 @@ html[data-dsh-taskboard-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   background: var(--dsw-specific-input-major);
 }
 
+/* The per-card start button (sits beside a runnable card, like approve). */
+.runButton {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.runButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
 .groupSection .card {
   margin: 0 4px;
 }

@@ -626,6 +626,21 @@ export class BoardController {
     return await this.commitRemote({ kind: 'stop-group', groupId }, groupId)
   }
 
+  /**
+   * Request a Host execution for a whole group: every runnable member
+   * (on-board, approved, backlog/todo, no open run) opens an execution, and
+   * the router launches up to the group's capacity now, queuing the rest
+   * until a slot, the allowed window, or an endpoint frees. A stopped or
+   * member-less group is refused before the wire round-trip; the Host ledger
+   * enforces the same gates and rejects a group with no runnable member.
+   */
+  async runGroup(groupId: string): Promise<boolean> {
+    const group = this.groups.find(candidate => candidate.id === groupId)
+    if (group === undefined || group.stopped === true) return false
+    if (this.deps.transport === undefined) return false
+    return await this.commitRemote({ kind: 'run-group', groupId }, groupId)
+  }
+
   /** Resume a stopped group (member launches are allowed again). */
   async resumeGroup(groupId: string): Promise<boolean> {
     return await this.updateGroup(groupId, { stopped: false })

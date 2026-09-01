@@ -262,11 +262,14 @@ describe('group action gate', () => {
     expect(parseActionEnvelope({ requestId: 'order', action: { kind: 'set-group-order', groupId: 'g1', order: Array.from({ length: 513 }, (_, i) => `t${i}`) } })).toBeUndefined()
   })
 
-  it('gates stop, stop-group, and move-group', () => {
+  it('gates stop, stop-group, run-group, and move-group', () => {
     expect(parseActionEnvelope({ requestId: 'stop', action: { kind: 'stop', taskId: 't1' } })).toMatchObject({ action: { kind: 'stop', taskId: 't1' } })
     expect(parseActionEnvelope({ requestId: 'stop-bad', action: { kind: 'stop' } })).toBeUndefined()
     expect(parseActionEnvelope({ requestId: 'stop-group', action: { kind: 'stop-group', groupId: 'g1' } })).toMatchObject({ action: { kind: 'stop-group', groupId: 'g1' } })
     expect(parseActionEnvelope({ requestId: 'stop-group-bad', action: { kind: 'stop-group' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'run-group', action: { kind: 'run-group', groupId: 'g1' } })).toMatchObject({ action: { kind: 'run-group', groupId: 'g1' } })
+    expect(parseActionEnvelope({ requestId: 'run-group-bad', action: { kind: 'run-group' } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'run-group-bad2', action: { kind: 'run-group', groupId: '' } })).toBeUndefined()
     expect(parseActionEnvelope({ requestId: 'move-group', action: { kind: 'move-group', groupId: 'g1', status: 'todo' } })).toMatchObject({ action: { kind: 'move-group', groupId: 'g1', status: 'todo' } })
     expect(parseActionEnvelope({ requestId: 'move-group-bad', action: { kind: 'move-group', groupId: 'g1', status: 'nope' } })).toBeUndefined()
     expect(parseActionEnvelope({ requestId: 'move-group-bad2', action: { kind: 'move-group', groupId: 'g1' } })).toBeUndefined()

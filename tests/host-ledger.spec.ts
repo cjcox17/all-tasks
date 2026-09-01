@@ -634,6 +634,80 @@ describe('HostTaskLedger', () => {
     expect(() => ledger.applyRequest('move-group-2', { kind: 'move-group', groupId: 'g1', status: 'backlog' })).toThrow('group has running tasks')
   })
 
+  it('starts a whole group: opens runs for every runnable member in group order, skipping running and unapproved ones', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g1' } })
+    // b is already running (open execution), c is unapproved.
+    ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
+    ledger.applyRequest('unapprove-c', { kind: 'set-approved', taskId: 'c', approved: false })
+
+    const result = ledger.applyRequest('run-group', { kind: 'run-group', groupId: 'g1' })
+    expect(result.runs?.map(run => run.task.id)).toEqual(['a'])
+    const tasks = result.state.tasks
+    expect(tasks.find(value => value.id === 'a')!.status).toBe('running')
+    const openedExecution = tasks.find(value => value.id === 'a')!.executions[0]
+    expect(openedExecution.sessionId).toBeUndefined()
+    expect(openedExecution.endedAt).toBeUndefined()
+    // The already-running member keeps its single run; the unapproved member is untouched.
+    expect(tasks.find(value => value.id === 'b')!.executions).toHaveLength(1)
+    expect(tasks.find(value => value.id === 'c')!.status).toBe('todo')
+
+    // A second manual start has nothing left to open (a is running now).
+    expect(() => ledger.applyRequest('run-group-2', { kind: 'run-group', groupId: 'g1' })).toThrow('no runnable members')
+  })
+
+  it('refuses run-group for a missing, stopped, or runnable-less group', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    expect(() => ledger.applyRequest('run-group', { kind: 'run-group', groupId: 'missing' })).toThrow('group not found')
+
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    // No members yet: nothing to start.
+    expect(() => ledger.applyRequest('run-group-empty', { kind: 'run-group', groupId: 'g1' })).toThrow('no runnable members')
+
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    expect(() => ledger.applyRequest('run-group-stopped', { kind: 'run-group', groupId: 'g1' })).toThrow('group is stopped')
+
+    // Resume clears the flag and the group can start again.
+    ledger.applyRequest('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    const result = ledger.applyRequest('run-group-resumed', { kind: 'run-group', groupId: 'g1' })
+    expect(result.runs?.map(run => run.task.id)).toEqual(['a'])
+    expect(result.state.tasks.find(value => value.id === 'a')!.status).toBe('running')
+  })
+
+  it('opens at most the group launch capacity: sequential one member, parallel maxParallel', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    // Sequential group with three runnable members: only the first opens.
+    ledger.applyRequest('seq', { kind: 'create-group', id: 'g-seq', input: { name: 'Seq', mode: 'sequential' } })
+    for (const id of ['s1', 's2', 's3']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-seq' } })
+    }
+    const seq = ledger.applyRequest('run-seq', { kind: 'run-group', groupId: 'g-seq' })
+    expect(seq.runs?.map(run => run.task.id)).toEqual(['s1'])
+    expect(seq.state.tasks.find(value => value.id === 's2')!.status).toBe('todo')
+    expect(seq.state.tasks.find(value => value.id === 's3')!.status).toBe('todo')
+
+    // Parallel group capped at two: the first two open, the third stays put.
+    ledger.applyRequest('par', { kind: 'create-group', id: 'g-par', input: { name: 'Par', mode: 'parallel', maxParallel: 2 } })
+    for (const id of ['p1', 'p2', 'p3']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-par' } })
+    }
+    const par = ledger.applyRequest('run-par', { kind: 'run-group', groupId: 'g-par' })
+    expect(par.runs?.map(run => run.task.id)).toEqual(['p1', 'p2'])
+    expect(par.state.tasks.find(value => value.id === 'p3')!.status).toBe('todo')
+
+    // An uncapped parallel group opens every runnable member.
+    ledger.applyRequest('par2', { kind: 'create-group', id: 'g-free', input: { name: 'Free', mode: 'parallel' } })
+    for (const id of ['f1', 'f2', 'f3']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g-free' } })
+    }
+    const free = ledger.applyRequest('run-free', { kind: 'run-group', groupId: 'g-free' })
+    expect(free.runs?.map(run => run.task.id)).toEqual(['f1', 'f2', 'f3'])
+  })
+
   it('refuses to run an unapproved task until set-approved clears the gate', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', approved: false } })

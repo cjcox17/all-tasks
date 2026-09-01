@@ -240,6 +240,45 @@ describe('TaskBoardHostService scheduling without a browser', () => {
     service.dispose()
   })
 
+  it('apply run-group launches up to capacity and the auto-advance chain continues the group', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 30).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'work', groupId: 'g1' } })
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+    const create = vi.fn(async (request: { rpcId: unknown }) => ok(request, { sessionId: `session-${String(request.rpcId)}` }))
+    const rename = vi.fn(async (request: { rpcId: unknown }) => ok(request, { title: 'x', seq: 1 }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = { sessions: { create, rename, prompt } } as unknown as ApiProxy
+    const service = new TaskBoardHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    const flush = (): Promise<void> => new Promise(resolve => { setTimeout(resolve, 0) })
+
+    service.apply('run-group', { kind: 'run-group', groupId: 'g1' })
+    await flush()
+    // Sequential capacity: only the first member launches; the second stays in
+    // its manual column until the chain advances.
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(prompt).toHaveBeenCalledTimes(1)
+    let state = ledger.state()
+    expect(state.tasks.find(value => value.id === 'a')!.status).toBe('running')
+    expect(state.tasks.find(value => value.id === 'a')!.executions[0].sessionId).toBeDefined()
+    expect(state.tasks.find(value => value.id === 'b')!.status).toBe('todo')
+    expect(state.tasks.find(value => value.id === 'b')!.executions).toHaveLength(0)
+
+    // When the launched member settles, the auto-advance chain starts the next.
+    const executionId = state.tasks.find(value => value.id === 'a')!.executions[0].id
+    ledger.settle('a', executionId, 'succeeded')
+    await flush()
+    expect(create).toHaveBeenCalledTimes(2)
+    state = ledger.state()
+    expect(state.tasks.find(value => value.id === 'b')!.status).toBe('running')
+    service.dispose()
+  })
+
   it('carries per-workspace defaults in every snapshot, including after an apply', () => {
     const ledger = new HostTaskLedger(root(), () => 0)
     const service = new TaskBoardHostService({} as unknown as ApiProxy, {
