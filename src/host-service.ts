@@ -3,6 +3,7 @@ import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRou
 import { effectiveEndpointIds, groupCapacityFull, groupWindowOpen } from './core/groups.ts'
 import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
+import { resolveExecutionTargets } from './core/workspace-defaults.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
 import { endpointEditorOps, endpointTimeoutPatches, readEndpointEditorState, readEndpointProviderCatalog, type EndpointEditorState } from './endpoint-editor.ts'
@@ -332,9 +333,16 @@ export class TaskBoardHostService {
   private routeFor(task: OpenedRun['task']): RouteDecision {
     const config = this.routerConfig
     const group = task.groupId === undefined ? undefined : this.ledger.groupById(task.groupId)
-    // Endpoint precedence: the task's own pin wins, then the group's list,
-    // then the global default list (an empty effective list = no routing).
-    const effective = { ...task, endpoints: effectiveEndpointIds(task, group) }
+    // A task's own pin wins, then the group's list, then the workspace's
+    // default list, then the global default list (an empty effective list =
+    // no routing). The workspace defaults also fill a blank model pin so the
+    // router checks the workspace-default model against endpoint eligibility.
+    const defaults = task.workspaceId === undefined ? undefined : this.ledger.workspaceDefaultsFor(task.workspaceId)
+    const effective = {
+      ...task,
+      ...(task.model === undefined && defaults?.model !== undefined ? { model: defaults.model } : {}),
+      endpoints: effectiveEndpointIds(task, group, defaults?.endpoints),
+    }
     // The group gates (capacity, window) apply to every member launch even
     // when no endpoints are configured at all — only a group-less task with
     // no routing list bypasses the router entirely.
@@ -444,7 +452,7 @@ export class TaskBoardHostService {
 
   private async launch(task: TaskRecord, executionId: string, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
     try {
-      const sessionId = await this.runner.launch(task, route)
+      const sessionId = await this.runner.launch(this.withWorkspaceDefaults(task), route)
       this.ledger.attachSession(task.id, executionId, sessionId)
     } catch (error) {
       if (error instanceof SessionLaunchError) {
@@ -455,6 +463,20 @@ export class TaskBoardHostService {
       // A slot just freed (or a launch failed): re-check anyone still queued.
       this.scheduleRoutePass()
     }
+  }
+
+  /**
+   * The task view the runner composes: the task's own execution targets when
+   * set, otherwise the workspace defaults. The workspace defaults fill blank
+   * mode/model/permission (endpoints were already resolved by the router, so
+   * they are not read back here). A task with no workspace, or a workspace
+   * without defaults, passes through unchanged.
+   */
+  private withWorkspaceDefaults(task: TaskRecord): TaskRecord {
+    if (task.workspaceId === undefined) return task
+    const defaults = this.ledger.workspaceDefaultsFor(task.workspaceId)
+    if (defaults === undefined) return task
+    return { ...task, ...resolveExecutionTargets(task, defaults) }
   }
 
   private async pollSessions(): Promise<void> {

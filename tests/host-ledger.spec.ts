@@ -758,4 +758,26 @@ describe('HostTaskLedger', () => {
     const reloaded = new HostTaskLedger(root, () => NOW)
     expect(reloaded.state().workspaceDefaults).toEqual({ 'ws-a': { mode: 'planner', approved: false } })
   })
+
+  it('exposes one workspace defaults record as a read-only deep copy', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('set', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: { mode: 'planner', model: { provider: 'deepseek', model: 'chat' }, permission: 'read-only' },
+    })
+    const record = ledger.workspaceDefaultsFor('ws-a')
+    expect(record).toEqual({ mode: 'planner', model: { provider: 'deepseek', model: 'chat' }, permission: 'read-only' })
+    expect(ledger.workspaceDefaultsFor('missing')).toBeUndefined()
+
+    // Mutating the returned copy never touches the ledger's record.
+    record!.mode = 'tampered'
+    record!.model!.provider = 'tampered'
+    expect(ledger.workspaceDefaultsFor('ws-a')).toEqual({
+      mode: 'planner',
+      model: { provider: 'deepseek', model: 'chat' },
+      permission: 'read-only',
+    })
+  })
 })

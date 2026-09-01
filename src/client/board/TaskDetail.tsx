@@ -4,7 +4,7 @@
  * delete (with confirmation), manual status moves, and a jump to the
  * execution's session transcript.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { BoardController } from '../../core/controller.ts'
 import { groupExecutionModelOptions } from '../../core/controller.ts'
 import { isValidCron } from '../../core/schedule.ts'
@@ -77,11 +77,13 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen }: {
 function ExecutionSettingsSection({ controller, task, pending }: { controller: BoardController; task: TaskRecord; pending: boolean }) {
   const [options, setOptions] = useState(controller.getSnapshot().executionOptions)
   const [groups, setGroups] = useState(controller.getSnapshot().groups)
+  const [workspaceDefaults, setWorkspaceDefaults] = useState(controller.getSnapshot().workspaceDefaults)
   useEffect(
     () => controller.subscribe(() => {
       const snapshot = controller.getSnapshot()
       setOptions(snapshot.executionOptions)
       setGroups(snapshot.groups)
+      setWorkspaceDefaults(snapshot.workspaceDefaults)
     }),
     [controller],
   )
@@ -91,6 +93,21 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const permission = task.permission ?? ''
   const model = task.model
   const modelKey = model === undefined ? '' : modelSelectionKey(model)
+  // The workspace's execution defaults fill any blank target at runtime, so
+  // show the effective value next to fields the task leaves unset.
+  const defaults = workspaceId === '' ? undefined : workspaceDefaults[workspaceId]
+  const defaultMode = defaults?.mode === undefined ? undefined : options.presets.find(preset => preset.id === defaults.mode)?.name ?? defaults.mode
+  const defaultModel = defaults?.model === undefined ? undefined : `${defaults.model.provider} · ${defaults.model.model}`
+  const defaultEndpoints = defaults?.endpoints === undefined || defaults.endpoints.length === 0
+    ? undefined
+    : defaults.endpoints.map(id => options.endpoints.find(option => option.id === id)?.name ?? id).join('、')
+  const defaultPermission = defaults?.permission === undefined
+    ? undefined
+    : t(`exec.permission.${defaults.permission}` as TaskBoardKey)
+  const workspaceDefaultHint = (value: string | undefined): ReactNode =>
+    value === undefined ? null : (
+      <span className={css.settingsHint}>{t('detail.workspaceDefault', { value })}</span>
+    )
   // A pinned target may disappear from the runtime (workspace deleted,
   // preset removed, model dropped from the catalog, group deleted); keep it
   // selectable as a stale row instead of silently dropping it, so the user
@@ -152,6 +169,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             </option>
           ))}
         </select>
+        {mode === '' && workspaceDefaultHint(defaultMode)}
       </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.model')}</span>
@@ -178,6 +196,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             </optgroup>
           ))}
         </select>
+        {model === undefined && workspaceDefaultHint(defaultModel)}
       </label>
       {model !== undefined && (
         <label className={css.field}>
@@ -197,6 +216,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
           disabled={pending}
           onChange={list => { void controller.updateTask(task.id, { endpoints: list.length === 0 ? null : list }) }}
         />
+        {(task.endpoints === undefined || task.endpoints.length === 0) && workspaceDefaultHint(defaultEndpoints)}
       </label>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>
@@ -211,6 +231,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
             <option key={id} value={id}>{t(`exec.permission.${id}` as TaskBoardKey)}</option>
           ))}
         </select>
+        {permission === '' && workspaceDefaultHint(defaultPermission)}
       </label>
     </section>
   )

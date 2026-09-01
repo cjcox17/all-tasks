@@ -281,6 +281,130 @@ describe('TaskBoardHostService endpoint routing', () => {
     expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat' })
     service.dispose()
   })
+
+  it('uses the workspace default execution targets when the task sets none', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const ledger = new HostTaskLedger(dir, () => now)
+    ledger.applyRequest('set-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: {
+        mode: 'planner',
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+        endpoints: ['cloud'],
+        permission: 'read-only',
+      },
+    })
+    ledger.applyRequest('create', {
+      kind: 'create', id: 't1', input: {
+        title: 'Task', description: '', prompt: 'work', workspaceId: 'ws-a',
+      },
+    })
+    const create = vi.fn(async (request) => ok(request, { sessionId: 'session-x' }))
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload?: { model?: unknown } }) => ok(request, {
+      selected: { provider: 'deepseek', model: request.payload?.model ?? 'deepseek-chat' },
+    }))
+    const commands = {
+      execute: vi.fn(async (_sessionId: string, line: string) => {
+        expect(line).toBe('/permission read-only')
+        return { kind: 'success' as const }
+      }),
+    }
+    const api = {
+      workspace: { list: async (request: { rpcId: unknown }) => ok(request, { items: [{ workspaceId: 'ws-a' }] }) },
+      agentPresets: { list: async (request: { rpcId: unknown }) => ok(request, { presets: [{ id: 'planner', isDefault: false }] }) },
+      sessions: {
+        create,
+        selectModel,
+        rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Task', seq: 1 }),
+        prompt: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
+      },
+    }
+    const service = new TaskBoardHostService(api as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      commandDispatcher: commands,
+      routerConfig: routerConfig([endpoint({ id: 'cloud', provider: 'deepseek', defaultModel: 'deepseek-chat' })]),
+    })
+    service.apply('run-1', { kind: 'run', taskId: 't1' })
+    await flush()
+
+    // The workspace defaults filled the blank mode/model/permission and the
+    // blank endpoint list routed through the workspace default endpoint.
+    expect(create.mock.calls[0][0].payload).toMatchObject({ workspaceId: 'ws-a', agentPreset: 'planner' })
+    expect(selectModel).toHaveBeenCalledOnce()
+    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-chat' })
+    expect(commands.execute).toHaveBeenCalledOnce()
+    const execution = ledger.state().tasks[0]!.executions[0]!
+    expect(execution.endpointId).toBe('cloud')
+    expect(execution.sessionId).toBe('session-x')
+    service.dispose()
+  })
+
+  it('prefers the task own execution targets over the workspace defaults', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const ledger = new HostTaskLedger(dir, () => now)
+    ledger.applyRequest('set-defaults', {
+      kind: 'set-workspace-defaults',
+      workspaceId: 'ws-a',
+      patch: {
+        mode: 'planner',
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+        endpoints: ['cloud'],
+        permission: 'read-only',
+      },
+    })
+    ledger.applyRequest('create', {
+      kind: 'create', id: 't1', input: {
+        title: 'Task', description: '', prompt: 'work', workspaceId: 'ws-a',
+        mode: 'coder',
+        model: { provider: 'deepseek', model: 'deepseek-reasoner' },
+        endpoints: ['local'],
+        permission: 'workspace-write',
+      },
+    })
+    const create = vi.fn(async (request) => ok(request, { sessionId: 'session-x' }))
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload?: { model?: unknown } }) => ok(request, {
+      selected: { provider: 'deepseek', model: request.payload?.model ?? 'deepseek-reasoner' },
+    }))
+    const commands = {
+      execute: vi.fn(async (_sessionId: string, line: string) => {
+        expect(line).toBe('/permission workspace-write')
+        return { kind: 'success' as const }
+      }),
+    }
+    const api = {
+      workspace: { list: async (request: { rpcId: unknown }) => ok(request, { items: [{ workspaceId: 'ws-a' }] }) },
+      agentPresets: { list: async (request: { rpcId: unknown }) => ok(request, { presets: [{ id: 'coder', isDefault: false }] }) },
+      sessions: {
+        create,
+        selectModel,
+        rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Task', seq: 1 }),
+        prompt: async (request: { rpcId: unknown }) => ok(request, { accepted: true }),
+      },
+    }
+    const service = new TaskBoardHostService(api as unknown as ApiProxy, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      commandDispatcher: commands,
+      routerConfig: routerConfig([endpoint({ id: 'local', provider: 'deepseek', defaultModel: 'deepseek-reasoner' })]),
+    })
+    service.apply('run-1', { kind: 'run', taskId: 't1' })
+    await flush()
+
+    // The task's own pins win over the workspace defaults in every field.
+    expect(create.mock.calls[0][0].payload).toMatchObject({ workspaceId: 'ws-a', agentPreset: 'coder' })
+    expect(selectModel.mock.calls[0][0].payload).toMatchObject({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    expect(commands.execute).toHaveBeenCalledOnce()
+    const execution = ledger.state().tasks[0]!.executions[0]!
+    expect(execution.endpointId).toBe('local')
+    expect(execution.sessionId).toBe('session-x')
+    service.dispose()
+  })
 })
 
 describe('ledger queued-run bookkeeping', () => {

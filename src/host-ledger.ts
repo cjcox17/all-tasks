@@ -431,6 +431,12 @@ export class HostTaskLedger {
     return task === undefined ? undefined : cloneTasks([task])[0]
   }
 
+  /** Deep copy of one workspace's execution defaults (read-only view). */
+  workspaceDefaultsFor(workspaceId: string): WorkspaceDefaultsRecord | undefined {
+    const record = this.document.workspaceDefaults[workspaceId]
+    return record === undefined ? undefined : cloneWorkspaceDefaults({ [workspaceId]: record })[workspaceId]
+  }
+
   /**
    * Runtime-only projection for the 5 s Host poll. It copies just primitive
    * identifiers and timestamps, never the complete task/execution history or

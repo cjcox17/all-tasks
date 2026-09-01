@@ -11,6 +11,7 @@ import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
 import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot, ExecutionEndpointOption, ExecutionModelOption } from '../src/core/controller.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
+import type { WorkspaceDefaultsRecord } from '../src/core/workspace-defaults.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
 
@@ -42,6 +43,7 @@ function controllerFake(
   updateTask: (id: string, patch: TaskUpdatePatch) => Promise<boolean> = async () => true,
   endpoints: readonly ExecutionEndpointOption[] = [],
   groups: readonly TaskGroupRecord[] = [],
+  workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {},
 ): BoardController {
   const snapshot: ControllerSnapshot = {
     tasks: [taskRecord],
@@ -49,7 +51,7 @@ function controllerFake(
     archiveView: false,
     selectedTaskId: taskRecord.id,
     executionOptions: { workspaces: [], presets: [], models, endpoints },
-    workspaceDefaults: {},
+    workspaceDefaults,
     groups,
     pendingTaskIds: [],
   }
@@ -75,13 +77,14 @@ async function renderDetail(
   models?: readonly ExecutionModelOption[],
   updateTask?: (id: string, patch: TaskUpdatePatch) => Promise<boolean>,
   endpoints?: readonly ExecutionEndpointOption[],
+  workspaceDefaults?: Record<string, WorkspaceDefaultsRecord>,
 ): Promise<HTMLElement> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   roots.push(root)
   await act(async () => {
-    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask, endpoints)} task={taskRecord} />)
+    root.render(<TaskDetail controller={controllerFake(taskRecord, models, updateTask, endpoints, [], workspaceDefaults)} task={taskRecord} />)
   })
   return container
 }
@@ -146,6 +149,30 @@ describe('TaskDetail model reasoning-effort pin', () => {
     expect(effort!.value).toBe('turbo')
     expect(effort!.textContent).toContain('turbo')
     expect(effort!.textContent).toContain(t('exec.model.effort.custom'))
+  })
+})
+
+describe('TaskDetail workspace-default hints', () => {
+  it('shows the workspace default for a blank model pin', async () => {
+    const container = await renderDetail(
+      task({ workspaceId: 'ws-a' }),
+      MODEL_CATALOG,
+      async () => true,
+      [],
+      { 'ws-a': { model: { provider: 'deepseek', model: 'deepseek-chat' } } },
+    )
+    expect(container.textContent).toContain(t('detail.workspaceDefault', { value: 'deepseek · deepseek-chat' }))
+  })
+
+  it('does not show a hint when the task pins its own model', async () => {
+    const container = await renderDetail(
+      task({ workspaceId: 'ws-a', model: { provider: 'deepseek', model: 'deepseek-chat' } }),
+      MODEL_CATALOG,
+      async () => true,
+      [],
+      { 'ws-a': { model: { provider: 'deepseek', model: 'deepseek-chat' } } },
+    )
+    expect(container.textContent).not.toContain(t('detail.workspaceDefault', { value: 'deepseek · deepseek-chat' }))
   })
 })
 

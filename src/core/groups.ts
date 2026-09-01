@@ -464,15 +464,18 @@ export function normalizeGroupSchedule(value: unknown): GroupScheduleRule | unde
 
 /**
  * The effective endpoint list for one member: the task's own pin wins, then
- * the group's list, then undefined (the global default list applies at the
- * router). An empty effective list means no routing (direct model pin).
+ * the group's list, then the workspace's default list, then undefined (the
+ * global default list applies at the router). An empty effective list means
+ * no routing (direct model pin).
  */
 export function effectiveEndpointIds(
   task: { endpoints?: readonly string[] },
   group?: { endpoints?: readonly string[] },
+  workspaceDefault?: readonly string[],
 ): string[] | undefined {
   if (task.endpoints !== undefined && task.endpoints.length > 0) return [...task.endpoints]
   if (group?.endpoints !== undefined && group.endpoints.length > 0) return [...group.endpoints]
+  if (workspaceDefault !== undefined && workspaceDefault.length > 0) return [...workspaceDefault]
   return undefined
 }
 

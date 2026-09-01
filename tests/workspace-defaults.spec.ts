@@ -8,6 +8,7 @@ import {
   isWorkspaceDefaultsEmpty,
   normalizeWorkspaceDefaults,
   normalizeWorkspaceDefaultsPatch,
+  resolveExecutionTargets,
   type WorkspaceDefaultsRecord,
 } from '../src/core/workspace-defaults.ts'
 
@@ -87,5 +88,65 @@ describe('workspace-defaults patch application', () => {
     expect(isWorkspaceDefaultsEmpty({})).toBe(true)
     expect(isWorkspaceDefaultsEmpty({ mode: 'x' })).toBe(false)
     expect(isWorkspaceDefaultsEmpty({ approved: false })).toBe(false)
+  })
+})
+
+describe('workspace-defaults runtime resolution', () => {
+  it('prefers the task own targets over the workspace defaults', () => {
+    const task = {
+      mode: 'coder',
+      model: { provider: 'deepseek', model: 'deepseek-reasoner' },
+      endpoints: ['task-endpoint'],
+      permission: 'danger-full-access' as const,
+    }
+    const defaults: WorkspaceDefaultsRecord = {
+      mode: 'planner',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      endpoints: ['default-endpoint'],
+      permission: 'read-only',
+    }
+    expect(resolveExecutionTargets(task, defaults)).toEqual(task)
+  })
+
+  it('fills blank task targets from the workspace defaults', () => {
+    const defaults: WorkspaceDefaultsRecord = {
+      mode: 'planner',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      endpoints: ['default-endpoint'],
+      permission: 'read-only',
+    }
+    expect(resolveExecutionTargets({}, defaults)).toEqual(defaults)
+  })
+
+  it('keeps a mixed set per field and drops blank fields entirely', () => {
+    const defaults: WorkspaceDefaultsRecord = { mode: 'planner', permission: 'read-only' }
+    const task = {
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      endpoints: ['task-endpoint'],
+    }
+    expect(resolveExecutionTargets(task, defaults)).toEqual({
+      mode: 'planner',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      endpoints: ['task-endpoint'],
+      permission: 'read-only',
+    })
+  })
+
+  it('returns nothing when neither the task nor the workspace carries a target', () => {
+    expect(resolveExecutionTargets({}, undefined)).toEqual({})
+    expect(resolveExecutionTargets({}, {})).toEqual({})
+  })
+
+  it('does not inherit the workspace approved gate (approval is task state)', () => {
+    expect(resolveExecutionTargets({}, { approved: false })).toEqual({})
+  })
+
+  it('copies lists so the caller cannot mutate the resolved view into the source', () => {
+    const task = { endpoints: ['task-endpoint'] }
+    const defaults: WorkspaceDefaultsRecord = { endpoints: ['default-endpoint'] }
+    const resolved = resolveExecutionTargets(task, defaults)
+    resolved.endpoints!.push('extra')
+    expect(task.endpoints).toEqual(['task-endpoint'])
+    expect(defaults.endpoints).toEqual(['default-endpoint'])
   })
 })

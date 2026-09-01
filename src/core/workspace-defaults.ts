@@ -21,10 +21,43 @@ import {
   normalizeModelSelection,
   type TaskModelSelection,
   type TaskPermission,
+  type TaskRecord,
 } from './tasks.ts'
 
 /** Bound on the workspace id and agent-preset id length. */
 export const WORKSPACE_DEFAULTS_ID_BOUND = MODEL_FIELD_BOUND
+
+/** The execution targets a run resolves: the task's own value when set, else the workspace default. */
+export interface ResolvedExecutionTargets {
+  mode?: string
+  model?: TaskModelSelection
+  endpoints?: string[]
+  permission?: TaskPermission
+}
+
+/**
+ * Resolve the effective execution targets of one run: each task-level field
+ * wins when set, otherwise the workspace default fills in (fields blank on
+ * both sides stay blank, so the deployment default applies at launch). The
+ * task's `approved` gate is deliberately NOT part of execution targets — a
+ * workspace defaulting new tasks to unapproved only gates creation, never an
+ * existing task's own approval state.
+ */
+export function resolveExecutionTargets(
+  task: Pick<TaskRecord, 'mode' | 'model' | 'endpoints' | 'permission'>,
+  defaults: WorkspaceDefaultsRecord | undefined,
+): ResolvedExecutionTargets {
+  const resolved: ResolvedExecutionTargets = {}
+  if (task.mode !== undefined && task.mode !== '') resolved.mode = task.mode
+  else if (defaults?.mode !== undefined && defaults.mode !== '') resolved.mode = defaults.mode
+  if (task.model !== undefined) resolved.model = task.model
+  else if (defaults?.model !== undefined) resolved.model = defaults.model
+  if (task.endpoints !== undefined && task.endpoints.length > 0) resolved.endpoints = [...task.endpoints]
+  else if (defaults?.endpoints !== undefined && defaults.endpoints.length > 0) resolved.endpoints = [...defaults.endpoints]
+  if (task.permission !== undefined) resolved.permission = task.permission
+  else if (defaults?.permission !== undefined) resolved.permission = defaults.permission
+  return resolved
+}
 
 /** Per-workspace execution defaults applied to new tasks in that workspace. */
 export interface WorkspaceDefaultsRecord {

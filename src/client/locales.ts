@@ -187,6 +187,7 @@ export const zh = {
   'group.sequentialBadge': '顺序',
   'group.parallelBadge': '并行',
   'detail.executionSettings': '执行设置',
+  'detail.workspaceDefault': '工作区默认：{value}',
   'exec.hint': '执行时生效：分组把任务聚合为顺序/并行序列并继承组端点与组窗口（任务自身的端点钉优先）；工作区决定执行会话落在哪个工作区；模式决定会话的 agent 预设；端点按优先级把任务路由到计算后端（第一个可用者胜出，均不可用时排队等待）；模型把执行会话钉到提供商与模型，可再选推理强度；权限经 /permission 命令应用到会话。留空则使用运行时默认。',
   // 插件设置卡片（settings.plugin.item 席位）。
   'settings.title': '全部任务',
@@ -431,6 +432,7 @@ export const en: Record<keyof typeof zh, string> = {
   'group.sequentialBadge': 'Seq',
   'group.parallelBadge': 'Par',
   'detail.executionSettings': 'Execution Settings',
+  'detail.workspaceDefault': 'Workspace default: {value}',
   'exec.hint': 'Applied when the task runs: the group aggregates members into a sequential/parallel sequence and supplies inherited endpoints and a window (a task\'s own endpoint pin wins); the workspace decides where the execution session lands; the mode composes the session\'s agent preset; endpoints route the run through the first eligible compute backend in priority order (waiting when none is eligible); the model pins the session to a specific provider and model, optionally with a reasoning-effort level; the permission is applied through the /permission command. Blank = runtime default.',
   // Plugin settings card (the `settings.plugin.item` seat).
   'settings.title': 'All Tasks',

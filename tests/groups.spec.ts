@@ -221,6 +221,18 @@ describe('execution policy helpers', () => {
     expect(effectiveEndpointIds({}, undefined)).toBeUndefined()
   })
 
+  it('lays the workspace default list after the task pin and the group list', () => {
+    const taskPin = { endpoints: ['task-endpoint'] }
+    const groupList = { endpoints: ['group-endpoint'] }
+    const workspaceDefault = ['workspace-endpoint']
+    expect(effectiveEndpointIds(taskPin, groupList, workspaceDefault)).toEqual(['task-endpoint'])
+    expect(effectiveEndpointIds({}, groupList, workspaceDefault)).toEqual(['group-endpoint'])
+    expect(effectiveEndpointIds({}, undefined, workspaceDefault)).toEqual(['workspace-endpoint'])
+    // An empty or absent workspace list never fills in.
+    expect(effectiveEndpointIds({}, undefined, [])).toBeUndefined()
+    expect(effectiveEndpointIds({}, undefined, undefined)).toBeUndefined()
+  })
+
   it('checks sequential/parallel capacity', () => {
     const sequential = { mode: 'sequential' as const }
     expect(groupCapacityFull(sequential, 0)).toBe(false)
