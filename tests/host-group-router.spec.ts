@@ -255,6 +255,66 @@ describe('TaskBoardHostService group routing', () => {
     h.service.dispose()
   })
 
+  it('the auto-advance chain skips a member that joined after the sequence started', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'Chain', ['a', 'b'])
+
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+
+    // A member joins while the sequence is running: it is held from the chain.
+    h.ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: 'work', groupId: 'g1' } })
+    const c = h.ledger.state().tasks.find(task => task.id === 'c')!
+    expect(c.deferAutoStart).toBe(true)
+    expect(c.executions).toHaveLength(0)
+
+    // Settling the running member advances the chain into b (an original
+    // member) — never into the held c.
+    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.executions).toHaveLength(0)
+
+    // Settling b leaves the held c untouched: the chain never starts it.
+    const b = h.ledger.state().tasks.find(task => task.id === 'b')!
+    h.ledger.settle('b', b.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(2)
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.status).toBe('todo')
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.executions).toHaveLength(0)
+    h.service.dispose()
+  })
+
+  it('a member joining a scheduled group mid-run is not launched by the chain', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([]), () => now)
+    seedGroup(h, 'g1', 'Scheduled', ['a'], {
+      mode: 'parallel', maxParallel: 2, schedule: { enabled: true, cron: '0 9 * * *' },
+    })
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+
+    // The group cron is armed, so every ledger mutation runs the advance
+    // pass — but the held member must never be launched by it.
+    h.ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+    h.advanceGroups()
+    await flush()
+    expect(h.create).toHaveBeenCalledTimes(1)
+    const b = h.ledger.state().tasks.find(task => task.id === 'b')!
+    expect(b.deferAutoStart).toBe(true)
+    expect(b.executions).toHaveLength(0)
+    h.service.dispose()
+  })
+
   it('a due group schedule starts the sequence (first runnable member)', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()

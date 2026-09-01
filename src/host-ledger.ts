@@ -9,6 +9,7 @@ import {
   applyDeleteGroup,
   applyUpdateGroup,
   GROUP_FIELD_BOUND,
+  groupSequenceStarted,
   normalizeGroupOrder,
   normalizeGroupRows,
   taskMatchesGroupScope,
@@ -630,8 +631,12 @@ export class HostTaskLedger {
         const open = openByTask.get(task.id)
         members.push({
           taskId: task.id,
+          // A held member (deferAutoStart) joined the group after its
+          // sequence started; the auto-advance chain skips it until an
+          // explicit start (run-group / group cron / manual run) clears it.
           runnable: task.archivedAt === undefined
             && task.approved !== false
+            && task.deferAutoStart !== true
             && (task.status === 'backlog' || task.status === 'todo')
             && !this.workspacePausedFor(task)
             && open === undefined,
@@ -699,6 +704,10 @@ export class HostTaskLedger {
     // A member pinned to a paused workspace is never launched (defensive; the
     // advance pass already treats it as not runnable).
     if (this.workspacePausedFor(task)) return undefined
+    // A held member (deferAutoStart) is skipped by the group sequence until
+    // an explicit start clears the hold (defensive; the advance pass already
+    // excludes it from runnable).
+    if (task.deferAutoStart === true) return undefined
     const opened = startExecution(task, now, crypto.randomUUID())
     this.document.tasks = this.document.tasks.map(item => item.id === taskId ? opened.task : item)
     this.commit()
@@ -722,7 +731,45 @@ export class HostTaskLedger {
   /** Roll a group's schedule rule forward (scheduler callback). */
   rollGroupSchedule(groupId: string, nextRunAt: number | undefined, lastTriggeredAt: number): void {
     this.document.groups = withGroupScheduleRoll(this.document.groups, groupId, nextRunAt, lastTriggeredAt, this.now())
+    // A group-cron fire starts a fresh sequence cycle: every member's
+    // auto-advance hold is cleared so the whole group participates.
+    this.clearGroupAutoStartHolds(groupId)
     this.commit()
+  }
+
+  /**
+   * Set or clear a task's auto-advance hold to match its group membership: a
+   * member of a group whose sequence has started ({@link groupSequenceStarted})
+   * is held so the chain never starts it automatically; an ungrouped task or
+   * a member of a fresh, never-run group is not held. Called whenever a task's
+   * membership changes (create into a group, group move, leave).
+   */
+  private syncGroupAutoStartHold(taskId: string, groupId: string | undefined): void {
+    this.document.tasks = this.document.tasks.map(task => {
+      if (task.id !== taskId) return task
+      if (groupId === undefined) {
+        const { deferAutoStart: _held, ...rest } = task
+        return { ...rest, updatedAt: this.now() }
+      }
+      const group = this.document.groups.find(candidate => candidate.id === groupId)
+      if (group === undefined) return task
+      if (groupSequenceStarted(group, this.document.tasks)) {
+        return task.deferAutoStart === true ? task : { ...task, deferAutoStart: true, updatedAt: this.now() }
+      }
+      const { deferAutoStart: _held, ...rest } = task
+      return { ...rest, updatedAt: this.now() }
+    })
+  }
+
+  /** Clear the auto-advance hold on every member of one group (a new sequence cycle). */
+  private clearGroupAutoStartHolds(groupId: string): void {
+    this.document.tasks = this.document.tasks.map(task =>
+      task.groupId === groupId && task.deferAutoStart === true
+        ? (() => {
+          const { deferAutoStart: _held, ...rest } = task
+          return { ...rest, updatedAt: this.now() }
+        })()
+        : task)
   }
 
   /** Record the endpoint a launched (or about-to-launch) run is routed through. */
@@ -962,6 +1009,9 @@ export class HostTaskLedger {
         this.document.tasks = [...result.tasks]
         if (created.groupId !== undefined) {
           this.document.groups = withGroupMembershipChange(this.document.groups, action.id, undefined, created.groupId, now)
+          // A task created into a group whose sequence already started is
+          // held from auto-advance (the chain must not start it on its own).
+          this.syncGroupAutoStartHold(action.id, created.groupId)
         }
         break
       }
@@ -1020,6 +1070,10 @@ export class HostTaskLedger {
         this.document.tasks = [...applyUpdateTask(this.document.tasks, action.taskId, effectivePatch, now)]
         if (membershipChanged) {
           this.document.groups = withGroupMembershipChange(this.document.groups, action.taskId, previousGroupId, nextGroupId, now)
+          // A membership change recomputes the auto-advance hold against the
+          // destination group: joining a started group holds the member,
+          // leaving a group (or joining a fresh one) clears it.
+          this.syncGroupAutoStartHold(action.taskId, nextGroupId)
         }
         break
       }
@@ -1097,7 +1151,11 @@ export class HostTaskLedger {
         // the workspace is continued.
         if (this.workspacePausedFor(task)) throw new Error('workspace is paused')
         const base = action.kind === 'rerun' ? withStatus(task, 'todo', now) : task
-        run = startExecution(base, now, crypto.randomUUID())
+        const opened = startExecution(base, now, crypto.randomUUID())
+        // A manual run is an explicit start: it clears the member's
+        // auto-advance hold (the user asked for it directly).
+        const { deferAutoStart: _held, ...unheld } = opened.task
+        run = { task: unheld, execution: opened.execution }
         this.document.tasks = this.document.tasks.map(item => item.id === task.id ? run!.task : item)
         break
       }
@@ -1255,6 +1313,9 @@ export class HostTaskLedger {
         if (group === undefined) throw new Error('group not found')
         if (group.stopped === true) throw new Error('group is stopped')
         if (group.paused === true) throw new Error('group is paused')
+        // Manual group start is an explicit new sequence cycle: it clears
+        // every member's auto-advance hold so the whole group participates.
+        this.clearGroupAutoStartHolds(action.groupId)
         // Manual group start: open an execution for runnable members in group
         // order (on-board, approved, backlog/todo, no open run), up to the
         // group's launch capacity — sequential opens one member, parallel opens
@@ -1319,10 +1380,21 @@ export class HostTaskLedger {
         if (this.document.tasks.some(task => task.groupId === action.groupId && hasOpenExecution(task))) {
           throw new Error('group has running tasks')
         }
+        const ungroupedIds = new Set(this.document.tasks
+          .filter(task => task.groupId === action.groupId)
+          .map(task => task.id))
         const result = applyDeleteGroup(this.document.tasks, this.document.groups, action.groupId, now)
         if (!result.applied) throw new Error('group not found')
         this.document.tasks = [...result.tasks]
         this.document.groups = [...result.groups]
+        // Ungrouped members have no auto-advance chain; clear any lingering hold.
+        this.document.tasks = this.document.tasks.map(task =>
+          ungroupedIds.has(task.id) && task.deferAutoStart === true
+            ? (() => {
+              const { deferAutoStart: _held, ...rest } = task
+              return { ...rest, updatedAt: this.now() }
+            })()
+            : task)
         break
       }
       case 'set-group-order': {

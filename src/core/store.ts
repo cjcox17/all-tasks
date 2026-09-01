@@ -66,6 +66,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
   if (record.endpoints !== undefined && !Array.isArray(record.endpoints)) return false
   if (record.groupId !== undefined && typeof record.groupId !== 'string') return false
   if (record.approved !== undefined && typeof record.approved !== 'boolean') return false
+  if (record.deferAutoStart !== undefined && typeof record.deferAutoStart !== 'boolean') return false
   if (!Array.isArray(record.executions)) return false
   for (const execution of record.executions) {
     if (typeof execution !== 'object' || execution === null) return false
@@ -168,6 +169,9 @@ export function parseLedger(raw: string | null): TaskRecord[] {
       ...execution,
       usage: normalizeExecutionUsage(execution.usage),
     }))
+    // Only the explicit auto-advance hold is persisted; absence (the default)
+    // and `false` both normalize to undefined (participates in auto-advance).
+    task.deferAutoStart = row.deferAutoStart === true ? true : undefined
     tasks.push(task)
   }
   return tasks

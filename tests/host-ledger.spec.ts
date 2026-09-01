@@ -708,6 +708,112 @@ describe('HostTaskLedger', () => {
     expect(free.runs?.map(run => run.task.id)).toEqual(['f1', 'f2', 'f3'])
   })
 
+  it('holds a member created into a group whose sequence has started, and persists it', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    // The group is still fresh: its first member is not held.
+    expect(ledger.state().tasks.find(value => value.id === 'a')!.deferAutoStart).toBeUndefined()
+
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    // A member joining while the sequence is running is held from auto-advance.
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+
+    // A fresh group does not hold its first member.
+    ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Fresh' } })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g2' } })
+    expect(ledger.state().tasks.find(value => value.id === 'c')!.deferAutoStart).toBeUndefined()
+
+    // The hold survives a Host restart (the explicit flag is persisted).
+    ledger.dispose()
+    const reloaded = new HostTaskLedger(root, () => NOW)
+    expect(reloaded.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+    expect(reloaded.state().tasks.find(value => value.id === 'a')!.deferAutoStart).toBeUndefined()
+    expect(reloaded.state().tasks.find(value => value.id === 'c')!.deferAutoStart).toBeUndefined()
+  })
+
+  it('recomputes the hold when a task moves between groups and clears it on leave', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Running' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.applyRequest('create-x', { kind: 'create', id: 'x', input: { title: 'X', description: '', prompt: '' } })
+
+    // Joining the running group holds the moved member.
+    ledger.applyRequest('join', { kind: 'update', taskId: 'x', patch: { groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'x')!.deferAutoStart).toBe(true)
+
+    // Leaving the group clears the hold.
+    ledger.applyRequest('leave', { kind: 'update', taskId: 'x', patch: { groupId: null } })
+    expect(ledger.state().tasks.find(value => value.id === 'x')!.deferAutoStart).toBeUndefined()
+
+    // A fresh group does not hold the moved member.
+    ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Fresh' } })
+    ledger.applyRequest('join-2', { kind: 'update', taskId: 'x', patch: { groupId: 'g2' } })
+    expect(ledger.state().tasks.find(value => value.id === 'x')!.deferAutoStart).toBeUndefined()
+  })
+
+  it('clears the auto-advance hold on run-group, a manual run, and a group-cron roll', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    // g1: a ran and settled; b joins afterwards and is held.
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+
+    // A manual Start-group is an explicit new cycle: the hold clears and the
+    // member opens a run.
+    const started = ledger.applyRequest('run-group', { kind: 'run-group', groupId: 'g1' })
+    expect(started.runs?.map(run => run.task.id)).toEqual(['b'])
+    expect(started.state.tasks.find(value => value.id === 'b')!.deferAutoStart).toBeUndefined()
+
+    // A manual run of a held member clears its own hold (the explicit start).
+    ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'H' } })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g2' } })
+    ledger.applyRequest('run-c', { kind: 'run', taskId: 'c' })
+    ledger.applyRequest('create-e', { kind: 'create', id: 'e', input: { title: 'E', description: '', prompt: '', groupId: 'g2' } })
+    expect(ledger.state().tasks.find(value => value.id === 'e')!.deferAutoStart).toBe(true)
+    ledger.applyRequest('run-e', { kind: 'run', taskId: 'e' })
+    expect(ledger.state().tasks.find(value => value.id === 'e')!.deferAutoStart).toBeUndefined()
+
+    // A group-cron roll is an explicit scheduled cycle: every hold clears.
+    ledger.applyRequest('group-3', { kind: 'create-group', id: 'g3', input: { name: 'Cron', schedule: { enabled: true, cron: '0 9 * * *' } } })
+    ledger.applyRequest('create-f', { kind: 'create', id: 'f', input: { title: 'F', description: '', prompt: '', groupId: 'g3' } })
+    ledger.applyRequest('run-f', { kind: 'run', taskId: 'f' })
+    ledger.settle('f', ledger.state().tasks.find(value => value.id === 'f')!.executions[0]!.id, 'succeeded')
+    ledger.applyRequest('create-g', { kind: 'create', id: 'g', input: { title: 'G', description: '', prompt: '', groupId: 'g3' } })
+    expect(ledger.state().tasks.find(value => value.id === 'g')!.deferAutoStart).toBe(true)
+    ledger.rollGroupSchedule('g3', NOW + 86_400_000, NOW)
+    expect(ledger.state().tasks.find(value => value.id === 'g')!.deferAutoStart).toBeUndefined()
+  })
+
+  it('excludes held members from the group runtime runnable set and the openExecution seam', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    // g1: a ran and settled; b joins afterwards and is held. g2 stays fresh.
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Fresh' } })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g2' } })
+
+    const views = ledger.groupRuntimeViews()
+    const g1 = views.find(view => view.id === 'g1')!
+    const g2 = views.find(view => view.id === 'g2')!
+    expect(g1.members.find(member => member.taskId === 'a')!.runnable).toBe(false)
+    expect(g1.members.find(member => member.taskId === 'b')!.runnable).toBe(false)
+    expect(g2.members.find(member => member.taskId === 'c')!.runnable).toBe(true)
+    // openExecution (the auto-advance seam) also refuses a held member.
+    expect(ledger.openExecution('b', NOW)).toBeUndefined()
+    // An explicit manual run still works (the hold never blocks manual starts).
+    expect(ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' }).state.tasks.find(value => value.id === 'b')!.status).toBe('running')
+  })
+
   it('refuses to run an unapproved task until set-approved clears the gate', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('create', { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', approved: false } })

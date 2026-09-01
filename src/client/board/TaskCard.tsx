@@ -111,6 +111,11 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
               {t('card.approved')}
             </span>
           ))}
+        {!archived && task.deferAutoStart === true && (
+          <span className={css.cardHeld} title={t('card.heldHint')}>
+            {t('card.held')}
+          </span>
+        )}
         {!archived && task.schedule?.enabled === true && (
           <span
             className={css.cardSchedule}

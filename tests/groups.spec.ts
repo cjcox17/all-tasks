@@ -12,6 +12,7 @@ import {
   groupCapacityFull,
   groupCompactsBetween,
   groupRuntimeStatus,
+  groupSequenceStarted,
   groupSharesSession,
   groupWindowOpen,
   isGroupExecutionMode,
@@ -374,6 +375,39 @@ describe('execution policy helpers', () => {
     expect(groupCompactsBetween({ mode: 'sequential', maintainSession: false, compactBetween: true })).toBe(false)
     expect(groupCompactsBetween({ mode: 'sequential', maintainSession: true, compactBetween: false })).toBe(false)
     expect(groupCompactsBetween({ mode: 'parallel', maintainSession: true, compactBetween: true })).toBe(false)
+  })
+
+  it('skips a held member (deferAutoStart) and picks the next runnable one', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const held = task('t1', { groupId: 'g1', status: 'todo', deferAutoStart: true })
+    const t2 = task('t2', { groupId: 'g1', status: 'todo' })
+    const ordered = withGroupOrder([group], 'g1', ['t1', 't2'], ['t1', 't2'], NOW)[0]!
+    expect(nextRunnableMember(ordered, [held, t2])?.id).toBe('t2')
+
+    // A group whose only runnable members are held advances nothing.
+    expect(nextRunnableMember(ordered, [held])).toBeUndefined()
+  })
+
+  it('detects whether a group sequence has started (any member has an execution)', () => {
+    const group = createGroup({ name: 'G' }, NOW, 'g1')!
+    const fresh = task('t1', { groupId: 'g1', status: 'todo' })
+    expect(groupSequenceStarted(group, [fresh])).toBe(false)
+
+    const ran = { ...fresh, executions: [{
+      id: 'e1', sessionId: 's1', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined,
+    }] }
+    expect(groupSequenceStarted(group, [ran])).toBe(true)
+
+    const settled = { ...fresh, executions: [{
+      id: 'e2', sessionId: 's2', startedAt: NOW, endedAt: NOW + 1, result: 'succeeded' as const, error: undefined,
+    }] }
+    expect(groupSequenceStarted(group, [settled])).toBe(true)
+
+    // Only members of THIS group count.
+    const other = task('t2', { status: 'todo', executions: [{
+      id: 'e3', sessionId: 's3', startedAt: NOW, endedAt: NOW + 1, result: 'succeeded' as const, error: undefined,
+    }] })
+    expect(groupSequenceStarted(group, [fresh, other])).toBe(false)
   })
 })
 
