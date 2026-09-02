@@ -30,6 +30,7 @@ describe('event-github', () => {
     expect(mapping.input.prompt).toContain('cjcox17/wyx')
     expect(mapping.input.prompt).toContain('failure')
     expect(mapping.input.prompt).toContain('Fix the issue and commit the fix')
+    expect(mapping.input.source).toBe('event')
   })
 
   it('falls back to the default workspace for unmapped repos', async () => {

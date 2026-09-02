@@ -7,4 +7,11 @@ describe('all-tasks model guidance', () => {
     expect(ALL_TASKS_GUIDANCE).toContain('最终回复前')
     expect(ALL_TASKS_GUIDANCE).toContain('completed')
   })
+
+  it('announces the agent task-creation tools and their unapproved default', () => {
+    expect(ALL_TASKS_GUIDANCE).toContain('task_create')
+    expect(ALL_TASKS_GUIDANCE).toContain('task_list')
+    expect(ALL_TASKS_GUIDANCE).toContain('task_get')
+    expect(ALL_TASKS_GUIDANCE).toContain('approved: true')
+  })
 })

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, modelSelectionKey, moveTaskBefore,
+  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, isTaskSource, modelSelectionKey, moveTaskBefore,
   normalizeModelSelection, parseModelSelectionKey, retainRecentExecutions, settleExecution, startExecution, withSchedule, withStatus,
 } from '../src/core/tasks.ts'
 
@@ -65,6 +65,26 @@ describe('createTask', () => {
       'task-5',
     )
     expect(task.permission).toBeUndefined()
+  })
+
+  it('persists the origin source and leaves absent ones as user-like', () => {
+    const agent = createTask({ title: 'x', description: '', prompt: '', source: 'agent', approved: false }, NOW, 'task-6')
+    expect(agent.source).toBe('agent')
+    expect(agent.approved).toBe(false)
+    const user = createTask({ title: 'x', description: '', prompt: '' }, NOW, 'task-7')
+    expect(user.source).toBeUndefined()
+  })
+})
+
+describe('isTaskSource', () => {
+  it('accepts every origin and rejects anything else', () => {
+    expect(isTaskSource('user')).toBe(true)
+    expect(isTaskSource('api')).toBe(true)
+    expect(isTaskSource('event')).toBe(true)
+    expect(isTaskSource('agent')).toBe(true)
+    expect(isTaskSource('bot')).toBe(false)
+    expect(isTaskSource(undefined)).toBe(false)
+    expect(isTaskSource(7)).toBe(false)
   })
 })
 

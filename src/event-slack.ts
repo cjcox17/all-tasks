@@ -74,6 +74,7 @@ export function createSlackEventSource(config: SlackEventConfig = {}, env: NodeJ
           title,
           description: '',
           prompt: bounded,
+          source: 'event' as const,
           ...(config.workspaceId === undefined || config.workspaceId === '' ? {} : { workspaceId: config.workspaceId }),
         },
         autoRun: config.autoRun === true,

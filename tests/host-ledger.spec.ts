@@ -125,6 +125,23 @@ describe('HostTaskLedger', () => {
     expect(restored.state().tasks[0].title).toBe('A')
   })
 
+  it('persists the create origin source in the ledger and across restarts', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source: 'agent', approved: false },
+    })
+    ledger.applyRequest('create-user', {
+      kind: 'create', id: 'task-b', input: { title: 'B', description: '', prompt: '', source: 'user' },
+    })
+    expect(ledger.state().tasks.find(task => task.id === 'task-a')).toMatchObject({ source: 'agent', approved: false })
+    expect(ledger.state().tasks.find(task => task.id === 'task-b')).toMatchObject({ source: 'user' })
+    ledger.dispose()
+    const restored = new HostTaskLedger(root, () => NOW + 1000)
+    expect(restored.state().tasks.find(task => task.id === 'task-a')).toMatchObject({ source: 'agent', approved: false })
+    expect(restored.state().tasks.find(task => task.id === 'task-b')).toMatchObject({ source: 'user' })
+  })
+
   it('quarantines a corrupt document without overwriting it and reports the error', () => {
     const root = tempRoot()
     const file = join(root, 'ledger-v2.json')
