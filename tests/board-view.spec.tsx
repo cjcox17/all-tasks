@@ -976,6 +976,37 @@ describe('AllTasks drag reorder, group join/leave (#drag)', () => {
     expect(updates).toEqual([{ id: 't-joiner', patch: { groupId: 'g1' } }])
   })
 
+  it('moves a settled member back to its own group when dropped onto its section in another column', async () => {
+    // A group whose sequence ran can hold members in several columns at once
+    // (a settled member next to one still waiting): the group's section then
+    // renders in each of those columns. Dragging the failed member onto the
+    // group's todo section must move it back to todo inside the group — the
+    // same result as the two-step workaround (ungroup on the column first,
+    // then drag it back into the group), in a single drop.
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const moves: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-failed', title: 'Failed member', status: 'failed', groupId: 'g1' }),
+        task({ id: 't-waiting', title: 'Waiting member', status: 'todo', groupId: 'g1' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t-failed', 't-waiting'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+      moveTask: (id: string, status: string) => { moves.push({ id, status }) },
+    })
+    const failedSection = container.querySelector('section[data-status="failed"] [data-group="g1"]') as HTMLElement
+    const todoSection = container.querySelector('section[data-status="todo"] [data-group="g1"]') as HTMLElement
+    expect(failedSection).not.toBeNull()
+    expect(todoSection).not.toBeNull()
+    const waitingCard = todoSection.querySelector('button[data-task-id="t-waiting"]') as HTMLElement
+    expect(waitingCard).not.toBeNull()
+    dropOn(waitingCard, 'task:t-failed', 10)
+    // Membership is kept (no join/leave): only the status moves to the column.
+    expect(updates).toEqual([])
+    expect(moves).toEqual([{ id: 't-failed', status: 'todo' }])
+  })
+
   it('drops a task from another column directly onto a group and moves it into that column', async () => {
     const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
     const moves: Array<{ id: string; status: string }> = []
