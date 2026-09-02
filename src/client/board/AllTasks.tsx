@@ -653,6 +653,20 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
       // falls through to the column/unassigned handling below.
       if (group !== undefined && dragged.workspaceId === group.workspaceId) {
         if (dragged.groupId === group.id) {
+          // A group's section renders in every column that holds one of its
+          // members — a settled member (done/failed) can sit next to a member
+          // that is still waiting (backlog/todo). Dropping the member onto
+          // its own group's section in ANOTHER column is a "move it back to
+          // this column" gesture, so the card must change status first: a
+          // reorder alone would leave it behind in its old column — a drop
+          // that visibly does nothing (mirroring the join path below, which
+          // also moves the card to the drop column when it comes from
+          // elsewhere). Reordering below then places it among the members
+          // already in that column.
+          if (dragged.status !== column) {
+            if (!canMoveManually(dragged.status, column)) return
+            controller.moveTask(taskId, column)
+          }
           // Reorder inside the group: the dragged member lands directly above
           // the member card under the pointer (midpoint split), mapped onto
           // the group's global member order.
