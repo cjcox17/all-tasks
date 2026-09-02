@@ -1,7 +1,7 @@
 /**
  * Center-column panel activation: the shared single-occupancy contract between
- * the task board and the Events/Actions panels. Exactly one panel is active at
- * a time — opening one evicts the others (both their html attributes and their
+ * the task board and the Workflows panel. Exactly one panel is active at a
+ * time — opening one evicts the others (both their html attributes and their
  * controller state) — and the shell's session/workspace rows hand the column
  * back to the conversation.
  */
@@ -11,13 +11,12 @@ export const ACTIVATE_EVENT = 'dsh-panel-activate'
 /** Every panel that can occupy the center column, mapped to its html activation attribute. */
 export const PANEL_ACTIVE_ATTRS: Record<string, string> = {
   'all-tasks': 'data-dsh-all-tasks-active',
-  events: 'data-dsh-events-active',
-  actions: 'data-dsh-actions-active',
+  workflows: 'data-dsh-workflows-active',
   ssh: 'data-dsh-ssh-active',
 }
 
-/** Panel names the browser half owns (the board + the two new panels). */
-export const OWNED_PANELS = ['all-tasks', 'events', 'actions'] as const
+/** Panel names the browser half owns (the board + the workflows panel). */
+export const OWNED_PANELS = ['all-tasks', 'workflows'] as const
 
 /** Selectors of the shell rows that hand the center column back to the conversation on click. */
 export const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'

@@ -33,6 +33,14 @@ import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } fr
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
 import { planWorkspaceActions } from './workspace-actions.ts'
+import {
+  applyCreateWorkflow,
+  applyDeleteWorkflow,
+  applyUpdateWorkflow,
+  type WorkflowCreateInput,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './workflows.ts'
 import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../protocol.ts'
 
 export interface AllTasksTransport {
@@ -153,6 +161,8 @@ export interface ControllerSnapshot {
   tasks: readonly TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: readonly TaskGroupRecord[]
+  /** Workflow DAGs (n8n-style automation graphs; definition only). */
+  workflows?: readonly WorkflowRecord[]
   /**
    * Per-workspace execution defaults for new tasks, keyed by workspace id
    * (Host-authoritative; the legacy seam keeps them in memory).
@@ -221,6 +231,7 @@ function messageOf(error: unknown): string {
 export class BoardController {
   private tasks: TaskRecord[] = []
   private groups: TaskGroupRecord[] = []
+  private workflows: WorkflowRecord[] = []
   private workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {}
   private workspacePaused: Record<string, number> = {}
   private boardOpen = false
@@ -280,6 +291,7 @@ export class BoardController {
     return {
       tasks: this.tasks,
       groups: this.groups,
+      workflows: this.workflows,
       workspaceDefaults: this.workspaceDefaults,
       workspacePaused: { ...this.workspacePaused },
       boardOpen: this.boardOpen,
@@ -627,6 +639,50 @@ export class BoardController {
   groupMembers(groupId: string): TaskRecord[] {
     const group = this.groups.find(candidate => candidate.id === groupId)
     return group === undefined ? [] : orderedGroupMembers(group, this.tasks)
+  }
+
+  // --- workflow mutations (pure transitions in core/workflows) -----------------
+
+  /** Create a workflow through the Host; exposes it only after confirmation. */
+  async createWorkflow(input: WorkflowCreateInput): Promise<WorkflowRecord | undefined> {
+    const id = this.uuid()
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'create-workflow', id, input }, id)
+        ? this.workflows.find(workflow => workflow.id === id)
+        : undefined
+    }
+    const result = applyCreateWorkflow(this.workflows, input, this.now(), id)
+    if (result.workflow === undefined) return undefined
+    this.workflows = [...result.workflows]
+    this.notify()
+    return result.workflow
+  }
+
+  /**
+   * Update a workflow (name, description, or the whole node/edge graph).
+   * @returns true when the authority accepted the patch.
+   */
+  async updateWorkflow(workflowId: string, patch: WorkflowUpdatePatch): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'update-workflow', workflowId, patch }, workflowId)
+    }
+    const result = applyUpdateWorkflow(this.workflows, workflowId, patch, this.now())
+    if (!result.applied) return false
+    this.workflows = [...result.workflows]
+    this.notify()
+    return true
+  }
+
+  /** Delete a workflow (referenced tasks are untouched). */
+  async deleteWorkflow(workflowId: string): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'delete-workflow', workflowId }, workflowId)
+    }
+    const result = applyDeleteWorkflow(this.workflows, workflowId)
+    if (!result.applied) return false
+    this.workflows = [...result.workflows]
+    this.notify()
+    return true
   }
 
   // --- scheduling ---------------------------------------------------------------
@@ -1028,6 +1084,7 @@ export class BoardController {
     this.tasks = [...snapshot.tasks]
     this.groups = [...snapshot.groups]
     // Tolerant of pre-feature snapshots (an older Host without the field).
+    this.workflows = snapshot.workflows ?? []
     this.workspaceDefaults = snapshot.workspaceDefaults ?? {}
     this.workspacePaused = snapshot.workspacePaused ?? {}
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }

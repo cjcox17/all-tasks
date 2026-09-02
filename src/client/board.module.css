@@ -27,11 +27,10 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* The Events/Actions panel containers share the board's takeover geometry:
-   an absolute fill over the conversation, hidden unless the panel is active,
+/* The Workflows panel container shares the board's takeover geometry: an
+   absolute fill over the conversation, hidden unless the panel is active,
    with the same opaque backdrop. */
-[data-dsh-events-view],
-[data-dsh-actions-view] {
+[data-dsh-workflows-view] {
   position: absolute;
   inset: 0;
   display: none;
@@ -42,11 +41,10 @@
 }
 
 /* The center column is single-occupant; the :not() guards keep the sibling
-   panels (task board / Events / Actions / ssh) from fighting over visibility
-   if two activation attributes ever coexist. */
-html[data-dsh-all-tasks-active]:not([data-dsh-events-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-all-tasks-view],
-html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-events-view],
-html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-dsh-actions-view] {
+   panels (task board / Workflows / ssh) from fighting over visibility if two
+   activation attributes ever coexist. */
+html[data-dsh-all-tasks-active]:not([data-dsh-workflows-active]):not([data-dsh-ssh-active]) [data-dsh-all-tasks-view],
+html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-ssh-active]) [data-dsh-workflows-view] {
   display: block;
 }
 
@@ -64,12 +62,10 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   display: none !important;
 }
 
-/* The Events/Actions panels hide the conversation the same way; each guard is
-   fully qualified so only the active panel's rule applies. */
-html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-events-view]),
-html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-events-view]),
-html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-actions-view]),
-html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-actions-view]) {
+/* The Workflows panel hides the conversation the same way; the guard is fully
+   qualified so only the active panel's rule applies. */
+html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-workflows-view]),
+html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-workflows-view]) {
   display: none !important;
 }
 

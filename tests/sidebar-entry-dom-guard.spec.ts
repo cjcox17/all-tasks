@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PanelController } from '../src/core/panel-controller.ts'
-import { mountActionsSidebarEntry, mountEventsSidebarEntry, mountSidebarEntry } from '../src/client/sidebar-entry.ts'
+import { mountSidebarEntry, mountWorkflowsSidebarEntry } from '../src/client/sidebar-entry.ts'
 
 describe('mountSidebarEntry DOM idempotency', () => {
   beforeEach(() => {
@@ -94,7 +94,7 @@ describe('mountSidebarEntry DOM idempotency', () => {
   })
 })
 
-describe('Events/Actions sidebar entries', () => {
+describe('Workflows sidebar entry', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
   })
@@ -122,26 +122,26 @@ describe('Events/Actions sidebar entries', () => {
     return { entryEl, createElement }
   }
 
-  it('skips mounting when the events row already exists', () => {
-    const { createElement } = stubDocument('[data-dsh-events-entry]')
+  it('skips mounting when the workflows row already exists', () => {
+    const { createElement } = stubDocument('[data-dsh-workflows-entry]')
     const panel = new PanelController()
 
-    const dispose = mountEventsSidebarEntry(panel)
+    const dispose = mountWorkflowsSidebarEntry(panel)
 
     expect(createElement).not.toHaveBeenCalled()
     expect(dispose()).toBeUndefined()
   })
 
-  it('creates the events row with its own attribute and the panel toggle semantics', () => {
-    const { entryEl, createElement } = stubDocument('[data-dsh-actions-entry]')
+  it('creates the workflows row with its own attribute and the panel toggle semantics', () => {
+    const { entryEl, createElement } = stubDocument('[data-dsh-all-tasks-entry]')
     const panel = new PanelController()
     let clickHandler: (() => void) | undefined
     entryEl.addEventListener.mockImplementation((_type: string, handler: () => void) => { clickHandler = handler })
 
-    const dispose = mountEventsSidebarEntry(panel)
+    const dispose = mountWorkflowsSidebarEntry(panel)
 
     expect(createElement).toHaveBeenCalledTimes(1)
-    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-events-entry', '')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-workflows-entry', '')
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-plugin', 'all-tasks')
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-part', 'sidebar-entry')
     expect(panel.getSnapshot().open).toBe(false)
@@ -153,14 +153,14 @@ describe('Events/Actions sidebar entries', () => {
     expect(entryEl.remove).toHaveBeenCalledTimes(1)
   })
 
-  it('creates the actions row below the family block', () => {
-    const { entryEl, createElement } = stubDocument('[data-dsh-events-entry]')
+  it('creates the workflows row below the family block', () => {
+    const { entryEl, createElement } = stubDocument('[data-dsh-all-tasks-entry]')
     const panel = new PanelController()
 
-    const dispose = mountActionsSidebarEntry(panel)
+    const dispose = mountWorkflowsSidebarEntry(panel)
 
     expect(createElement).toHaveBeenCalledTimes(1)
-    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-actions-entry', '')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-workflows-entry', '')
     dispose()
   })
 })

@@ -27,9 +27,9 @@ import { PanelController } from '../core/panel-controller.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
 import { claimAllTasksApply, releaseAllTasksApply } from './apply-guard.ts'
 import { mountBoard } from './board-mount.tsx'
-import { ActionsPanel, EventsPanel } from './integrations/IntegrationsPanel.tsx'
 import { mountPanel } from './panel-mount.tsx'
-import { mountActionsSidebarEntry, mountEventsSidebarEntry, mountSidebarEntry } from './sidebar-entry.ts'
+import { mountSidebarEntry, mountWorkflowsSidebarEntry } from './sidebar-entry.ts'
+import { WorkflowsPanel } from './workflows/WorkflowsPanel.tsx'
 import { AllTasksSettingsCard, AllTasksSettingsCardController, type AllTasksSettings } from './AllTasksSettingsCard.tsx'
 import { en, zh, type AllTasksKey } from './locales.ts'
 import { HttpAllTasksHostTransport } from './host-api.ts'
@@ -282,24 +282,16 @@ export function apply(ctx: ClientContext): void {
     try {
       disposers.push(mountSidebarEntry(controller))
       disposers.push(mountBoard(controller))
-      // Events and Actions panels: one controller + sidebar entry + center
-      // column panel each, reading the Host's registered integrations.
-      const eventsController = new PanelController()
-      const actionsController = new PanelController()
-      disposers.push(mountEventsSidebarEntry(eventsController))
-      disposers.push(mountActionsSidebarEntry(actionsController))
+      // Workflows panel: one controller + sidebar entry + center-column panel
+      // (the former Events/Actions panels are folded into the workflow DAG).
+      const workflowsController = new PanelController()
+      disposers.push(mountWorkflowsSidebarEntry(workflowsController))
       disposers.push(mountPanel({
-        name: 'events',
-        viewDataAttr: 'dshEventsView',
-        controller: eventsController,
+        name: 'workflows',
+        viewDataAttr: 'dshWorkflowsView',
+        controller: workflowsController,
         // index.ts is plain TS (no JSX); build the element via createElement.
-        render: () => createElement(EventsPanel, { controller: eventsController }),
-      }))
-      disposers.push(mountPanel({
-        name: 'actions',
-        viewDataAttr: 'dshActionsView',
-        controller: actionsController,
-        render: () => createElement(ActionsPanel, { controller: actionsController }),
+        render: () => createElement(WorkflowsPanel, { panel: workflowsController, controller }),
       }))
     } catch (error) {
       // DOM failures degrade the board, never the GUI.

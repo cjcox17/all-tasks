@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 /**
- * Panel mounting: the Events/Actions panels take over the center column the
- * same way the board does — a container inside the conversation column, a
+ * Panel mounting: the Workflows panel takes over the center column the same
+ * way the board does — a container inside the conversation column, a
  * single-occupancy html activation attribute, cross-panel eviction through
  * the shared activation event, and a clean disposer.
  */
-import { act } from 'react'
-import { createElement } from 'react'
+import { act, createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PanelController } from '../src/core/panel-controller.ts'
 import { ACTIVATE_EVENT, PANEL_ACTIVE_ATTRS } from '../src/client/panel-activation.ts'
@@ -31,14 +30,14 @@ afterEach(() => {
   for (const attr of Object.values(PANEL_ACTIVE_ATTRS)) document.documentElement.removeAttribute(attr)
 })
 
-function mountTestPanel(name: 'events' | 'actions'): PanelController {
+function mountTestPanel(): PanelController {
   const controller = new PanelController()
   act(() => {
     dispose = mountPanel({
-      name,
-      viewDataAttr: name === 'events' ? 'dshEventsView' : 'dshActionsView',
+      name: 'workflows',
+      viewDataAttr: 'dshWorkflowsView',
       controller,
-      render: () => createElement('div', { 'data-test-panel': name }, name),
+      render: () => createElement('div', { 'data-test-panel': 'workflows' }, 'workflows'),
     })
   })
   return controller
@@ -46,48 +45,48 @@ function mountTestPanel(name: 'events' | 'actions'): PanelController {
 
 describe('mountPanel', () => {
   it('mounts the view container inside the center column', () => {
-    const controller = mountTestPanel('events')
-    expect(column.querySelector('[data-dsh-events-view]')).not.toBeNull()
-    expect(column.querySelector('[data-dsh-events-view]')!.getAttribute('data-dsh-plugin')).toBe('all-tasks')
-    expect(column.querySelector('[data-dsh-events-view]')!.textContent).toBe('events')
+    const controller = mountTestPanel()
+    expect(column.querySelector('[data-dsh-workflows-view]')).not.toBeNull()
+    expect(column.querySelector('[data-dsh-workflows-view]')!.getAttribute('data-dsh-plugin')).toBe('all-tasks')
+    expect(column.querySelector('[data-dsh-workflows-view]')!.textContent).toBe('workflows')
     expect(controller.getSnapshot().open).toBe(false)
   })
 
   it('sets the html activation attribute while the panel is open and clears it on close', () => {
-    const controller = mountTestPanel('events')
+    const controller = mountTestPanel()
     act(() => { controller.openPanel() })
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(true)
-    expect(document.documentElement.hasAttribute('data-dsh-actions-active')).toBe(false)
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(true)
+    expect(document.documentElement.hasAttribute('data-dsh-all-tasks-active')).toBe(false)
     act(() => { controller.closePanel() })
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(false)
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(false)
   })
 
   it('evicts sibling panels when it opens (single-occupant center column)', () => {
-    const controller = mountTestPanel('events')
+    const controller = mountTestPanel()
     act(() => { controller.openPanel() })
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(true)
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(true)
 
     const sibling = new PanelController()
     let siblingDispose: (() => void) | undefined
     act(() => {
       siblingDispose = mountPanel({
-        name: 'actions',
-        viewDataAttr: 'dshActionsView',
+        name: 'all-tasks',
+        viewDataAttr: 'dshAllTasksView',
         controller: sibling,
-        render: () => createElement('div', { 'data-test-panel': 'actions' }, 'actions'),
+        render: () => createElement('div', { 'data-test-panel': 'all-tasks' }, 'all-tasks'),
       })
     })
     act(() => { sibling.openPanel() })
 
-    // The events panel's attribute is gone and its controller state closed.
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(false)
+    // The workflows panel's attribute is gone and its controller state closed.
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(false)
     expect(controller.getSnapshot().open).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-actions-active')).toBe(true)
+    expect(document.documentElement.hasAttribute('data-dsh-all-tasks-active')).toBe(true)
     siblingDispose?.()
   })
 
   it('announces the switch through the shared activation event', () => {
-    const controller = mountTestPanel('actions')
+    const controller = mountTestPanel()
     const received: string[] = []
     const listener = (event: Event): void => { received.push((event as CustomEvent).detail) }
     document.addEventListener(ACTIVATE_EVENT, listener)
@@ -96,27 +95,27 @@ describe('mountPanel', () => {
     } finally {
       document.removeEventListener(ACTIVATE_EVENT, listener)
     }
-    expect(received).toEqual(['actions'])
+    expect(received).toEqual(['workflows'])
   })
 
   it('closes when a sibling panel activates (board opening evicts the panel)', () => {
-    const controller = mountTestPanel('events')
+    const controller = mountTestPanel()
     act(() => { controller.openPanel() })
     expect(controller.getSnapshot().open).toBe(true)
     act(() => {
       document.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: 'all-tasks' }))
     })
     expect(controller.getSnapshot().open).toBe(false)
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(false)
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(false)
   })
 
   it('disposes cleanly: removes the container and the activation attribute', () => {
-    const controller = mountTestPanel('events')
+    const controller = mountTestPanel()
     act(() => { controller.openPanel() })
-    expect(column.querySelector('[data-dsh-events-view]')).not.toBeNull()
+    expect(column.querySelector('[data-dsh-workflows-view]')).not.toBeNull()
     dispose?.()
     dispose = undefined
-    expect(column.querySelector('[data-dsh-events-view]')).toBeNull()
-    expect(document.documentElement.hasAttribute('data-dsh-events-active')).toBe(false)
+    expect(column.querySelector('[data-dsh-workflows-view]')).toBeNull()
+    expect(document.documentElement.hasAttribute('data-dsh-workflows-active')).toBe(false)
   })
 })

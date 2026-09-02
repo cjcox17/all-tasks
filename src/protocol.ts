@@ -13,6 +13,17 @@ import {
 import { isTaskPermission, isTaskSource, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskSource, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
 import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
+import {
+  WORKFLOW_DESCRIPTION_BOUND,
+  normalizeWorkflowEdges,
+  normalizeWorkflowName,
+  normalizeWorkflowNodes,
+  type WorkflowCreateInput,
+  type WorkflowEdge,
+  type WorkflowNode,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './core/workflows.ts'
 
 export const ALL_TASKS_SCHEMA_VERSION = 2 as const
 export const ALL_TASKS_API_PREFIX = '/api/all-tasks'
@@ -43,6 +54,8 @@ export interface AllTasksSnapshot {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /** Workflow DAGs (n8n-style automation graphs; definition only, no executor yet). */
+  workflows?: WorkflowRecord[]
   /**
    * Per-workspace execution defaults the new-task dialog applies when a task
    * is created in that workspace, keyed by workspace-list id.
@@ -140,6 +153,9 @@ export type AllTasksAction =
   | { kind: 'move-group'; groupId: string; status: TaskStatus }
   | { kind: 'pause-workspace'; workspaceId: string }
   | { kind: 'continue-workspace'; workspaceId: string }
+  | { kind: 'create-workflow'; id: string; input: WorkflowCreateInput }
+  | { kind: 'update-workflow'; workflowId: string; patch: WorkflowUpdatePatch }
+  | { kind: 'delete-workflow'; workflowId: string }
 
 export interface AllTasksActionEnvelope {
   requestId: string
@@ -383,6 +399,50 @@ function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUp
   return sanitized
 }
 
+/** Gate a workflow node list from the wire (bounded, strictly structured). */
+function workflowNodesPayload(value: unknown): WorkflowNode[] | undefined {
+  return normalizeWorkflowNodes(value)
+}
+
+/** Gate a workflow edge list from the wire (bounded, strictly structured). */
+function workflowEdgesPayload(value: unknown): WorkflowEdge[] | undefined {
+  return normalizeWorkflowEdges(value)
+}
+
+/** Gate a workflow create input. */
+function workflowInput(value: unknown): value is WorkflowCreateInput {
+  const input = record(value)
+  if (input === undefined || !exactKeys(input, ['name', 'description', 'nodes', 'edges'])) return false
+  if (typeof input.name !== 'string') return false
+  if (input.description !== undefined && (typeof input.description !== 'string' || input.description.length > WORKFLOW_DESCRIPTION_BOUND)) return false
+  if (workflowNodesPayload(input.nodes) === undefined) return false
+  if (workflowEdgesPayload(input.edges) === undefined) return false
+  return true
+}
+
+/** Gate a workflow update patch (every field optional). */
+function workflowPatch(value: unknown): value is WorkflowUpdatePatch {
+  const patch = record(value)
+  if (patch === undefined || !exactKeys(patch, ['name', 'description', 'nodes', 'edges'])) return false
+  if (patch.name !== undefined && typeof patch.name !== 'string') return false
+  if (patch.description !== undefined && patch.description !== null
+    && (typeof patch.description !== 'string' || patch.description.length > WORKFLOW_DESCRIPTION_BOUND)) return false
+  if (patch.nodes !== undefined && workflowNodesPayload(patch.nodes) === undefined) return false
+  if (patch.edges !== undefined && workflowEdgesPayload(patch.edges) === undefined) return false
+  return true
+}
+
+/** Sanitize a workflow create/update payload (trim name; normalize nodes/edges). */
+function sanitizeWorkflowPatch(patch: WorkflowUpdatePatch | WorkflowCreateInput): WorkflowUpdatePatch | WorkflowCreateInput {
+  const sanitized: WorkflowUpdatePatch | WorkflowCreateInput = { ...patch }
+  if ('name' in sanitized) sanitized.name = normalizeWorkflowName(sanitized.name) ?? ''
+  // Description is left verbatim (the gate bound its length; the ledger's pure
+  // apply treats a blank as "clear" and a too-long value is already rejected).
+  if ('nodes' in sanitized) sanitized.nodes = normalizeWorkflowNodes(sanitized.nodes) ?? []
+  if ('edges' in sanitized) sanitized.edges = normalizeWorkflowEdges(sanitized.edges) ?? []
+  return sanitized
+}
+
 export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | undefined {
   const envelope = record(value)
   if (envelope === undefined || !exactKeys(envelope, ['requestId', 'action'])) return undefined
@@ -517,6 +577,27 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
     case 'rerun':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
       return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as AllTasksAction }
+    case 'create-workflow':
+      if (!exactKeys(action, ['kind', 'id', 'input'])) return undefined
+      if (typeof action.id !== 'string' || action.id === '') return undefined
+      if (!workflowInput(action.input)) return undefined
+      return {
+        requestId: envelope.requestId,
+        action: { kind: 'create-workflow', id: action.id, input: sanitizeWorkflowPatch(action.input) as WorkflowCreateInput },
+      }
+    case 'update-workflow':
+      if (!exactKeys(action, ['kind', 'workflowId', 'patch'])) return undefined
+      if (typeof action.workflowId !== 'string' || action.workflowId === '') return undefined
+      if (!workflowPatch(action.patch)) return undefined
+      return {
+        requestId: envelope.requestId,
+        action: { kind: 'update-workflow', workflowId: action.workflowId, patch: sanitizeWorkflowPatch(action.patch) as WorkflowUpdatePatch },
+      }
+    case 'delete-workflow':
+      if (!exactKeys(action, ['kind', 'workflowId'])) return undefined
+      return typeof action.workflowId === 'string' && action.workflowId !== ''
+        ? { requestId: envelope.requestId, action: { kind: 'delete-workflow', workflowId: action.workflowId } }
+        : undefined
     default:
       return undefined
   }
