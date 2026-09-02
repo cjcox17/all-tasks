@@ -26,7 +26,7 @@ import { createGithubEventSource, type GithubEventConfig } from './event-github.
 import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
 import { createSlackEventSource, type SlackEventConfig } from './event-slack.ts'
 import { AllTasksHostService } from './host-service.ts'
-import { makeEventRoutes, makeAllTasksRoutes } from './host-routes.ts'
+import { makeEventRoutes, makeAllTasksRoutes, makeIntegrationsRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
 
@@ -240,6 +240,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     const disposers: Array<() => void> = []
     try {
       for (const route of makeAllTasksRoutes(host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
+      for (const route of makeIntegrationsRoutes(eventSources, actions, () => current(), resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       for (const route of makeEventRoutes(eventSources, host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       dispatcher.start()
     } catch (error) {

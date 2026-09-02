@@ -17,6 +17,7 @@
 ## 功能
 
 - **任务看板 UI**：新会话按钮下方的侧边栏入口在宽栏显示图标和文字、在折叠 rail 显示图标；看板提供五列布局、搜索、任务详情、归档/恢复、执行历史和执行会话跳转。归档任务除恢复、删除和查看 transcript 外保持只读，恢复前不能手动或定时执行。
+- **事件与动作面板**：侧边栏在「全部任务」下方还有两个入口——**事件** 与 **动作**——各自打开一个只读的中栏面板，对应自动化框架的这一半。事件面板列出每个已注册的入站事件源（HTTP Webhook、GitHub Webhook、Slack Events）及其方法、挂载路由与解析后的配置；动作面板列出每个已注册的结果侧动作（HTTP 回调、GitHub 回写、生成子任务）及其触发的结算结果与配置。配置值永远只显示环境变量**名**（密钥通过环境变量提供，既不存储也不展示），配置本身仍在 **设置 → 插件 → 全部任务** 中维护——面板是状态界面，不是编辑器。两个面板共用同一个回环/代理围栏，数据来自 `GET /api/all-tasks/integrations`，由 Host 根据实时注册表与解析后的配置现场构建，因此设置改动或新增插件无需重启即可反映。
 - **Host 权威账本**：任务、计划和执行记录存于 `$DSH_HOME/all-tasks/ledger-v2.json`；浏览器动作只有经 Host 确认后才成为 UI 状态。
 - **有界执行历史**：每个任务只保留最近 20 条执行记录；新运行开始时截掉最旧的记录，使账本大小与每次写入成本不随任务历史无限增长。
 - **真实执行**：手动运行和定时运行共用 Host runner，新建独立会话、重命名、应用 agent 预设、通过 `session.selectModel` 钉住模型选择、应用 `/permission <id>`，再以 queue 模式发送任务 Prompt。
@@ -45,7 +46,7 @@
 - `src/host-ledger.ts` 串行动作，并用临时文件加原子 rename 持久化 `{ schemaVersion: 2, revision, tasks, groups, workspaceDefaults, scheduler, recentRequests }`。
 - `src/host-service.ts` 负责 cron tick、错过触发跳过、runner 启动、重启对账和电源保护理由。
 - `src/client/host-api.ts` 单次导入旧浏览器数据、提交幂等动作，并把 Host snapshot 当作唯一已确认 UI 状态。
-- 同源接口为 `GET /api/all-tasks/state`、`GET /api/all-tasks/events`、`POST /api/all-tasks/action` 与 `POST /api/all-tasks/title-suggest`（标题生成 RPC；仅提供建议，不触碰账本）。
+- 同源接口为 `GET /api/all-tasks/state`、`GET /api/all-tasks/integrations`（事件/动作面板状态）、`GET /api/all-tasks/events`、`POST /api/all-tasks/action` 与 `POST /api/all-tasks/title-suggest`（标题生成 RPC；仅提供建议，不触碰账本）。
 - 所有接口都要求浏览器同源标记。直接访问只允许 DSH loopback origin；同机认证反向代理必须使用显式 Host 白名单和服务端注入 token。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
 
 ## 安装
