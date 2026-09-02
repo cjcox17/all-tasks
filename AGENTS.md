@@ -32,3 +32,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Git worktrees
+
+Git worktrees for this repo are stored in the gitignored `.worktrees/` directory at the repo root (create one with `git worktree add .worktrees/<name> -b <branch-name>`).

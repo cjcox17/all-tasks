@@ -925,6 +925,33 @@ describe('AllTasks drag reorder, group join/leave (#drag)', () => {
     expect(updates).toEqual([{ id: 't-joiner', patch: { groupId: 'g1' } }])
   })
 
+  it('drops a task from another column directly onto a group and moves it into that column', async () => {
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const moves: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-failed', title: 'Failed member', status: 'failed', groupId: 'g-old' }),
+        task({ id: 't-other', title: 'Other failed', status: 'failed', groupId: 'g-old' }),
+      ],
+      groups: [
+        { id: 'g-old', name: 'Old', mode: 'sequential', order: ['t-failed', 't-other'], createdAt: 0, updatedAt: 0, offPeakOnly: false },
+        // An empty group renders in the todo column, so it is a valid drop
+        // target there even though the dragged task sits in the failed column.
+        { id: 'g-new', name: 'New', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false },
+      ],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+      moveTask: (id: string, status: string) => { moves.push({ id, status }) },
+    })
+    const section = container.querySelector('[data-group="g-new"]') as HTMLElement
+    expect(section).not.toBeNull()
+    dropOn(section, 'task:t-failed')
+    // Joining the todo group must also move the card out of the failed column,
+    // exactly like dropping on the column background first would.
+    expect(updates).toEqual([{ id: 't-failed', patch: { groupId: 'g-new' } }])
+    expect(moves).toEqual([{ id: 't-failed', status: 'todo' }])
+  })
+
   it('drops a group member onto the column background and ungroups it', async () => {
     const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
     const { container } = await renderBoard({
