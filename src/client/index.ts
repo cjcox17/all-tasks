@@ -210,7 +210,9 @@ export function apply(ctx: ClientContext): void {
     // Endpoint options come from the plugin's own settings (the `all-tasks`
     // namespace the Host validates and the router enforces), not the runtime.
     // The provider/model facts ride along so the model picker can constrain
-    // itself to models the pinned endpoints actually serve.
+    // itself to models the pinned endpoints actually serve, and the per-endpoint
+    // local pricing feeds the dashboard cost estimate (the official DeepSeek
+    // route bills its hard-coded peak/off-peak rates instead).
     const pushEndpointOptions = (): void => {
       const settings = settingsScope.getSnapshot()
       controller.setExecutionOptions({
@@ -221,25 +223,14 @@ export function apply(ctx: ClientContext): void {
               provider: endpoint.provider,
               models: endpoint.models,
               defaultModel: endpoint.defaultModel,
+              costPerMillionInputTokens: endpoint.costPerMillionInputTokens,
+              costPerMillionOutputTokens: endpoint.costPerMillionOutputTokens,
             }))
           : [],
       })
     }
     pushEndpointOptions()
     disposers.push(settingsScope.subscribe(pushEndpointOptions))
-    // Per-token pricing for the dashboard cost estimate (0 = not configured).
-    const pushPricing = (): void => {
-      const settings = settingsScope.getSnapshot()
-      const input = settings.status === 'ready' ? settings.value?.costPerMillionInputTokens : undefined
-      const output = settings.status === 'ready' ? settings.value?.costPerMillionOutputTokens : undefined
-      controller.setPricing(
-        typeof input === 'number' && input > 0 && typeof output === 'number' && output > 0
-          ? { inputPerMillion: input, outputPerMillion: output }
-          : undefined,
-      )
-    }
-    pushPricing()
-    disposers.push(settingsScope.subscribe(pushPricing))
     // Dashboard usage window in hours (0 = all time): narrows the token totals
     // and the cost estimate to executions settled within the last N hours.
     const pushUsageRetention = (): void => {

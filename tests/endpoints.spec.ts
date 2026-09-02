@@ -106,13 +106,29 @@ describe('endpoint normalization', () => {
     expect(normalizeEndpoint({
       id: ' local ', name: 'LM Studio', provider: 'lm-studio', models: ['qwen/qwen3.8-27b'],
       defaultModel: 'qwen/qwen3.8-27b',
+      costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.1,
     })).toEqual({
       id: 'local',
       name: 'LM Studio',
       provider: 'lm-studio',
       models: ['qwen/qwen3.8-27b'],
       defaultModel: 'qwen/qwen3.8-27b',
+      costPerMillionInputTokens: 0.27,
+      costPerMillionOutputTokens: 1.1,
     })
+  })
+
+  it('normalizes per-endpoint local pricing (positive kept, zero/malformed dropped)', () => {
+    const priced = normalizeEndpoint({ id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.1 })!
+    expect(priced.costPerMillionInputTokens).toBe(0.27)
+    expect(priced.costPerMillionOutputTokens).toBe(1.1)
+    // 0 (or absent) means not configured and is omitted, like the default model.
+    const zero = normalizeEndpoint({ id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 0, costPerMillionOutputTokens: 0 })!
+    expect(zero.costPerMillionInputTokens).toBeUndefined()
+    expect(zero.costPerMillionOutputTokens).toBeUndefined()
+    const malformed = normalizeEndpoint({ id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 'x', costPerMillionOutputTokens: -1 })!
+    expect(malformed.costPerMillionInputTokens).toBeUndefined()
+    expect(malformed.costPerMillionOutputTokens).toBeUndefined()
   })
 
   it('drops unusable entries and ignores provider-ish extras', () => {

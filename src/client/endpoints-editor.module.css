@@ -27,7 +27,8 @@
 .status,
 .invalid,
 .saved,
-.error {
+.error,
+.officialPricing {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
@@ -35,6 +36,13 @@
 
 .hint {
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* The official DeepSeek route bills its hard-coded peak/off-peak rates; the
+ * editor shows this note instead of local pricing fields. */
+.officialPricing {
+  color: var(--dsw-alias-label-tertiary);
+  padding: 2px 0;
 }
 
 .status {

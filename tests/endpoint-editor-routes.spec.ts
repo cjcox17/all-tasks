@@ -33,6 +33,8 @@ const VIEW: EndpointEditorView = {
   defaultModel: 'qwen/qwen3.8-27b',
   idleSeconds: 300,
   totalSeconds: 0,
+  costPerMillionInputTokens: 0,
+  costPerMillionOutputTokens: 0,
 }
 
 const STATE: EndpointEditorState = { endpoints: [VIEW], defaultEndpoints: ['lm-studio-nas'] }
@@ -203,7 +205,7 @@ describe('AllTasksHostService endpoint write path', () => {
     const next: EndpointEditorState = {
       endpoints: [
         { ...VIEW, idleSeconds: 900, totalSeconds: 3600 },
-        { id: 'deepseek', name: '', provider: DEEPSEEK_PROVIDER, models: [], defaultModel: '', idleSeconds: 600, totalSeconds: 0 },
+        { id: 'deepseek', name: '', provider: DEEPSEEK_PROVIDER, models: [], defaultModel: '', idleSeconds: 600, totalSeconds: 0, costPerMillionInputTokens: 0, costPerMillionOutputTokens: 0 },
       ],
       defaultEndpoints: ['lm-studio-nas', 'deepseek'],
     }

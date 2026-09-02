@@ -40,6 +40,10 @@ interface EndpointDraft {
   idleSeconds: string
   /** Editable total request timeout in seconds; '' = unset (pi-ai only). */
   totalSeconds: string
+  /** Local pricing: USD per 1M input tokens; '' = not configured. */
+  costInput: string
+  /** Local pricing: USD per 1M output tokens; '' = not configured. */
+  costOutput: string
 }
 
 function viewToDraft(view: EndpointEditorView): EndpointDraft {
@@ -51,6 +55,8 @@ function viewToDraft(view: EndpointEditorView): EndpointDraft {
     defaultModel: view.defaultModel,
     idleSeconds: String(view.idleSeconds),
     totalSeconds: view.totalSeconds > 0 ? String(view.totalSeconds) : '',
+    costInput: view.costPerMillionInputTokens > 0 ? String(view.costPerMillionInputTokens) : '',
+    costOutput: view.costPerMillionOutputTokens > 0 ? String(view.costPerMillionOutputTokens) : '',
   }
 }
 
@@ -63,6 +69,8 @@ function blankDraft(index: number): EndpointDraft {
     defaultModel: '',
     idleSeconds: '300',
     totalSeconds: '',
+    costInput: '',
+    costOutput: '',
   }
 }
 
@@ -70,6 +78,14 @@ function parseSeconds(text: string, allowZero: boolean): number | undefined {
   const value = Number(text.trim())
   if (!Number.isInteger(value)) return undefined
   if (value < (allowZero ? 0 : 1) || value > TIMEOUT_BOUND) return undefined
+  return value
+}
+
+/** Parse a local price (USD per 1M tokens): '' or 0 = unset, else a finite non-negative number. */
+function parsePrice(text: string): number | undefined {
+  if (text.trim() === '') return 0
+  const value = Number(text.trim())
+  if (!Number.isFinite(value) || value < 0) return undefined
   return value
 }
 
@@ -82,6 +98,8 @@ function draftToView(row: EndpointDraft): EndpointEditorView {
     defaultModel: row.defaultModel.trim(),
     idleSeconds: parseSeconds(row.idleSeconds, false) ?? 300,
     totalSeconds: parseSeconds(row.totalSeconds, true) ?? 0,
+    costPerMillionInputTokens: parsePrice(row.costInput) ?? 0,
+    costPerMillionOutputTokens: parsePrice(row.costOutput) ?? 0,
   }
 }
 
@@ -142,9 +160,20 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
     setError(undefined)
   }
 
-  /** Change a row's provider: clear models/defaultModel so they re-pick from the new provider's list. */
+  /**
+   * Change a row's provider: clear models/defaultModel so they re-pick from
+   * the new provider's list. Switching to the official DeepSeek route also
+   * drops the local price drafts (that route bills its hard-coded official
+   * rates, so the hidden fields would otherwise linger in storage unused).
+   */
   const changeProvider = (index: number, provider: string): void => {
-    patchRow(index, { provider, models: [], defaultModel: '' })
+    const officialDeepSeek = providers.find(candidate => candidate.provider === provider)?.namespace === 'llm-deepseek'
+    patchRow(index, {
+      provider,
+      models: [],
+      defaultModel: '',
+      ...(officialDeepSeek ? { costInput: '', costOutput: '' } : {}),
+    })
   }
 
   const toggleModel = (index: number, model: string): void => {
@@ -222,6 +251,15 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
       }
       if (messages[index] === undefined && row.totalSeconds.trim() !== '' && parseSeconds(row.totalSeconds, true) === undefined) {
         messages[index] = t('settings.endpointInvalidNumber')
+      }
+      // Local pricing only applies to non-official endpoints (the official
+      // DeepSeek route bills its hard-coded peak/off-peak rates); still parse
+      // the fields so a stray bad value never slips through on save.
+      if (messages[index] === undefined && parsePrice(row.costInput) === undefined) {
+        messages[index] = t('settings.endpointInvalidPrice')
+      }
+      if (messages[index] === undefined && parsePrice(row.costOutput) === undefined) {
+        messages[index] = t('settings.endpointInvalidPrice')
       }
       if (messages[index] === undefined) {
         const models = [...new Set(row.models.map(model => model.trim()).filter(model => model !== ''))]
@@ -301,6 +339,9 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
             const providerModels = providerModelsOf(row)
             const knownModels = providerModels.length > 0
             const totalOnly = providers.find(candidate => candidate.provider === row.provider)?.namespace === 'llm-pi-ai'
+            // The official DeepSeek route bills its hard-coded peak/off-peak
+            // rates automatically; local pricing fields are hidden for it.
+            const officialDeepSeek = providers.find(candidate => candidate.provider === row.provider)?.namespace === 'llm-deepseek'
             return (
               <div className={css.row} key={index} data-endpoint={row.id || `row-${index}`}>
                 <div className={css.rowHead}>
@@ -429,6 +470,40 @@ export function EndpointsEditor(props: EndpointsEditorProps) {
                       <span className={css.fieldLabel}>{t('settings.endpointTimeoutSeconds')}</span>
                     </label>
                   )}
+                  {officialDeepSeek
+                    ? <p className={css.officialPricing} data-dsh-part={`endpoint-official-pricing-${index}`}>{t('settings.endpointOfficialPricing')}</p>
+                    : (
+                      <>
+                        <label className={css.fieldSmall} htmlFor={`endpoint-cost-input-${index}`}>
+                          <span className={css.fieldLabel}>{t('settings.endpointCostInput')}</span>
+                          <input
+                            id={`endpoint-cost-input-${index}`}
+                            className={css.input}
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={row.costInput}
+                            disabled={busy || disabled}
+                            onChange={event => { patchRow(index, { costInput: event.target.value }) }}
+                          />
+                          <span className={css.fieldLabel}>{t('settings.endpointPerMillion')}</span>
+                        </label>
+                        <label className={css.fieldSmall} htmlFor={`endpoint-cost-output-${index}`}>
+                          <span className={css.fieldLabel}>{t('settings.endpointCostOutput')}</span>
+                          <input
+                            id={`endpoint-cost-output-${index}`}
+                            className={css.input}
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={row.costOutput}
+                            disabled={busy || disabled}
+                            onChange={event => { patchRow(index, { costOutput: event.target.value }) }}
+                          />
+                          <span className={css.fieldLabel}>{t('settings.endpointPerMillion')}</span>
+                        </label>
+                      </>
+                    )}
                 </div>
                 {invalid[index] !== undefined ? <p className={css.invalid} role="alert">{invalid[index]}</p> : null}
               </div>

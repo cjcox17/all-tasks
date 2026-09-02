@@ -17,7 +17,7 @@
  * bucket: each execution's bucket key is derived with the same
  * {@link bucketStart} used to generate the window.
  */
-import type { CostPricingInput } from './dashboard.ts'
+import { executionCostUsd, type PricingEndpoint } from './pricing.ts'
 import type { ExecutionUsage, TaskRecord } from './tasks.ts'
 
 /** How finely the usage graphs bucket executions. */
@@ -42,7 +42,12 @@ export interface UsageSeriesPoint {
   reasoning: number
   /** Whether any execution in this bucket reported usage. */
   available: boolean
-  /** Estimated USD cost for the bucket; undefined without usage and pricing. */
+  /**
+   * Estimated USD cost for the bucket: the sum of the per-execution costs of
+   * the executions bucketed there (official DeepSeek peak/off-peak rates or
+   * the endpoint's own pricing; see pricing.ts). Undefined when no endpoint
+   * pricing applies to any execution in the bucket.
+   */
   cost: number | undefined
 }
 
@@ -51,7 +56,11 @@ export interface UsageSeriesInput {
   granularity: UsageGranularity
   /** Window end (ms epoch); the last bucket is the one containing this. */
   now: number
-  pricing?: CostPricingInput
+  /**
+   * Configured endpoints with their pricing; absent disables the cost
+   * estimate entirely (mirroring the old "no pricing configured").
+   */
+  endpoints?: readonly PricingEndpoint[]
   /**
    * Optional retention cutoff (ms epoch, absent = all time): executions that
    * settled before `since` don't count, and buckets that end at or before it
@@ -129,15 +138,18 @@ export function bucketLabel(start: number, granularity: UsageGranularity): strin
  * retention `since` is given, executions that settled before it don't count
  * and buckets whose end is at or before it are clipped from the window.
  *
- * The per-bucket cost estimate uses the same rule as the summary card: billed
- * input + output times the configured per-million prices, undefined when
- * pricing is not configured or the bucket has no usage.
+ * The per-bucket cost estimate uses the same rule as the summary card: each
+ * execution is billed against the endpoint it ran through (official DeepSeek
+ * peak/off-peak rates or the endpoint's own pricing; see pricing.ts) and the
+ * costs of the executions bucketed together are summed. A bucket whose
+ * executions carry no applicable rate (or no endpoints configured at all)
+ * stays undefined.
  */
 export function computeUsageSeries(
   tasks: readonly TaskRecord[],
   input: UsageSeriesInput,
 ): UsageSeriesPoint[] {
-  const { granularity, now, pricing, since } = input
+  const { granularity, now, endpoints, since } = input
   const count = USAGE_WINDOW[granularity]
   // Build the window backwards from the bucket containing `now`, so the last
   // bucket is always the current hour/day/week and earlier buckets are
@@ -177,13 +189,13 @@ export function computeUsageSeries(
       point.input += billedInputOf(execution.usage)
       point.output += execution.usage.outputTokens
       point.reasoning += execution.usage.reasoningTokens ?? 0
-    }
-  }
-  if (pricing !== undefined) {
-    for (const point of buckets) {
-      if (point.available) {
-        point.cost = (point.input / 1_000_000) * pricing.inputPerMillion
-          + (point.output / 1_000_000) * pricing.outputPerMillion
+      // Bill the execution into its start bucket, exactly like the summary
+      // card bills each execution. Executions without an applicable rate
+      // contribute tokens but no cost, so a bucket of only unpriced runs
+      // stays undefined.
+      if (endpoints !== undefined) {
+        const one = executionCostUsd(execution, task, endpoints)
+        if (one !== undefined) point.cost = (point.cost ?? 0) + one
       }
     }
   }

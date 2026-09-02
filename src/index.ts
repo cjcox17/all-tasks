@@ -74,10 +74,6 @@ export interface Config {
   proxyTokenEnv?: string
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
-  /** Cost estimate: USD per 1M input tokens (0 = not configured). */
-  costPerMillionInputTokens?: number
-  /** Cost estimate: USD per 1M output tokens (0 = not configured). */
-  costPerMillionOutputTokens?: number
   /**
    * Dashboard usage window in hours (0 = all time): the token totals and the
    * cost estimate only count executions settled within the last N hours. A
@@ -106,6 +102,14 @@ export interface EndpointSettingsConfig {
   models?: string[]
   /** Model used when the task's model pin cannot be served by this endpoint. */
   defaultModel?: string
+  /**
+   * Local pricing for the dashboard cost estimate: USD per 1M input tokens
+   * (0 = not configured; the official DeepSeek route instead uses its
+   * hard-coded official peak/off-peak rates automatically).
+   */
+  costPerMillionInputTokens?: number
+  /** Local pricing for the dashboard cost estimate: USD per 1M output tokens. */
+  costPerMillionOutputTokens?: number
 }
 
 const endpointSettings = z.object({
@@ -114,6 +118,8 @@ const endpointSettings = z.object({
   provider: z.string().min(1),
   models: z.array(z.string()).default([]),
   defaultModel: z.string().default(''),
+  costPerMillionInputTokens: z.number().min(0).default(0),
+  costPerMillionOutputTokens: z.number().min(0).default(0),
 })
 
 const httpEventSettings = z.object({
@@ -157,8 +163,6 @@ export const Config: z<Config> = z.object({
   trustedProxyHosts: z.array(z.string()).default([]),
   proxyTokenEnv: z.string().min(1).default(DEFAULT_PROXY_TOKEN_ENV),
   endpointMaxWaitHours: z.number().min(0).default(24),
-  costPerMillionInputTokens: z.number().min(0).default(0),
-  costPerMillionOutputTokens: z.number().min(0).default(0),
   usageRetentionHours: z.number().min(0).default(0),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),

@@ -38,9 +38,15 @@ function usedExecution(input: number, output: number, reasoning = 0) {
     endedAt: Date.now() - 60_000,
     result: 'succeeded' as const,
     error: undefined,
+    endpointId: 'lm',
     usage: { inputTokens: input, outputTokens: output, ...(reasoning > 0 ? { reasoningTokens: reasoning } : {}) },
   }
 }
+
+/** A local endpoint with USD-per-1M pricing for the cost-bar assertions. */
+const LOCAL: Array<{ id: string; provider: string; costPerMillionInputTokens: number; costPerMillionOutputTokens: number }> = [
+  { id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.10 },
+]
 
 function render(children: React.ReactNode): HTMLElement {
   const container = document.createElement('div')
@@ -72,7 +78,7 @@ describe('UsageCharts', () => {
   })
 
   it('shows stacked token bars with the aggregated value, and a cost bar per bucket', () => {
-    render(<UsageCharts tasks={[task({ executions: [usedExecution(1000, 500, 50)] })]} pricing={{ inputPerMillion: 0.27, outputPerMillion: 1.10 }} />)
+    render(<UsageCharts tasks={[task({ executions: [usedExecution(1000, 500, 50)] })]} endpoints={LOCAL} />)
     // Daily window: 14 buckets in each panel.
     expect(panel('tokens').querySelectorAll('[data-dsh-part="usage-bar"]')).toHaveLength(14)
     expect(panel('cost').querySelectorAll('[data-dsh-part="usage-bar"]')).toHaveLength(14)
@@ -104,7 +110,7 @@ describe('UsageCharts', () => {
   })
 
   it('shows the empty note when no execution reported usage', () => {
-    render(<UsageCharts tasks={[task({ executions: [] })]} pricing={{ inputPerMillion: 0.27, outputPerMillion: 1.10 }} />)
+    render(<UsageCharts tasks={[task({ executions: [] })]} endpoints={LOCAL} />)
     expect(bars()).toHaveLength(0)
     expect(panel('tokens').textContent).toContain(t('usage.empty'))
     expect(panel('cost').textContent).toContain(t('usage.empty'))
@@ -121,7 +127,7 @@ describe('UsageCharts', () => {
     render(
       <UsageCharts
         tasks={[task({ executions: [usedExecution(1000, 500)] })]}
-        pricing={{ inputPerMillion: 0.27, outputPerMillion: 1.10 }}
+        endpoints={LOCAL}
         retentionHours={24}
       />,
     )

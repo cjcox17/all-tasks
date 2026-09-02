@@ -27,10 +27,6 @@ export interface AllTasksSettings {
   autoTitle?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
-  /** Cost estimate: USD per 1M input tokens (0 = not configured). */
-  costPerMillionInputTokens?: number
-  /** Cost estimate: USD per 1M output tokens (0 = not configured). */
-  costPerMillionOutputTokens?: number
   /** Dashboard usage window in hours (0 = all time): token totals and the cost estimate only count runs settled within the last N hours. */
   usageRetentionHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
@@ -42,6 +38,8 @@ export interface AllTasksSettings {
     provider?: string
     models?: string[]
     defaultModel?: string
+    costPerMillionInputTokens?: number
+    costPerMillionOutputTokens?: number
   }>
 }
 
@@ -53,10 +51,6 @@ export interface AllTasksSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
-  /** Cost estimate: USD per 1M input tokens. */
-  costPerMillionInputTokens: CardFieldState
-  /** Cost estimate: USD per 1M output tokens. */
-  costPerMillionOutputTokens: CardFieldState
   /** Dashboard usage window in hours (0 = all time). */
   usageRetentionHours: CardFieldState
   /** Session-view timestamp/token flag. */
@@ -84,8 +78,6 @@ export class AllTasksSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('preventIdleSleep'),
-      numberField('costPerMillionInputTokens', { min: 0 }),
-      numberField('costPerMillionOutputTokens', { min: 0 }),
       numberField('usageRetentionHours', { min: 0 }),
       booleanField('sessionTimestamps'),
       booleanField('autoTitle'),
@@ -99,8 +91,6 @@ export class AllTasksSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
-      costPerMillionInputTokens: this.form.field('costPerMillionInputTokens'),
-      costPerMillionOutputTokens: this.form.field('costPerMillionOutputTokens'),
       usageRetentionHours: this.form.field('usageRetentionHours'),
       sessionTimestamps: this.form.field('sessionTimestamps'),
       autoTitle: this.form.field('autoTitle'),
@@ -207,28 +197,6 @@ export function AllTasksSettingsCard(props: AllTasksSettingsCardProps) {
         {...state.preventIdleSleep}
         onEdit={(text) => { props.edit('preventIdleSleep', text) }}
         onReset={() => { props.resetField('preventIdleSleep') }}
-      />
-      <ValueField
-        id="settings-all-tasks-cost-input"
-        numeric
-        label={t('settings.costInput')}
-        hint={t('settings.costHint')}
-        placeholder="0.00"
-        {...fieldProps}
-        {...state.costPerMillionInputTokens}
-        onEdit={(text) => { props.edit('costPerMillionInputTokens', text) }}
-        onReset={() => { props.resetField('costPerMillionInputTokens') }}
-      />
-      <ValueField
-        id="settings-all-tasks-cost-output"
-        numeric
-        label={t('settings.costOutput')}
-        hint={t('settings.costHint')}
-        placeholder="0.00"
-        {...fieldProps}
-        {...state.costPerMillionOutputTokens}
-        onEdit={(text) => { props.edit('costPerMillionOutputTokens', text) }}
-        onReset={() => { props.resetField('costPerMillionOutputTokens') }}
       />
       <ValueField
         id="settings-all-tasks-usage-retention"

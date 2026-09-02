@@ -128,24 +128,24 @@ describe('computeUsageSeries', () => {
     expect(bucket?.output).toBe(500)
   })
 
-  it('estimates per-bucket cost from usage and pricing, and omits it otherwise', () => {
+  it('estimates per-bucket cost from per-execution endpoint pricing, and omits it otherwise', () => {
     const now = at(2025, 2, 12, 15, 30)
     const tasks = [
       task({
         executions: [
-          execution({ id: 'e1', startedAt: at(2025, 2, 12, 14, 0), usage: { inputTokens: 1_000_000, outputTokens: 500_000 } }),
+          execution({ id: 'e1', endpointId: 'lm', startedAt: at(2025, 2, 12, 14, 0), usage: { inputTokens: 1_000_000, outputTokens: 500_000 } }),
         ],
       }),
     ]
-    const pricing = { inputPerMillion: 0.27, outputPerMillion: 1.10 }
-    const withPricing = computeUsageSeries(tasks, { granularity: 'daily', now, pricing })
-    const today = withPricing.at(-1)!
+    const local = [{ id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.10 }]
+    const withEndpoints = computeUsageSeries(tasks, { granularity: 'daily', now, endpoints: local })
+    const today = withEndpoints.at(-1)!
     expect(today.cost).toBeCloseTo(0.27 + 0.55)
     // Unused buckets carry no cost, even with pricing configured.
-    expect(withPricing[0]!.cost).toBeUndefined()
+    expect(withEndpoints[0]!.cost).toBeUndefined()
 
-    const withoutPricing = computeUsageSeries(tasks, { granularity: 'daily', now })
-    expect(withoutPricing.at(-1)!.cost).toBeUndefined()
+    const withoutEndpoints = computeUsageSeries(tasks, { granularity: 'daily', now })
+    expect(withoutEndpoints.at(-1)!.cost).toBeUndefined()
   })
 
   it('counts cancelled and failed runs (they consumed tokens) like successes', () => {

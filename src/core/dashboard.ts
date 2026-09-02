@@ -1,8 +1,11 @@
 /**
  * Board-wide dashboard aggregation: the summary cards above the workspace
  * list. Pure and framework-free so it is unit-testable in isolation. Cost is
- * an estimate — it multiplies the captured token usage by the configured
- * per-million prices and is undefined when tokens or pricing are absent.
+ * an estimate — each settled execution is billed against the endpoint it ran
+ * through (DeepSeek's official peak/off-peak rates for the official route,
+ * the endpoint's own configured prices for local compute; see pricing.ts) and
+ * the results are summed; it is undefined when no execution carries usage and
+ * a rate.
  *
  * An optional retention window (`usageRetentionHours`) narrows the token
  * totals and the cost estimate to executions that settled inside the window:
@@ -10,13 +13,8 @@
  * window — the ledger keeps every execution; nothing is pruned.
  */
 import type { TaskGroupRecord } from './groups.ts'
+import { executionCostUsd, type PricingEndpoint } from './pricing.ts'
 import type { TaskRecord } from './tasks.ts'
-
-/** Per-token pricing for the cost estimate (USD per 1M tokens). */
-export interface CostPricingInput {
-  inputPerMillion: number
-  outputPerMillion: number
-}
 
 /** Aggregated token accounting across every execution that reported usage. */
 export interface TokenTotals {
@@ -51,7 +49,11 @@ export interface DashboardMetrics {
   tokens: TokenTotals
   /** done / (done + failed), or undefined when nothing has settled either way. */
   successRate: number | undefined
-  /** Estimated USD spend; undefined without token usage and pricing. */
+  /**
+   * Estimated USD spend: the sum of each execution's cost (official DeepSeek
+   * peak/off-peak rates, or the endpoint's own pricing); undefined when no
+   * execution reported usage with an applicable rate.
+   */
   cost: number | undefined
 }
 
@@ -85,11 +87,15 @@ export const HOUR_MS = 3_600_000
  * Archived tasks are excluded from every count (they leave the board).
  * `usageRetentionHours` (0/undefined = all time) narrows the token totals and
  * the cost estimate to executions settled within that many hours of `now`.
+ * @param tasks - the board's tasks.
+ * @param groups - the board's task groups.
+ * @param endpoints - configured endpoints with their pricing; absent disables
+ *   the cost estimate entirely (mirroring the old "no pricing configured").
  */
 export function computeDashboard(
   tasks: readonly TaskRecord[],
   groups: readonly TaskGroupRecord[],
-  pricing?: CostPricingInput,
+  endpoints?: readonly PricingEndpoint[],
   usageRetentionHours?: number,
   now = Date.now(),
 ): DashboardMetrics {
@@ -136,9 +142,21 @@ export function computeDashboard(
     ? now - usageRetentionHours * HOUR_MS
     : undefined
   metrics.tokens = tokenTotalsOf(tasks, since)
-  if (pricing !== undefined && metrics.tokens.available) {
-    metrics.cost = (metrics.tokens.input / 1_000_000) * pricing.inputPerMillion
-      + (metrics.tokens.output / 1_000_000) * pricing.outputPerMillion
+  // The cost estimate follows the token totals: it spans every retained
+  // execution (archived tasks included, like the old single-rate estimate).
+  if (endpoints !== undefined) {
+    let cost: number | undefined
+    for (const task of tasks) {
+      for (const execution of task.executions) {
+        // Same retention rule as the token totals: an execution settled before
+        // the window drops out of the estimate, still-open ones always count.
+        if (since !== undefined && execution.endedAt !== undefined && execution.endedAt < since) continue
+        const one = executionCostUsd(execution, task, endpoints)
+        if (one === undefined) continue
+        cost = (cost ?? 0) + one
+      }
+    }
+    metrics.cost = cost
   }
   return metrics
 }

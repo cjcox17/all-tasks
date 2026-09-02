@@ -19,7 +19,8 @@
  * window at mount time.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { HOUR_MS, type CostPricingInput } from '../../core/dashboard.ts'
+import { HOUR_MS } from '../../core/dashboard.ts'
+import type { PricingEndpoint } from '../../core/pricing.ts'
 import type { TaskRecord } from '../../core/tasks.ts'
 import { USAGE_WINDOW, computeUsageSeries, type UsageGranularity } from '../../core/usage-series.ts'
 import { t, type AllTasksKey } from '../locales.ts'
@@ -130,13 +131,18 @@ function UsagePanel({ chart, title, hint, children }: {
 }
 
 /**
- * The dashboard usage section. `tasks`, `pricing`, and the optional
+ * The dashboard usage section. `tasks`, `endpoints`, and the optional
  * `retentionHours` usage window come from the controller snapshot;
  * granularity is local view state (one dropdown drives both charts).
  */
-export function UsageCharts({ tasks, pricing, retentionHours }: {
+export function UsageCharts({ tasks, endpoints, retentionHours }: {
   tasks: readonly TaskRecord[]
-  pricing?: CostPricingInput
+  /**
+   * Configured endpoints with their pricing: the cost panel bills each
+   * execution against the endpoint it ran through (official DeepSeek
+   * peak/off-peak rates, or the endpoint's own local pricing).
+   */
+  endpoints?: readonly PricingEndpoint[]
   /**
    * Dashboard usage window in hours (absent/0 = all time): executions settled
    * outside it don't count and older buckets are clipped from the charts,
@@ -157,18 +163,19 @@ export function UsageCharts({ tasks, pricing, retentionHours }: {
     () => computeUsageSeries(tasks, {
       granularity,
       now,
-      pricing,
+      endpoints,
       since: retentionHours !== undefined && retentionHours > 0
         ? now - retentionHours * HOUR_MS
         : undefined,
     }),
-    [tasks, granularity, now, pricing, retentionHours],
+    [tasks, granularity, now, endpoints, retentionHours],
   )
 
   const anyUsage = series.some(point => point.available)
   const maxTokens = series.reduce((max, point) => Math.max(max, point.input + point.output + point.reasoning), 0)
   const maxCost = series.reduce((max, point) => Math.max(max, point.cost ?? 0), 0)
-  const pricingMissing = anyUsage && pricing === undefined
+  const anyCost = series.some(point => point.cost !== undefined)
+  const costMissing = anyUsage && !anyCost
   // The granularity hint names the fixed look-back; when a retention window
   // clips the series shorter than that (a coarse granularity under a short
   // retention), the hint switches to the retention window itself, so the
@@ -226,7 +233,7 @@ export function UsageCharts({ tasks, pricing, retentionHours }: {
         <UsagePanel chart="cost" title={t('usage.cost')} hint={windowHint}>
           {costBars.some(point => point.segments.length > 0)
             ? <UsageBars points={costBars} max={maxCost} maxLabel={formatCost(maxCost)} />
-            : <p className={css.usageEmpty}>{pricingMissing ? t('usage.emptyCost') : t('usage.empty')}</p>}
+            : <p className={css.usageEmpty}>{costMissing ? t('usage.emptyCost') : t('usage.empty')}</p>}
         </UsagePanel>
         <UsagePanel chart="tokens" title={t('usage.tokens')} hint={windowHint}>
           {anyUsage
