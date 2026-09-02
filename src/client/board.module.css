@@ -724,6 +724,17 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   flex: none;
 }
 
+/* The drag grip on a movable group banner: a visible affordance that the
+   whole header is a drag source (the header itself carries `draggable`). */
+.groupGrip {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: grab;
+  user-select: none;
+}
+
 .groupName {
   flex: 1;
   min-width: 0;
