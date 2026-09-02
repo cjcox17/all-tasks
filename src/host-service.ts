@@ -171,6 +171,17 @@ export class AllTasksHostService {
         })
       }
     }
+    // A hide-tasks action archives the tasks in the ledger; when the browser
+    // also asked for it, each hidden task's execution sessions are archived in
+    // the DSH workspace registry (they leave the session list, their logs
+    // stay). Best-effort fire-and-forget, exactly like session cancel.
+    if (result.archiveSessions !== undefined) {
+      for (const sessionId of result.archiveSessions) {
+        void this.runner.archiveSession(sessionId).catch(error => {
+          console.error('[dsh-all-tasks] session archive failed', error)
+        })
+      }
+    }
     // A continue action re-prompts the paused session so the agent resumes
     // with its history (best-effort; a session that vanished settles as
     // cancelled on the next poll).

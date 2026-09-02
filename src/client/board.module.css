@@ -263,6 +263,31 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding: 1px 8px;
 }
 
+/* The hide-old-tasks affordance on the Done/Failed column headers. */
+.columnHide {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.columnHide:hover:not(:disabled),
+.columnHide:focus-visible {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.columnHide:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .statusDot {
   width: 8px;
   height: 8px;
@@ -615,6 +640,61 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* The hide-old-tasks dialog's task preview and session-archive option. */
+.hideList {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.hideRow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.hideRowTitle {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hideRowMore {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.hideSessionOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.hideSessionOption input {
+  margin: 2px 0 0;
+  flex: none;
+}
+
+.hideSessionOptionDisabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
 }
 
 .input {

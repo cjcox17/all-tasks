@@ -233,6 +233,20 @@ export class HostExecutionRunner {
   }
 
   /**
+   * Archive one session in the DSH workspace registry: it disappears from
+   * every grouping surface (the sidebar session list) while its log and
+   * workspace accounting slot stay, so a later unarchive restores its
+   * position. Fired after the board's hide-tasks action archives the owning
+   * tasks; idempotent for an already archived id, and a session that no
+   * longer exists fails with session-not-found (the caller logs, never
+   * fatal).
+   */
+  async archiveSession(sessionId: string): Promise<void> {
+    const response = await this.api.workspace.archiveSession(request({ sessionId: sessionId as ExecutionSessionId }))
+    if (!response.result.ok) throw failure(response.result.error)
+  }
+
+  /**
    * Continue one paused execution: re-queue the task prompt in the SAME
    * session, so the agent resumes with its full history where the pause left
    * off. The session is idle after the pause's cancel; the queued prompt is

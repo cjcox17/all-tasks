@@ -495,3 +495,37 @@ describe('create origin source gate', () => {
     })).toBeUndefined()
   })
 })
+
+describe('hide-tasks action gate', () => {
+  const ids = ['task-done', 'task-failed']
+
+  it('accepts a bounded task id list with the archive-sessions flag', () => {
+    for (const archiveSessions of [false, true]) {
+      const parsed = parseActionEnvelope({
+        requestId: 'hide-a',
+        action: { kind: 'hide-tasks', taskIds: ids, archiveSessions },
+      })
+      expect(parsed?.action).toMatchObject({ kind: 'hide-tasks', taskIds: ids, archiveSessions })
+    }
+  })
+
+  it('rejects malformed payloads', () => {
+    for (const action of [
+      { kind: 'hide-tasks', taskIds: ids, archiveSessions: 'yes' },
+      { kind: 'hide-tasks', taskIds: [], archiveSessions: true },
+      { kind: 'hide-tasks', taskIds: ['task-a', ''], archiveSessions: true },
+      { kind: 'hide-tasks', taskIds: ['task-a'], archiveSessions: true, extra: 1 },
+      { kind: 'hide-tasks', taskIds: ids },
+      { kind: 'hide-tasks', taskIds: ids, archiveSessions: true, sessions: ['s1'] },
+    ]) {
+      expect(parseActionEnvelope({ requestId: 'hide-bad', action })).toBeUndefined()
+    }
+  })
+
+  it('rejects an oversized id list (the action body must stay within the request limit)', () => {
+    expect(parseActionEnvelope({
+      requestId: 'hide-big',
+      action: { kind: 'hide-tasks', taskIds: Array.from({ length: 1001 }, (_, index) => `task-${index}`), archiveSessions: false },
+    })).toBeUndefined()
+  })
+})

@@ -24,7 +24,7 @@ import {
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
 import { canMoveManually, continueExecution, MANUAL_STATUSES, moveTaskBefore, pauseExecution, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
-import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
+import { applyArchiveTask, applyArchiveTasks, applyRestoreTask, collectExecutionSessionIds } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleNextRun } from './core/use-cases/task-schedule.ts'
@@ -117,6 +117,13 @@ export interface LedgerApplyResult {
   stopSessions?: string[]
   /** Sessions to re-prompt with their task (continue actions). */
   resumeRuns?: ResumeRun[]
+  /**
+   * Execution sessions of tasks a hide-tasks action archived, to be hidden
+   * from the DSH session list (the workspace registry's archive set). The
+   * Host derives them from the ledger executions it just archived; best-effort
+   * fire-and-forget like session cancel.
+   */
+  archiveSessions?: string[]
 }
 
 /** Minimal value copy used by the Host session monitor. */
@@ -1007,6 +1014,7 @@ export class HostTaskLedger {
     let runs: OpenedRun[] | undefined
     const stopSessions: string[] = []
     const resumeRuns: ResumeRun[] = []
+    let archiveSessions: string[] | undefined
     switch (action.kind) {
       case 'import': {
         const sources = new Set(this.document.scheduler.importedSources ?? [])
@@ -1169,6 +1177,24 @@ export class HostTaskLedger {
         const result = applyRestoreTask(this.document.tasks, action.taskId, now)
         if (!result.archived) throw new Error('task is not archived')
         this.document.tasks = [...result.tasks]
+        break
+      }
+      case 'hide-tasks': {
+        // The bulk hide of a Done/Failed column: archive every requested
+        // settled task in one ledger revision. All-or-nothing — an unknown,
+        // still-open, or already-archived id fails the whole action so a
+        // column never half-disappears behind a stray stale id.
+        const before = this.document.tasks
+        const result = applyArchiveTasks(before, action.taskIds, now)
+        if (!result.allArchived) throw new Error('task cannot be archived')
+        this.document.tasks = [...result.tasks]
+        // The session set is derived from the ledger executions of the tasks
+        // being hidden, never accepted from the wire: the browser only says
+        // whether it wants the sessions archived too.
+        if (action.archiveSessions) {
+          const sessions = collectExecutionSessionIds(before, action.taskIds)
+          if (sessions.length > 0) archiveSessions = [...sessions]
+        }
         break
       }
       case 'set-schedule': {
@@ -1534,6 +1560,7 @@ export class HostTaskLedger {
       ...(runs === undefined || runs.length === 0 ? {} : { runs }),
       ...(stopSessions.length > 0 ? { stopSessions } : {}),
       ...(resumeRuns.length > 0 ? { resumeRuns } : {}),
+      ...(archiveSessions === undefined || archiveSessions.length === 0 ? {} : { archiveSessions }),
     }
   }
 
