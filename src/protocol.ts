@@ -17,6 +17,13 @@ import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type Work
 export const ALL_TASKS_SCHEMA_VERSION = 2 as const
 export const ALL_TASKS_API_PREFIX = '/api/all-tasks'
 
+/**
+ * Cap on one hide-tasks action's task list. Chosen so the serialized action
+ * stays comfortably under the 64 KiB action body limit (~38 chars per id);
+ * the board slices a larger column into sequential requests.
+ */
+export const HIDE_TASKS_LIMIT = 1000
+
 export type PowerPhase = 'disabled' | 'idle' | 'acquiring' | 'active' | 'error' | 'unsupported'
 
 export interface AllTasksPowerSnapshot {
@@ -121,6 +128,25 @@ export type AllTasksAction =
   }
   | { kind: 'archive'; taskId: string }
   | { kind: 'restore'; taskId: string }
+  | {
+    kind: 'hide-tasks'
+    /**
+     * The settled (done/failed) tasks to hide — the board's bulk archive of a
+     * Done/Failed column. Every id must belong to an on-board settled task;
+     * any unknown, still-open, or already-archived id fails the whole action
+     * closed (one ledger revision, so a column either hides entirely or not at
+     * all). The list is capped so the action body stays well under the
+     * request limit.
+     */
+    taskIds: string[]
+    /**
+     * Also archive each hidden task's execution sessions in DSH: the session
+     * disappears from every DSH grouping surface (the sidebar session list)
+     * while its log stays. The Host derives the session set from the ledger
+     * executions of the hidden tasks; the browser never names sessions.
+     */
+    archiveSessions: boolean
+  }
   | { kind: 'set-schedule'; taskId: string; patch: { enabled?: boolean; cron?: string } }
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
@@ -517,6 +543,12 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
     case 'rerun':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
       return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as AllTasksAction }
+    case 'hide-tasks':
+      if (!exactKeys(action, ['kind', 'taskIds', 'archiveSessions'])) return undefined
+      if (typeof action.archiveSessions !== 'boolean') return undefined
+      if (!Array.isArray(action.taskIds) || action.taskIds.length === 0 || action.taskIds.length > HIDE_TASKS_LIMIT) return undefined
+      if (!action.taskIds.every(id => boundedId(id))) return undefined
+      return { requestId: envelope.requestId, action: action as AllTasksAction }
     default:
       return undefined
   }

@@ -22,11 +22,12 @@ import {
   type GroupRuntimeStatus,
   type TaskGroupRecord,
 } from '../../core/groups.ts'
-import { COLUMNS, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
+import { COLUMNS, ARCHIVABLE_STATUSES, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
 import { Dashboard } from './Dashboard.tsx'
 import { GroupModal } from './GroupModal.tsx'
+import { HideTasksDialog } from './HideTasksDialog.tsx'
 import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard, parseTaskDragPayload } from './TaskCard.tsx'
@@ -453,6 +454,8 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const [showDefaults, setShowDefaults] = useState(false)
+  /** The Done/Failed column whose hide-old-tasks dialog is open. */
+  const [hideStatus, setHideStatus] = useState<TaskStatus | undefined>(undefined)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
   // The workspace scoping applies to both views: filtered views keep the
@@ -798,6 +801,17 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
         ) : (
           COLUMNS.map(column => {
             const columnTasks = visible.filter(task => task.status === column.status)
+            // The hide button's scope: every on-board settled task of this
+            // column in the current view, regardless of the search /
+            // unapproved-only filters (hiding is a column clean-up, not a
+            // filtered subset — the dialog lists exactly what will go).
+            const isSettledColumn = ARCHIVABLE_STATUSES.includes(column.status)
+            const settledCount = isSettledColumn
+              ? tasks.filter(task =>
+                task.status === column.status
+                && task.archivedAt === undefined
+                && matchesWorkspace(task, workspaceId)).length
+              : 0
             const { pinned, unassigned } = splitWorkspaceTasks(columnTasks, workspaceId)
             const ungrouped = pinned.filter(task => task.groupId === undefined)
             const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
@@ -859,6 +873,17 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                   <span className={css.statusDot} data-status={column.status} aria-hidden="true" />
                   <h3 className={css.columnTitle}>{t(STATUS_KEY[column.status])}</h3>
                   <span className={css.columnCount}>{columnTasks.length}</span>
+                  {settledCount > 0 && (
+                    <button
+                      type="button"
+                      className={css.columnHide}
+                      aria-label={t('hide.columnLabel', { count: String(settledCount) })}
+                      title={t('hide.columnTitle', { count: String(settledCount) })}
+                      onClick={() => { setHideStatus(column.status) }}
+                    >
+                      {t('hide.button')}
+                    </button>
+                  )}
                 </header>
                 <div
                   className={css.cards}
@@ -1023,6 +1048,16 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
           group={groupEditor.group}
           workspaceId={workspaceId}
           onClose={() => { setGroupEditor(undefined) }}
+        />
+      )}
+      {hideStatus !== undefined && (
+        <HideTasksDialog
+          status={hideStatus}
+          tasks={tasks}
+          workspaceId={workspaceId}
+          transportError={snapshot.transportError}
+          onHide={(taskIds, archiveSessions) => controller.hideSettledTasks(taskIds, archiveSessions)}
+          onCancel={() => { setHideStatus(undefined) }}
         />
       )}
     </>

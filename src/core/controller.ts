@@ -26,13 +26,14 @@ import {
   type TaskGroupRecord,
 } from './groups.ts'
 import { withStatus, moveTaskBefore, type NewTaskInput, type TaskRecord, type TaskStatus } from './tasks.ts'
-import { applyArchiveTask, applyRestoreTask } from './use-cases/task-archive.ts'
+import { applyArchiveTask, applyArchiveTasks, applyRestoreTask } from './use-cases/task-archive.ts'
 import { applyCreateTask } from './use-cases/task-create.ts'
 import { applyDeleteTask } from './use-cases/task-delete.ts'
 import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } from './use-cases/task-schedule.ts'
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
 import { planWorkspaceActions } from './workspace-actions.ts'
+import { HIDE_TASKS_LIMIT } from '../protocol.ts'
 import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../protocol.ts'
 
 export interface AllTasksTransport {
@@ -561,6 +562,35 @@ export class BoardController {
     this.tasks = [...tasks]
     if (this.selectedTaskId === id) this.selectedTaskId = undefined
     this.persistAndNotify()
+    return true
+  }
+
+  /**
+   * Hide (archive) a set of settled tasks at once — the Done/Failed column
+   * clean-up. Every id must be on-board and settled (done/failed); the Host
+   * ledger fails the whole action closed otherwise, so a column either hides
+   * entirely or not at all. When `archiveSessions` is true the Host also
+   * archives each hidden task's execution sessions in DSH after the ledger
+   * commit (best-effort: they leave the DSH session list, their logs stay).
+   * The id list is sliced to the protocol cap, so a very long column still
+   * fits each action body.
+   * @returns true when every slice was accepted by the authority (the legacy
+   *   in-memory path mirrors the ledger's all-or-nothing rules).
+   */
+  async hideSettledTasks(taskIds: readonly string[], archiveSessions: boolean): Promise<boolean> {
+    if (taskIds.length === 0) return true
+    if (this.deps.transport === undefined) {
+      const result = applyArchiveTasks(this.tasks, taskIds, this.now())
+      if (!result.allArchived) return false
+      this.tasks = [...result.tasks]
+      this.persistAndNotify()
+      return true
+    }
+    for (let index = 0; index < taskIds.length; index += HIDE_TASKS_LIMIT) {
+      const ids = taskIds.slice(index, index + HIDE_TASKS_LIMIT)
+      const accepted = await this.performRemote({ kind: 'hide-tasks', taskIds: [...ids], archiveSessions })
+      if (!accepted) return false
+    }
     return true
   }
 
