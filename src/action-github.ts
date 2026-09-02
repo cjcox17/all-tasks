@@ -35,9 +35,11 @@ export function createGithubAction(deps: GithubActionDeps = {}): Action {
     when: ['always'],
     async run(ctx) {
       const config = (ctx.config ?? {}) as GithubActionConfig
-      const tokenEnv = config.tokenEnv?.trim()
-      const token = tokenEnv === undefined || tokenEnv === '' ? undefined : env[tokenEnv]
-      if (token === undefined || token === '') throw new Error('action github: token is required')
+      // Resolve the post target first. The settings schema defaults an absent
+      // `actions` block to an all-empty config (no repo, no issue/commit), so
+      // a github action the user never configured must be a silent no-op —
+      // exactly like the http action's empty-URL return — not an error. The
+      // token is only required once there is an actual target to post to.
       const repo = config.repo?.trim()
       if (repo === undefined || repo === '') return
       const apiBase = (config.apiBase?.trim() || 'https://api.github.com').replace(/\/+$/, '')
@@ -50,6 +52,9 @@ export function createGithubAction(deps: GithubActionDeps = {}): Action {
       } else {
         return
       }
+      const tokenEnv = config.tokenEnv?.trim()
+      const token = tokenEnv === undefined || tokenEnv === '' ? undefined : env[tokenEnv]
+      if (token === undefined || token === '') throw new Error('action github: token is required')
       const response = await fetchFn(url, {
         method: 'POST',
         headers: {

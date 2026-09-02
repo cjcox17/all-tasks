@@ -38,4 +38,16 @@ describe('action-github', () => {
     await withToken.run(context({ tokenEnv: 'GH_TOKEN' })) // no repo/issue → returns
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('is a silent no-op on the schema-default empty config (no repo configured)', async () => {
+    // The settings schema defaults an absent `actions` block to an all-empty
+    // config ({ tokenEnv: '', repo: '', apiBase: '', issueNumber: 0 }), so an
+    // unconfigured github action runs on every settlement. It must return
+    // without fetching and without a "token is required" error — the action
+    // simply has no target, exactly like the http action's empty-URL no-op.
+    const fetch = vi.fn(async () => okResponse())
+    const action = createGithubAction({ fetchFn: fetch as unknown as typeof fetch })
+    await expect(action.run(context({ tokenEnv: '', repo: '', apiBase: '', issueNumber: 0 }))).resolves.toBeUndefined()
+    expect(fetch).not.toHaveBeenCalled()
+  })
 })
