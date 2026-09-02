@@ -251,6 +251,13 @@ describe('BoardController routes use-cases (external contract)', () => {
     expect(task.approved).toBe(false)
     expect(controller.getSnapshot().tasks[0].approved).toBe(false)
   })
+
+  it('dialog creates are marked with the user origin', () => {
+    const { controller } = makeController()
+    const task = controller.createTask({ title: 'Dialog', description: '', prompt: '' })!
+    expect(task.source).toBe('user')
+    expect(controller.getSnapshot().tasks[0].source).toBe('user')
+  })
 })
 
 describe('use-case: update model pin', () => {

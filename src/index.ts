@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-tools'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from 'schemastery'
@@ -29,6 +30,7 @@ import { AllTasksHostService } from './host-service.ts'
 import { makeEventRoutes, makeAllTasksRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
+import { createTaskTools } from './task-tools.ts'
 
 /** Order of the announcement section within the tool-guidance band. */
 const SECTION_ORDER = 200
@@ -36,10 +38,10 @@ const SECTION_ORDER = 200
 /** Default environment variable holding the authenticated proxy token. */
 export const DEFAULT_PROXY_TOKEN_ENV = 'DSH_ALL_TASKS_PROXY_TOKEN'
 
-export const inject = ['systemPrompt', 'apiProxy', 'webServer', 'agents', 'commands']
+export const inject = ['systemPrompt', 'apiProxy', 'webServer', 'agents', 'commands', 'tools']
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
-export const ALL_TASKS_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；打开看板先见工作区总览网格（每个工作区的实时任务计数，点击进入该工作区看板，头部返回按钮回到总览）；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；每个工作区可设置默认执行参数（agent 预设、模型、端点、权限、是否默认未批准），新建任务时自动预填，且任务自身未设置的执行参数在执行时回退到其工作区的默认值；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时；顺序分组可开启跨成员保持同一会话并在成员之间运行 /compact 压缩上下文）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。用户提到「全部任务 / 看板 / 工作区 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
+export const ALL_TASKS_GUIDANCE = '本机已安装 all-tasks 插件（DSH Web GUI 的任务看板）：侧边栏「全部任务」入口；独立仓库 cjcox17/all-tasks 维护（源自 zhu1090093659/dsh-web 的 dsh-task-board）。能力：多列看板管理任务；打开看板先见工作区总览网格（每个工作区的实时任务计数，点击进入该工作区看板，头部返回按钮回到总览）；Host 权威账本；关闭浏览器后仍由 Host 执行和结算；每个工作区可设置默认执行参数（agent 预设、模型、端点、权限、是否默认未批准），新建任务时自动预填，且任务自身未设置的执行参数在执行时回退到其工作区的默认值；任务可钉住工作区、agent 预设、模型和权限；任务可归入分组（顺序/并行、组内端点与窗口、组定时，组定时启用时组内任务继承它而忽略各自定时；顺序分组可开启跨成员保持同一会话并在成员之间运行 /compact 压缩上下文）；支持 Host 本地时区的 5 段 cron，错过的触发点不补跑；可选且默认关闭的空闲系统睡眠保护允许屏幕熄灭，但不承诺拦截合盖、手动睡眠、休眠、关机或唤醒已睡眠机器。执行消耗 API 额度。AI 会话可通过 task_create / task_list / task_get 工具创建和查询看板任务：task_create 只入队不运行，创建的任务默认未批准（需人工在看板批准后才能运行），除非显式传入 approved: true；创建的任务来源标记为 agent（卡片显示徽标）。用户提到「全部任务 / 看板 / 工作区 / 定时任务 / 分组」时即指本插件，请据此协作。若你同时用 todo_write 维护会话顶部的可见计划列表，最终回复前必须再次调用 todo_write 收尾：没有剩余工作时不要保留 in_progress，已完成的最后一步要标为 completed。'
 
 /**
  * Settings namespace of the board's announcement capability — the section the
@@ -252,19 +254,35 @@ function applyImpl(ctx: Context, config?: Config): void {
   // (installSettingsSection swaps it when the namespace registers).
   let current: () => Config = () => config ?? {}
   let disposeSection: (() => void) | undefined
+  let disposeTools: (() => void) | undefined
 
-  // Register (or drop) the announcement to match the current source. The
-  // section is kept under one disposer: re-registering first tears the old
-  // one down so a duplicate-name registration never throws.
+  // Register (or drop) the announcement and the agent task tools to match the
+  // current source. Each is kept under one disposer: re-registering first
+  // tears the old one down so a duplicate-name registration never throws.
   const sync = (): void => {
     if (disposeSection !== undefined) {
       disposeSection()
       disposeSection = undefined
     }
+    if (disposeTools !== undefined) {
+      disposeTools()
+      disposeTools = undefined
+    }
     const active = current().enabled ?? true
     host.setConfiguration(active, current().preventIdleSleep ?? false)
     host.setEndpointConfig(routerConfigFromSettings(current()))
     if (!active) return
+    // Agent task tools: registered whenever the board is enabled (no separate
+    // switch — `enabled` gates the whole plugin). The create path fails
+    // closed through host.apply, which refuses a disabled board.
+    const taskTools = createTaskTools({
+      snapshot: () => host.snapshot(),
+      apply: (requestId, action) => host.apply(requestId, action),
+    })
+    const disposers = taskTools.map(tool => ctx.tools.register(tool))
+    disposeTools = () => {
+      for (const dispose of disposers) dispose()
+    }
     if ((current().announceToAgent ?? DEFAULT_ANNOUNCE) === false) return
     disposeSection = ctx.systemPrompt.section({
       name: 'plugin:all-tasks',

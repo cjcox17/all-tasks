@@ -103,6 +103,7 @@ export function createGithubEventSource(config: GithubEventConfig = {}, env: Nod
           title,
           description: '',
           prompt,
+          source: 'event' as const,
           ...(workspaceId === undefined || workspaceId === '' ? {} : { workspaceId }),
         },
         autoRun: config.autoRun === true,

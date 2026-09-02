@@ -344,8 +344,12 @@ export class BoardController {
   // --- task mutations (use-case transitions in core/use-cases) -----------------
 
   createTask(input: NewTaskInput): TaskRecord | undefined {
+    // The controller is the board's new-task dialog: every task minted here
+    // carries the `user` origin (the wire sanitizer defaults an absent origin
+    // to `api`, which would mislabel dialog-created tasks as programmatic).
+    const userInput: NewTaskInput = { ...input, source: 'user' }
     const id = this.uuid()
-    const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id)
+    const { task, tasks } = applyCreateTask(this.tasks, userInput, this.now(), id)
     if (task === undefined) return undefined
     // Mirror the Host ledger: membership requires the task's workspace pin to
     // equal the group's workspace scope (absent = unassigned).
@@ -366,10 +370,12 @@ export class BoardController {
   /** Create through the Host and expose the task only after confirmation. */
   async createTaskConfirmed(input: NewTaskInput): Promise<TaskRecord | undefined> {
     if (this.deps.transport === undefined) return this.createTask(input)
+    // Same `user` origin as {@link createTask}: the dialog owns this path.
+    const userInput: NewTaskInput = { ...input, source: 'user' }
     const id = this.uuid()
-    const preview = applyCreateTask(this.tasks, input, this.now(), id).task
+    const preview = applyCreateTask(this.tasks, userInput, this.now(), id).task
     if (preview === undefined) return undefined
-    return await this.commitRemote({ kind: 'create', id, input }, id)
+    return await this.commitRemote({ kind: 'create', id, input: userInput }, id)
       ? this.tasks.find(task => task.id === id)
       : undefined
   }

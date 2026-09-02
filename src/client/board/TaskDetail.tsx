@@ -454,6 +454,12 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
                   ? t('detail.approval.unapprovedHint')
                   : t('detail.approval.approvedHint')}
               </p>
+              {current.source !== undefined && current.source !== 'user' && (
+                <p className={css.detailText}>
+                  {t('detail.origin')}
+                  {current.source === 'agent' ? t('card.source.agent') : current.source === 'event' ? t('card.source.event') : t('card.source.api')}
+                </p>
+              )}
               <div className={css.moveRow}>
                 <button
                   type="button"

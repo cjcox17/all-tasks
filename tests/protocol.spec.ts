@@ -464,3 +464,34 @@ describe('pause / continue action gates', () => {
     }
   })
 })
+
+describe('create origin source gate', () => {
+  it('accepts an explicit origin (user / event / agent)', () => {
+    for (const source of ['user', 'event', 'agent'] as const) {
+      const parsed = parseActionEnvelope({
+        requestId: `create-${source}`,
+        action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source } },
+      })
+      expect(parsed?.action.kind).toBe('create')
+      if (parsed?.action.kind !== 'create') throw new Error('expected create')
+      expect(parsed.action.input.source).toBe(source)
+    }
+  })
+
+  it('defaults an absent origin to api (programmatic)', () => {
+    const parsed = parseActionEnvelope({
+      requestId: 'create-no-source',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '' } },
+    })
+    expect(parsed?.action.kind).toBe('create')
+    if (parsed?.action.kind !== 'create') throw new Error('expected create')
+    expect(parsed.action.input.source).toBe('api')
+  })
+
+  it('rejects an unknown origin', () => {
+    expect(parseActionEnvelope({
+      requestId: 'create-bad-source',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: '', source: 'bot' } },
+    })).toBeUndefined()
+  })
+})

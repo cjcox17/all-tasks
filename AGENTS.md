@@ -11,6 +11,7 @@ dsh Web GUI 的 Host 权威多列任务看板（独立仓库，源自 zhu1090093
 - cron 使用 Host 本地时区和标准日期/星期 OR 语义。Host 首启或长暂停后的过期出现全部跳过；同任务 running 时不排队、不并发，只滚动下一触发点。
 - 重启恢复时，有 session id 的 running execution 继续观察；无 session id 的启动中断标为 cancelled，禁止自动重发。
 - pause/continue 是看板级软暂停：pause 取消会话当前 turn 但保留会话并保持 execution 打开（`pausedAt`），Host 不再观察该 execution、不为它启动任何东西；continue 在同一个会话重新排队 prompt 并推进观察边界（`watchFromAt`）。分组 `paused` 标志与工作区 `workspacePaused` 地图同样只阻挡启动，不结算已打开的 execution；stop 才是硬停止（结算为 cancelled）。
+- AI 会话通过 `ctx.tools` 上的 `task_create` / `task_list` / `task_get` 工具创建与查询任务（`src/task-tools.ts`，看板启用时注册）。`task_create` 只入队不运行：默认 `approved: false`（需人工批准），来源标 `agent`；校验走账本同一条 fail-closed `create` 路径。
 
 ## 电源保护
 

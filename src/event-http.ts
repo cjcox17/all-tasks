@@ -72,10 +72,14 @@ export function createHttpEventSource(config: HttpEventConfig = {}, env: NodeJS.
       return tokenMatches(candidate, token)
     },
     map(request, body) {
+      // Event-created tasks carry the `event` origin so the board can show
+      // where they came from. The origin is informational only: it never
+      // changes the task's approval state.
       const input = {
         title: bodyTitle(body, 'Webhook event'),
         description: '',
         prompt: bodyText(body),
+        source: 'event' as const,
         ...(config.workspaceId === undefined || config.workspaceId.trim() === '' ? {} : { workspaceId: config.workspaceId.trim() }),
       }
       const dedupeKey = stringHeader(request.headers[HTTP_EVENT_DEDUPE_HEADER])
