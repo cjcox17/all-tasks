@@ -67,6 +67,43 @@ export interface AllTasksEventPayload {
   power: AllTasksPowerSnapshot
 }
 
+/**
+ * One registered inbound event source as the Events panel renders it. The
+ * Host is the authority on which sources exist and where they are mounted;
+ * the browser only knows the display copy. `config` is the source's resolved
+ * settings slice (env-var *names* only — never secret values).
+ */
+export interface EventSourceStatus {
+  /** Stable plugin id (e.g. `http`, `github`, `slack`). */
+  id: string
+  /** Webhook method (`POST` for every current source). */
+  method: string
+  /** Mounted route under the all-tasks prefix (e.g. `/api/all-tasks/events/github`). */
+  path: string
+  /** The source's resolved config object (absent keys = defaults). */
+  config: Record<string, unknown>
+}
+
+/**
+ * One registered result-side action as the Actions panel renders it. The Host
+ * is the authority on which actions exist and when they fire; the browser
+ * only knows the display copy.
+ */
+export interface ActionStatus {
+  /** Stable plugin id (e.g. `http`, `github`, `spawn`). */
+  id: string
+  /** Outcomes that trigger this action (`succeeded`/`failed`/`cancelled`/`always`). */
+  when: readonly string[]
+  /** The action's resolved config object (absent keys = defaults). */
+  config: Record<string, unknown>
+}
+
+/** The Events/Actions panel payload: every registered source and action. */
+export interface AllTasksIntegrationsSnapshot {
+  events: EventSourceStatus[]
+  actions: ActionStatus[]
+}
+
 export type AllTasksAction =
   | { kind: 'import'; sourceId: string; tasks: TaskRecord[] }
   | { kind: 'create'; id: string; input: NewTaskInput }

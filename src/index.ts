@@ -27,7 +27,7 @@ import { createGithubEventSource, type GithubEventConfig } from './event-github.
 import { createHttpEventSource, type HttpEventConfig } from './event-http.ts'
 import { createSlackEventSource, type SlackEventConfig } from './event-slack.ts'
 import { AllTasksHostService } from './host-service.ts'
-import { makeEventRoutes, makeAllTasksRoutes } from './host-routes.ts'
+import { makeEventRoutes, makeAllTasksRoutes, makeIntegrationsRoutes } from './host-routes.ts'
 import type { ModelTimeoutSettingsSeam } from './model-timeouts.ts'
 import { mountOnce } from './mount-once.ts'
 import { createTaskTools } from './task-tools.ts'
@@ -78,6 +78,12 @@ export interface Config {
   costPerMillionInputTokens?: number
   /** Cost estimate: USD per 1M output tokens (0 = not configured). */
   costPerMillionOutputTokens?: number
+  /**
+   * Dashboard usage window in hours (0 = all time): the token totals and the
+   * cost estimate only count executions settled within the last N hours. A
+   * display window — the ledger keeps every execution, nothing is pruned.
+   */
+  usageRetentionHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
@@ -153,6 +159,7 @@ export const Config: z<Config> = z.object({
   endpointMaxWaitHours: z.number().min(0).default(24),
   costPerMillionInputTokens: z.number().min(0).default(0),
   costPerMillionOutputTokens: z.number().min(0).default(0),
+  usageRetentionHours: z.number().min(0).default(0),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
   events: z.object({ http: httpEventSettings, github: githubEventSettings, slack: slackEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false }, github: { secretEnv: '', repoWorkspaces: {}, defaultWorkspaceId: '', autoRun: false }, slack: { signingSecretEnv: '', workspaceId: '', autoRun: false } }),
@@ -235,6 +242,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     const disposers: Array<() => void> = []
     try {
       for (const route of makeAllTasksRoutes(host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
+      for (const route of makeIntegrationsRoutes(eventSources, actions, () => current(), resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       for (const route of makeEventRoutes(eventSources, host, resolveProxyAccess(config))) disposers.push(ctx.webServer.register(route))
       dispatcher.start()
     } catch (error) {

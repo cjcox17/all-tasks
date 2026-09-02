@@ -1,8 +1,17 @@
 /**
- * Unit tests for the board's workspace scoping helpers.
+ * Unit tests for the board's workspace scoping helpers, including the
+ * deleted-workspace ("vanished pin") filter.
  */
 import { describe, expect, it } from 'vitest'
-import { matchesWorkspace, splitWorkspaceTasks } from '../src/client/board/workspace-filter.ts'
+import {
+  boardGroups,
+  boardTasks,
+  isVanishedWorkspacePin,
+  liveWorkspaceIds,
+  matchesWorkspace,
+  splitWorkspaceTasks,
+} from '../src/client/board/workspace-filter.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { TaskRecord } from '../src/core/tasks.ts'
 
 function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -15,6 +24,19 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
     createdAt: 0,
     updatedAt: 0,
     executions: [],
+    ...overrides,
+  }
+}
+
+function group(overrides: Partial<TaskGroupRecord> = {}): TaskGroupRecord {
+  return {
+    id: 'g1',
+    name: 'Group',
+    mode: 'sequential',
+    order: [],
+    createdAt: 0,
+    updatedAt: 0,
+    offPeakOnly: false,
     ...overrides,
   }
 }
@@ -53,5 +75,38 @@ describe('splitWorkspaceTasks', () => {
     const { pinned, unassigned: rest } = splitWorkspaceTasks([pinnedA, pinnedB, unassigned], 'ws-a')
     expect(pinned.map(t => t.id)).toEqual(['a'])
     expect(rest.map(t => t.id)).toEqual(['u'])
+  })
+})
+
+describe('liveWorkspaceIds / isVanishedWorkspacePin', () => {
+  it('treats pins to workspaces missing from the runtime list as vanished', () => {
+    const live = liveWorkspaceIds([{ workspaceId: 'ws-a' }, { workspaceId: 'ws-b' }])
+    expect(isVanishedWorkspacePin({ workspaceId: 'ws-a' }, live)).toBe(false)
+    expect(isVanishedWorkspacePin({ workspaceId: 'ws-b' }, live)).toBe(false)
+    expect(isVanishedWorkspacePin({ workspaceId: 'ws-gone' }, live)).toBe(true)
+    expect(isVanishedWorkspacePin({}, live)).toBe(false)
+    expect(isVanishedWorkspacePin({ workspaceId: undefined }, live)).toBe(false)
+  })
+})
+
+describe('boardTasks / boardGroups', () => {
+  it('drops tasks pinned to vanished workspaces and keeps unassigned ones', () => {
+    const live = liveWorkspaceIds([{ workspaceId: 'ws-a' }])
+    const tasks = [
+      task({ id: 'a', workspaceId: 'ws-a' }),
+      task({ id: 'gone', workspaceId: 'ws-gone' }),
+      task({ id: 'u' }),
+    ]
+    expect(boardTasks(tasks, live).map(t => t.id)).toEqual(['a', 'u'])
+  })
+
+  it('drops groups scoped to vanished workspaces and keeps unassigned-scope ones', () => {
+    const live = liveWorkspaceIds([{ workspaceId: 'ws-a' }])
+    const groups = [
+      group({ id: 'g-a', workspaceId: 'ws-a' }),
+      group({ id: 'g-gone', workspaceId: 'ws-gone' }),
+      group({ id: 'g-u' }),
+    ]
+    expect(boardGroups(groups, live).map(g => g.id)).toEqual(['g-a', 'g-u'])
   })
 })

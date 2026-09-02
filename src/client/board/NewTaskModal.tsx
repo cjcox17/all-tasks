@@ -5,11 +5,12 @@
  * workspace's execution defaults pre-fill the target pickers (see the
  * WorkspaceDefaultsModal editor).
  *
- * While the title is blank and the user types a prompt, a debounced request
- * asks the Host to generate a title from the prompt through a short backend
- * session (see title-suggest); the field fills in when it lands, a manual
- * title always wins, and a prompt-line fallback guarantees creation never
- * blocks on the LLM.
+ * While the title is blank, auto-generation waits until the user leaves the
+ * run prompt field (blur) before asking the Host to generate a title from the
+ * prompt through a short backend session (see title-suggest) — typing alone
+ * never fires a request. The field fills in when it lands, a manual title
+ * always wins, and a prompt-line fallback guarantees creation never blocks
+ * on the LLM.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BoardController } from '../../core/controller.ts'
@@ -25,13 +26,6 @@ import { EndpointModelFields } from './EndpointModelFields.tsx'
 import { suggestTaskTitleClient } from '../title-suggest.ts'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
 import css from '../board.module.css'
-
-/**
- * Pause before asking the Host for an auto-generated title: long enough that
- * a burst of prompt typing settles into one request, short enough that the
- * title is usually ready by the time the user hits Create.
- */
-const TITLE_SUGGEST_DEBOUNCE_MS = 900
 
 /** New-task form overlay. */
 export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults }: {
@@ -71,7 +65,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   const [autoTitleEnabled, setAutoTitleEnabled] = useState(true)
 
   // Live refs so the stable suggestion callback reads current field values
-  // without re-creating itself (and re-arming the debounce) on every keystroke.
+  // without re-creating itself on every keystroke.
   const titleRef = useRef(title)
   titleRef.current = title
   const promptRef = useRef(prompt)
@@ -151,28 +145,25 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   }, [])
 
   /**
-   * Debounced auto-generation: while the title is blank and the user has
-   * typed a prompt (or description), wait for a pause and ask the Host. A
-   * manual title always wins — typing one cancels the pending request, and a
-   * resolution landing after it is discarded.
+   * Blur-triggered auto-generation: nothing is asked while the user is still
+   * typing — generation starts only once the run prompt field is left (blur)
+   * with a blank title and non-empty content. A manual title always wins:
+   * blurring over a typed title skips generation, and a resolution landing
+   * after the user typed one is discarded.
    */
-  useEffect(() => {
+  const handlePromptBlur = useCallback((): void => {
     if (!autoTitleEnabled || inFlightRef.current) return
-    if (title.trim() !== '' || (prompt.trim() === '' && description.trim() === '')) {
-      setTitleStatus('idle')
-      return
-    }
-    setTitleStatus('generating')
-    const timer = globalThis.setTimeout(runSuggestion, TITLE_SUGGEST_DEBOUNCE_MS)
-    return () => { globalThis.clearTimeout(timer) }
-  }, [autoTitleEnabled, title, prompt, description, runSuggestion])
+    if (titleRef.current.trim() !== '') return
+    if (promptRef.current.trim() === '' && descriptionRef.current.trim() === '') return
+    runSuggestion()
+  }, [autoTitleEnabled, runSuggestion])
 
   /** Re-run generation for the current prompt (a first suggestion may be weak). */
   const regenerateTitle = (): void => {
     setTitle('')
     setAutoFilled(false)
-    // The immediate call sets inFlight synchronously, so the debounce effect
-    // (re-armed by the cleared title) skips its own scheduling.
+    // The immediate call sets inFlight synchronously, so a later blur over
+    // the cleared title skips its own scheduling.
     runSuggestion()
   }
 
@@ -252,15 +243,17 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   // exactly what the task will ask for instead of a silent substitution.
 
   /**
-   * Under the title field: while a generation is pending (or a prompt awaits
-   * the debounce) show its status; once a generated title sits in the field
-   * offer Regenerate. Nothing renders for a manual title.
+   * Under the title field: while the title is blank and content is waiting on
+   * the prompt-field blur, hint that generation starts when the field is
+   * left; while a generation is pending show its status; once a generated
+   * title sits in the field offer Regenerate. Nothing renders for a manual
+   * title.
    */
   const titleHint = (() => {
     if (title.trim() === '' && (prompt.trim() !== '' || description.trim() !== '') && autoTitleEnabled) {
       return (
         <span className={css.fieldHint} role="status">
-          {titleStatus === 'generating' ? t('new.titleGenerating') : t('new.titleAutoHint')}
+          {titleStatus === 'generating' ? t('new.titleGenerating') : t('new.titleBlurHint')}
         </span>
       )
     }
@@ -291,6 +284,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
         onTitleChange={value => { setTitle(value); setAutoFilled(false); setError(undefined) }}
         onDescriptionChange={setDescription}
         onPromptChange={setPrompt}
+        onPromptBlur={handlePromptBlur}
         titleHint={titleHint}
       />
 
