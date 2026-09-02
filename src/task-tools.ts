@@ -16,6 +16,17 @@
  * never mutate or execute existing tasks on its own.
  */
 import { randomUUID } from 'node:crypto'
+// Type-only imports are erased and never reach the bundle; this VALUE import
+// stays external (see the libExternal note in tsdown.config.ts) and resolves
+// at runtime to the profile's single dsh-tools copy — the same module the
+// host's `tools` service is built from. `@deepseek-ai/dsh-tools` must remain a
+// devDependency only: a runtime dependency would make pnpm hoist a second
+// physical copy into a profile's node_modules, shadowing the shared install
+// for the cordis loader's `tools` roster row. dsh-tools marks its scheduler
+// with a per-module Symbol (TOOL_RUNTIME_SCHEDULER), so the agent loop would
+// then read `ctx.tools[Symbol]` as undefined and every tool call in every
+// session would fail with "Cannot read properties of undefined (reading
+// 'prepare')".
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { ALL_STATUSES, isTaskApproved, openExecutionOf, TASK_PERMISSIONS, type NewTaskInput, type TaskRecord, type TaskSource } from './core/tasks.ts'
 import type { AllTasksAction } from './protocol.ts'
