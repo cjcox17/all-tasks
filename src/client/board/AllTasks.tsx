@@ -31,6 +31,7 @@ import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard, parseTaskDragPayload } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
+import { UsageCharts } from './UsageCharts.tsx'
 import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
 import { WorkspaceList } from './WorkspaceList.tsx'
 import { boardGroups, boardTasks, liveWorkspaceIds, matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
@@ -169,10 +170,13 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
   const stopped = group.stopped === true
   // Any open execution — running or queued — holds the group's attention: the
   // banner is not draggable and the stop button is live (a queued member is
-  // stopped just like a launched one).
+  // stopped just like a launched one). A settled group moves freely even when
+  // it is stopped or paused: those flags only block launches until resumed,
+  // they never block a whole-group move back to a manual column (the natural
+  // way to send a failed group back for a re-run).
   const paused = group.paused === true
   const hasOpen = status.running > 0 || status.pending > 0
-  const draggable = !hasOpen && !stopped && !paused
+  const draggable = !hasOpen
   // A drag gesture may start on one of the header's action buttons (▶ ⏹ ⚙);
   // once a real drag begins, the browser must not also fire that button's
   // click when the pointer is released. Record the release instant at
@@ -208,6 +212,9 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
       } : undefined}
       title={draggable ? t('group.dragHint') : undefined}
     >
+      {draggable && (
+        <span className={css.groupGrip} title={t('group.dragHint')} aria-hidden="true">⠿</span>
+      )}
       <span className={css.groupName} title={group.name}>{group.name}</span>
       <span className={css.groupBadge} data-mode={group.mode}>
         {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
@@ -612,9 +619,11 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
     if (raw.startsWith('group:')) {
       if (column !== 'backlog' && column !== 'todo') return
       const groupId = raw.slice('group:'.length)
-      const droppedGroup = groups.find(group => group.id === groupId)
-      if (droppedGroup !== undefined && droppedGroup.stopped !== true) {
+      if (groups.some(group => group.id === groupId)) {
         const members = tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+        // A settled group — even one marked stopped or paused — moves freely:
+        // those flags only block launches until resumed. Only an open member
+        // execution blocks a move (and the Host ledger enforces that too).
         if (members.every(member => member.status !== 'running')) {
           // Dropping the group back onto its own column is a no-op: a status
           // rewrite would bump every member's updatedAt and make the cards
@@ -661,8 +670,14 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
           }
         } else {
           // Join the group (appended to its member order) — no need to edit
-          // the task's group in the detail view.
+          // the task's group in the detail view. Dropping onto a group in
+          // another column also moves the task to that column, mirroring the
+          // column-background path (the dragover gate already allowed it);
+          // otherwise the card would keep its old status and stay behind.
           void controller.updateTask(taskId, { groupId: group.id })
+          if (dragged.status !== column && canMoveManually(dragged.status, column)) {
+            controller.moveTask(taskId, column)
+          }
         }
         return
       }
@@ -704,10 +719,7 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
         <h2 className={css.boardTitle} title={workspaceTitle}>{workspaceTitle}</h2>
         {snapshot.host !== undefined && (
           <span className={css.detailMeta}>
-            {t('board.hostMeta', {
-              revision: String(snapshot.host.revision),
-              timeZone: snapshot.host.scheduler.timeZone,
-            })}
+            {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
           </span>
         )}
         <input
@@ -1069,10 +1081,7 @@ export function AllTasks({ controller }: { controller: BoardController }) {
           <h2 className={css.boardTitle}>{t('board.title')}</h2>
           {snapshot.host !== undefined && (
             <span className={css.detailMeta}>
-              {t('board.hostMeta', {
-                revision: String(snapshot.host.revision),
-                timeZone: snapshot.host.scheduler.timeZone,
-              })}
+              {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
             </span>
           )}
           <button
@@ -1105,7 +1114,13 @@ export function AllTasks({ controller }: { controller: BoardController }) {
 
       {view === undefined && (
         <>
-          <Dashboard metrics={computeDashboard(tasks, groups, snapshot.pricing)} />
+          <Dashboard
+            metrics={computeDashboard(tasks, groups, snapshot.pricing, snapshot.usageRetentionHours)}
+            usageWindowLabel={snapshot.usageRetentionHours === undefined
+              ? undefined
+              : t('dash.usageWindow', { hours: String(snapshot.usageRetentionHours) })}
+          />
+          <UsageCharts tasks={tasks} pricing={snapshot.pricing} />
           <WorkspaceList
             tasks={tasks}
             workspaces={snapshot.executionOptions.workspaces}
