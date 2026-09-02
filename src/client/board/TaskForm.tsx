@@ -63,6 +63,7 @@ export function TaskContentFields({
   onTitleChange,
   onDescriptionChange,
   onPromptChange,
+  onPromptBlur,
   titleHint,
 }: {
   title: string
@@ -72,6 +73,8 @@ export function TaskContentFields({
   onTitleChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onPromptChange: (value: string) => void
+  /** Fires when the run prompt field loses focus (the new-task dialog's auto-title trigger). */
+  onPromptBlur?: () => void
   /** Optional hint rendered under the title field (the new-task dialog's auto-generation status). */
   titleHint?: ReactNode
 }) {
@@ -108,6 +111,7 @@ export function TaskContentFields({
           value={prompt}
           placeholder={t('new.promptPlaceholder')}
           onChange={event => onPromptChange(event.target.value)}
+          onBlur={onPromptBlur}
         />
       </label>
     </>
