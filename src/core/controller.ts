@@ -119,6 +119,13 @@ export interface ExecutionOptionsSnapshot {
   presets: readonly ExecutionPresetOption[]
   models: readonly ExecutionModelOption[]
   endpoints: readonly ExecutionEndpointOption[]
+  /**
+   * True once the runtime workspace baseline has loaded (the client pushes
+   * `baselinesReady`). Until then the `workspaces` list may be empty or stale
+   * (startup / reconnect), so the board must not treat missing workspace ids
+   * as deletions; absent/undefined means "not ready yet".
+   */
+  workspacesReady?: boolean
 }
 
 /**
