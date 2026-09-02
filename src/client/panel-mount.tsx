@@ -1,6 +1,6 @@
 /**
- * Panel view mounting — the shared center-column panel host used by the Events
- * and Actions panels (the task board keeps its own mount in board-mount.tsx
+ * Panel view mounting — the shared center-column panel host used by the
+ * Workflows panel (the task board keeps its own mount in board-mount.tsx
  * because it predates this helper).
  *
  * The `conversation` slot is single-occupant (ui-conversation) and external
@@ -27,7 +27,7 @@ export interface PanelMountOptions {
   /**
    * The data-attribute name set on the injected container; the container is
    * styled by the matching `[data-dsh-<name>-view]` attribute rule (e.g.
-   * `dshEventsView` → `data-dsh-events-view`).
+   * `dshWorkflowsView` → `data-dsh-workflows-view`).
    */
   viewDataAttr: string
   /** The controller whose open state drives the panel's visibility. */

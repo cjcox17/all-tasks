@@ -30,6 +30,15 @@ import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleNextRun } from './core/use-cases/task-schedule.ts'
 import { applyUpdateTask, canEditTaskContent, hasContentPatch } from './core/use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, normalizeWorkspaceDefaults, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
+import {
+  applyCreateWorkflow,
+  applyDeleteWorkflow,
+  applyUpdateWorkflow,
+  normalizeWorkflowRows,
+  type WorkflowCreateInput,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './core/workflows.ts'
 import { ALL_TASKS_SCHEMA_VERSION, type AllTasksAction, type AllTasksSchedulerSnapshot } from './protocol.ts'
 
 interface PersistedScheduler extends AllTasksSchedulerSnapshot {
@@ -47,6 +56,8 @@ interface LedgerDocument {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /** Workflow DAGs (definition only; no executor yet). */
+  workflows: WorkflowRecord[]
   /**
    * Per-workspace execution defaults for new tasks, keyed by workspace-list
    * id. Only non-empty records are stored (an all-blank edit removes the
@@ -68,6 +79,7 @@ export interface LedgerState {
   revision: number
   tasks: TaskRecord[]
   groups: TaskGroupRecord[]
+  workflows: WorkflowRecord[]
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   workspacePaused: Record<string, number>
   scheduler: AllTasksSchedulerSnapshot
@@ -223,6 +235,10 @@ function cloneTasks(tasks: readonly TaskRecord[]): TaskRecord[] {
 
 function cloneGroups(groups: readonly TaskGroupRecord[]): TaskGroupRecord[] {
   return JSON.parse(JSON.stringify(groups)) as TaskGroupRecord[]
+}
+
+function cloneWorkflows(workflows: readonly WorkflowRecord[]): WorkflowRecord[] {
+  return JSON.parse(JSON.stringify(workflows)) as WorkflowRecord[]
 }
 
 function cloneWorkspaceDefaults(defaults: Record<string, WorkspaceDefaultsRecord>): Record<string, WorkspaceDefaultsRecord> {
@@ -491,6 +507,7 @@ export class HostTaskLedger {
       revision,
       tasks: cloneTasks(this.document.tasks),
       groups: cloneGroups(this.document.groups),
+      workflows: cloneWorkflows(this.document.workflows),
       workspaceDefaults: cloneWorkspaceDefaults(this.document.workspaceDefaults),
       workspacePaused: { ...this.document.workspacePaused },
       scheduler,
@@ -1485,6 +1502,25 @@ export class HostTaskLedger {
         this.document.groups = withGroupOrder(this.document.groups, action.groupId, action.order, memberIds, now)
         break
       }
+      case 'create-workflow': {
+        if (this.document.workflows.some(workflow => workflow.id === action.id)) throw new Error('workflow id already exists')
+        const result = applyCreateWorkflow(this.document.workflows, action.input, now, action.id)
+        if (result.workflow === undefined) throw new Error('invalid workflow')
+        this.document.workflows = [...result.workflows]
+        break
+      }
+      case 'update-workflow': {
+        const result = applyUpdateWorkflow(this.document.workflows, action.workflowId, action.patch as WorkflowUpdatePatch, now)
+        if (!result.applied) throw new Error('workflow not found or invalid patch')
+        this.document.workflows = [...result.workflows]
+        break
+      }
+      case 'delete-workflow': {
+        const result = applyDeleteWorkflow(this.document.workflows, action.workflowId)
+        if (!result.applied) throw new Error('workflow not found')
+        this.document.workflows = [...result.workflows]
+        break
+      }
     }
     // Invariant: a group's order always covers exactly its current members.
     // Member additions append, removals drop the id; the defensive pass below
@@ -1630,6 +1666,7 @@ export class HostTaskLedger {
         revision: Number.isSafeInteger(parsed.revision) && (parsed.revision as number) >= 0 ? parsed.revision as number : 0,
         tasks,
         groups,
+        workflows: normalizeWorkflowRows(parsed.workflows),
         workspaceDefaults: normalizeWorkspaceDefaultsMap(parsed.workspaceDefaults),
         workspacePaused: normalizeWorkspacePaused(parsed.workspacePaused),
         scheduler: {
@@ -1658,6 +1695,7 @@ export class HostTaskLedger {
         revision: 0,
         tasks: [],
         groups: [],
+        workflows: [],
         workspaceDefaults: {},
         workspacePaused: {},
         scheduler: { timeZone: timeZone(), ledgerId: crypto.randomUUID(), ...(existed ? { error: `corrupt ledger was quarantined: ${error instanceof Error ? error.message : String(error)}` } : {}) },
