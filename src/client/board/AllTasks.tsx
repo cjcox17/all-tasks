@@ -1083,7 +1083,12 @@ export function AllTasks({ controller }: { controller: BoardController }) {
 
       {view === undefined && (
         <>
-          <Dashboard metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.pricing)} />
+          <Dashboard
+            metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.pricing, snapshot.usageRetentionHours)}
+            usageWindowLabel={snapshot.usageRetentionHours === undefined
+              ? undefined
+              : t('dash.usageWindow', { hours: String(snapshot.usageRetentionHours) })}
+          />
           <UsageCharts tasks={snapshot.tasks} pricing={snapshot.pricing} />
           <WorkspaceList
             tasks={snapshot.tasks}

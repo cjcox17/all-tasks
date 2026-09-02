@@ -3,6 +3,11 @@
  * list. Pure and framework-free so it is unit-testable in isolation. Cost is
  * an estimate — it multiplies the captured token usage by the configured
  * per-million prices and is undefined when tokens or pricing are absent.
+ *
+ * An optional retention window (`usageRetentionHours`) narrows the token
+ * totals and the cost estimate to executions that settled inside the window:
+ * set to 24, only usage from the last 24 hours counts. It is a display
+ * window — the ledger keeps every execution; nothing is pruned.
  */
 import type { TaskGroupRecord } from './groups.ts'
 import type { TaskRecord } from './tasks.ts'
@@ -50,11 +55,17 @@ export interface DashboardMetrics {
   cost: number | undefined
 }
 
-/** Sum the token usage recorded on every execution of the given tasks. */
-export function tokenTotalsOf(tasks: readonly TaskRecord[]): TokenTotals {
+/**
+ * Sum the token usage recorded on every execution of the given tasks.
+ * `since` (ms epoch) drops executions that settled before it — usage is
+ * captured at settlement — while still-open executions always count. Absent
+ * `since` means no window (all time).
+ */
+export function tokenTotalsOf(tasks: readonly TaskRecord[], since?: number): TokenTotals {
   const totals: TokenTotals = { input: 0, output: 0, reasoning: 0, available: false }
   for (const task of tasks) {
     for (const execution of task.executions) {
+      if (since !== undefined && execution.endedAt !== undefined && execution.endedAt < since) continue
       const usage = execution.usage
       if (usage === undefined) continue
       totals.available = true
@@ -66,14 +77,21 @@ export function tokenTotalsOf(tasks: readonly TaskRecord[]): TokenTotals {
   return totals
 }
 
+/** One hour in milliseconds, used by the dashboard retention window. */
+const HOUR_MS = 3_600_000
+
 /**
  * Compute the board-wide dashboard metrics from the ledger snapshot.
  * Archived tasks are excluded from every count (they leave the board).
+ * `usageRetentionHours` (0/undefined = all time) narrows the token totals and
+ * the cost estimate to executions settled within that many hours of `now`.
  */
 export function computeDashboard(
   tasks: readonly TaskRecord[],
   groups: readonly TaskGroupRecord[],
   pricing?: CostPricingInput,
+  usageRetentionHours?: number,
+  now = Date.now(),
 ): DashboardMetrics {
   const metrics: DashboardMetrics = {
     total: 0,
@@ -114,7 +132,10 @@ export function computeDashboard(
   }
   const settled = metrics.completed + metrics.failed
   if (settled > 0) metrics.successRate = metrics.completed / settled
-  metrics.tokens = tokenTotalsOf(tasks)
+  const since = usageRetentionHours !== undefined && usageRetentionHours > 0
+    ? now - usageRetentionHours * HOUR_MS
+    : undefined
+  metrics.tokens = tokenTotalsOf(tasks, since)
   if (pricing !== undefined && metrics.tokens.available) {
     metrics.cost = (metrics.tokens.input / 1_000_000) * pricing.inputPerMillion
       + (metrics.tokens.output / 1_000_000) * pricing.outputPerMillion
