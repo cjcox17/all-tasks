@@ -1,10 +1,12 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { ActionRegistry } from './core/actions.ts'
 import type { EventRequest, EventSourceRegistry } from './core/events.ts'
 import { parseEndpointEditorPatch } from './endpoint-editor.ts'
 import type { AllTasksHostService } from './host-service.ts'
 import { writeJson } from './http.ts'
+import { buildIntegrationsSnapshot, type IntegrationsConfigSource } from './integrations-status.ts'
 import { isLoopbackAddress, isLoopbackRequest } from './loopback.ts'
 import { parseActionEnvelope, ALL_TASKS_API_PREFIX } from './protocol.ts'
 import { parseTitleSuggestionRequest } from './title-suggest.ts'
@@ -258,6 +260,34 @@ export function makeAllTasksRoutes(service: AllTasksHostService, access: AllTask
 }
 
 const EVENT_COOLDOWN_MS = 60_000
+
+/**
+ * Mount the read-only Events/Actions status route (the two sidebar panels'
+ * data source) under the same loopback / authenticated-proxy fence as the
+ * browser routes. The snapshot is built per request from the live registries
+ * and the resolved config, so a settings edit or a plugin change is reflected
+ * without a restart.
+ */
+export function makeIntegrationsRoutes(
+  events: EventSourceRegistry,
+  actions: ActionRegistry,
+  getConfig: () => IntegrationsConfigSource | undefined,
+  access: AllTasksRouteAccess = {},
+): WebRoute[] {
+  const resolvedAccess = resolveAccess(access)
+  const status: WebRoute = {
+    kind: 'exact',
+    path: `${ALL_TASKS_API_PREFIX}/integrations`,
+    handler: (req, res): void => {
+      if (req.method !== 'GET') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' }, { 'cache-control': 'no-store' })
+      if (!isTrustedAllTasksRequest(req, resolvedAccess)) {
+        return writeJson(res, 403, { ok: false, error: 'forbidden' }, { 'cache-control': 'no-store' })
+      }
+      writeJson(res, 200, buildIntegrationsSnapshot(events, actions, getConfig), { 'cache-control': 'no-store' })
+    },
+  }
+  return [status]
+}
 
 /**
  * Mount one HTTP route per registered event source under the same loopback /

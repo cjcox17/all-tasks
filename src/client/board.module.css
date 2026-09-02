@@ -27,10 +27,26 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* The center column is single-occupant; the :not() guards keep the two
-   sibling panels (task board / ssh) from fighting over visibility if both
-   activation attributes ever coexist. */
-html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-dsh-all-tasks-view] {
+/* The Events/Actions panel containers share the board's takeover geometry:
+   an absolute fill over the conversation, hidden unless the panel is active,
+   with the same opaque backdrop. */
+[data-dsh-events-view],
+[data-dsh-actions-view] {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 60;
+  container-name: all-tasks-view;
+  container-type: inline-size;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* The center column is single-occupant; the :not() guards keep the sibling
+   panels (task board / Events / Actions / ssh) from fighting over visibility
+   if two activation attributes ever coexist. */
+html[data-dsh-all-tasks-active]:not([data-dsh-events-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-all-tasks-view],
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-events-view],
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-dsh-actions-view] {
   display: block;
 }
 
@@ -45,6 +61,15 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-dsh-all-tasks-v
    whichever host container carries it. */
 html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-all-tasks-view]),
 html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-all-tasks-view]) {
+  display: none !important;
+}
+
+/* The Events/Actions panels hide the conversation the same way; each guard is
+   fully qualified so only the active panel's rule applies. */
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-events-view]),
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-events-view]),
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-actions-view]),
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-actions-view]) {
   display: none !important;
 }
 
@@ -724,6 +749,17 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   flex: none;
 }
 
+/* The drag grip on a movable group banner: a visible affordance that the
+   whole header is a drag source (the header itself carries `draggable`). */
+.groupGrip {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: grab;
+  user-select: none;
+}
+
 /* Row 1: the group title, on its own full-width line. */
 .groupName {
   flex: none;
@@ -1147,9 +1183,185 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .dashCard[data-tone='tokens'] .dashValue { color: var(--dsw-alias-state-business-primary); }
 .dashCard[data-tone='cost'] .dashValue { color: var(--dsw-alias-state-business-primary); }
 
+/* --- usage charts (cost / tokens over time, below the summary cards) --------- */
+
+.usageSection {
+  flex: none;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 14px 0 2px;
+}
+
+.usageHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 8px;
+}
+
+.usageTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.usageSelectWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usageSelectLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usageSelect {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.usageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usagePanel {
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+}
+
+.usagePanelTitle {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usagePanelHint {
+  margin: 0 0 8px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.usageEmpty {
+  padding: 28px 4px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The bar plot: a top gridline with the scale value, then one column per
+   bucket. Columns distribute evenly; a column's stacked segments scale to the
+   tallest stacked total, so the tallest column reaches the gridline. */
+.usageBars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usageScale {
+  position: relative;
+  height: 12px;
+  border-top: 1px solid var(--dsw-alias-separator-primary);
+}
+
+.usageScaleValue {
+  position: absolute;
+  top: -1px;
+  right: 0;
+  transform: translateY(-100%);
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.usagePlot {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 120px;
+}
+
+.usageCol {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usageTrack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+}
+
+.usageStack {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  border-radius: 2px 2px 0 0;
+}
+
+.usageCost { background: var(--dsw-alias-state-business-primary); }
+.usageInput { background: var(--dsw-alias-state-business-primary); }
+.usageOutput { background: var(--dsw-alias-state-warn-primary); }
+.usageReasoning { background: #8b5cf6; }
+
+.usageLabel {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usageLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.usageLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usageLegendItem > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
 /* --- workspace overview directory (landing view) ----------------------------- */
 
-/* Scroll region; centers the board card below the header. */
+/* Scroll region; centers the workspace cards below the header. */
 .list {
   flex: 1;
   min-height: 0;
@@ -1157,15 +1369,17 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 2px 0 10px;
 }
 
-/* The Monday.com-style board table: a column-header row and workspace rows
-   whose counts line up in aligned columns. The table sits directly on the
-   board surface — no wrapping card — so each workspace reads as its own row
-   instead of items crammed inside one box. The first column holds the leading
-   expand/collapse chevron; the width is capped so the table reads as columns
-   rather than a full-bleed wall; it scrolls horizontally only if a very narrow
-   view forces it to. */
+/* The Monday.com-style board table: a column-header row above one card per
+   workspace. Every workspace is its own card (surface, border, rounded
+   corners, breathing room between cards), so workspaces read as distinct
+   boards instead of items crammed inside a single box — the old one-card
+   wrap-around made them look crammed together, and dropping it left bare
+   rows. The first column holds the leading expand/collapse chevron; the width
+   is capped so the table reads as columns rather than a full-bleed wall; it
+   scrolls horizontally only if a very narrow view forces it to. */
 .directory {
-  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
+  --dir-card-pad-x: 14px;
+  --dir-columns: 30px minmax(0, 1fr) repeat(6, 64px) 56px 88px 70px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1173,8 +1387,9 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   padding: 4px 0 12px;
 }
 
-/* The header row and every workspace row share one grid, so each count sits in
-   its own aligned column. */
+/* The header row and every workspace card share one grid, so each count sits
+   in its own aligned column. The header carries the cards' horizontal padding
+   so its columns line up with the columns inside every card. */
 .directoryHead,
 .directoryRow {
   display: grid;
@@ -1184,7 +1399,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 .directoryHead {
-  padding: 6px 0 8px;
+  padding: 6px var(--dir-card-pad-x) 8px;
   border-bottom: 1px solid var(--dsw-alias-separator-primary);
 }
 
@@ -1206,31 +1421,44 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
 /* Empty leading cell in the header that mirrors the row chevron column. */
 .headChevron {
-  width: 26px;
+  width: 30px;
 }
 
-/* One workspace (or the All-tasks row): a table row plus an expandable body. */
+/* One workspace (or the All-tasks row): its own card — a surface with a border
+   and rounded corners — whose expandable body (groups + task rows) lives
+   inside the card. The row and body share the card's horizontal padding, so
+   the row's hover fill still spans the full card width. */
 .directorySection {
   min-width: 0;
+  margin-top: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.directorySection:last-child {
+  margin-bottom: 6px;
+}
+
+.directorySection:hover {
+  border-color: var(--dsw-alias-border-l2);
+  box-shadow: var(--dsw-shadow-lv1);
 }
 
 .directoryRow {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--dsw-alias-separator-primary);
+  padding: 8px var(--dir-card-pad-x);
   transition: background-color 120ms ease;
-}
-
-.directorySection:last-child .directoryRow {
-  border-bottom: none;
 }
 
 .directoryRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* The All-tasks row gets a faint primary tint so it reads as the overview hero. */
-.directorySection[data-workspace=''] .directoryRow {
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, transparent);
+/* The All-tasks card gets a faint primary tint so it reads as the overview hero. */
+.directorySection[data-workspace=''] {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-layer-2));
 }
 
 .directorySection[data-workspace=''] .directoryRow:hover {
@@ -1348,11 +1576,24 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   gap: 2px;
 }
 
+/* The run / stop / pause / continue / settings icons on a workspace row are
+   the row's primary controls — bigger glyphs and hit areas than the base
+   icon button so they read as actions, not decoration. */
+.directoryControls .iconButton,
+.directoryActions .iconButton {
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
+}
+
 /* The leading chevron toggles the inline directory; rotates to point down when
-   open. */
+   open. Bigger than the base icon button so the row collapse control reads as
+   the row's primary toggle and is easy to hit. */
 .listChevron {
   align-self: center;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
   transition: transform 120ms ease;
 }
 
@@ -1360,12 +1601,16 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   transform: rotate(90deg);
 }
 
-/* The expanded content below a workspace row: its groups + ungrouped tasks. */
+/* The expanded content below a workspace row: its groups + ungrouped tasks.
+   A top rule separates the content from the row header inside the card (the
+   separator only exists while the directory is expanded, because the body is
+   only rendered then); the group bands inherit the card's horizontal padding. */
 .directoryBody {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 0 6px;
+  padding: 10px var(--dir-card-pad-x) 12px;
+  border-top: 1px solid var(--dsw-alias-separator-primary);
 }
 
 /* One group section: a Monday.com-style colored band — tinted surface, colored
@@ -1393,16 +1638,16 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 14px;
   transition: transform 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
@@ -1528,7 +1773,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 /* A workspace with nothing on board shows a quiet hint when expanded. */
 .listEmpty {
   margin: 0;
-  padding: 10px 4px 6px;
+  padding: 10px var(--dir-card-pad-x) 12px;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1888,12 +2133,17 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
+    --dir-columns: 30px minmax(0, 1fr) repeat(6, 48px) 48px 76px 70px;
+    --dir-card-pad-x: 10px;
     padding: 4px 0 12px;
   }
 
   .dashboard {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .usageGrid {
+    grid-template-columns: 1fr;
   }
 
   .listAvatar {
@@ -2205,4 +2455,123 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .cardAction[data-active]::before {
     animation: none;
   }
+}
+
+/* --- Events & Actions panels -------------------------------------------------- */
+
+/* Panel root: same full-height flex column as the board, with a scrollable
+   card list so a long integrations list never overflows the column. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  gap: 12px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+.panelIntro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.panelList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.panelError {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-state-danger, #d64545);
+}
+
+.panelEmpty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* One event source / action card. */
+.integrationCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-subtle, transparent);
+}
+
+.integrationHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.integrationName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The method/path route chip (events) and the trigger chip (actions). */
+.integrationChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-active, rgba(127, 127, 127, 0.15));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  white-space: nowrap;
+}
+
+.integrationDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.integrationConfig {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border, rgba(127, 127, 127, 0.2));
+  font-size: 13px;
+}
+
+.integrationConfigLabel {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.integrationConfigValue {
+  overflow-wrap: anywhere;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.integrationConfigValue[data-unset] {
+  color: var(--dsw-alias-label-tertiary, rgba(127, 127, 127, 0.6));
+  font-style: italic;
+}
+
+.panelConfigureHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, rgba(127, 127, 127, 0.7));
 }

@@ -107,6 +107,18 @@ describe('BoardController execution options', () => {
     expect(after.mode).toBeUndefined()
     expect(after.permission).toBeUndefined()
   })
+
+  it('carries the dashboard usage retention window in the snapshot and notifies', () => {
+    const { controller } = makeController()
+    expect(controller.getSnapshot().usageRetentionHours).toBeUndefined()
+    const notified = vi.fn()
+    controller.subscribe(notified)
+    controller.setUsageRetentionHours(24)
+    expect(controller.getSnapshot().usageRetentionHours).toBe(24)
+    controller.setUsageRetentionHours(undefined)
+    expect(controller.getSnapshot().usageRetentionHours).toBeUndefined()
+    expect(notified).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('BoardController lifecycle', () => {
