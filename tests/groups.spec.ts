@@ -9,6 +9,8 @@ import {
   applyUpdateGroup,
   createGroup,
   effectiveEndpointIds,
+  effectiveMemberPlanModel,
+  effectiveMemberWorkerModel,
   groupCapacityFull,
   groupCompactsBetween,
   groupFinalStepBlocked,
@@ -662,5 +664,65 @@ describe('group paused flag persistence', () => {
     const absent = normalizeGroupRows([{ id: 'g2', name: 'G', mode: 'sequential', offPeakOnly: false, paused: 'yes', order: [] }], [task])
     expect(absent[0]?.paused).toBeUndefined()
     expect(absent[0]?.stopped).toBeUndefined()
+  })
+})
+
+describe('group model defaults', () => {
+  const worker = { provider: 'deepseek', model: 'deepseek-chat' }
+  const planner = { provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' }
+
+  it('persists worker and plan model defaults on create and drops malformed ones', () => {
+    const created = createGroup({ name: 'G', workerModel: worker, planModel: planner }, NOW, 'g1')
+    expect(created?.workerModel).toEqual(worker)
+    expect(created?.planModel).toEqual(planner)
+    const blank = createGroup({ name: 'G', workerModel: { provider: 'deepseek', model: '  ' } }, NOW, 'g2')
+    expect(blank?.workerModel).toBeUndefined()
+    expect(blank?.planModel).toBeUndefined()
+  })
+
+  it('sets and clears worker and plan models through an update patch', () => {
+    const base = createGroup({ name: 'G' }, NOW, 'g1')!
+    const set = applyUpdateGroup([base], 'g1', { workerModel: worker, planModel: planner }, NOW + 1).groups[0]!
+    expect(set.workerModel).toEqual(worker)
+    expect(set.planModel).toEqual(planner)
+    const cleared = applyUpdateGroup([set], 'g1', { workerModel: null, planModel: null }, NOW + 2).groups[0]!
+    expect(cleared.workerModel).toBeUndefined()
+    expect(cleared.planModel).toBeUndefined()
+  })
+
+  it('rejects a malformed model in an update patch (state untouched)', () => {
+    const base = createGroup({ name: 'G', workerModel: worker }, NOW, 'g1')!
+    const rejected = applyUpdateGroup([base], 'g1', { workerModel: { provider: '', model: 'x' } }, NOW + 1)
+    expect(rejected.applied).toBe(false)
+    expect(rejected.groups[0]?.workerModel).toEqual(worker)
+  })
+
+  it('normalizes persisted worker and plan models on load', () => {
+    const rows = [
+      {
+        id: 'g1', name: 'G', mode: 'sequential', offPeakOnly: false, order: [],
+        workerModel: worker, planModel: planner,
+      },
+      { id: 'g2', name: 'G', mode: 'sequential', offPeakOnly: false, order: [], workerModel: { provider: '', model: '' } },
+    ]
+    const groups = normalizeGroupRows(rows, [])
+    expect(groups[0]?.workerModel).toEqual(worker)
+    expect(groups[0]?.planModel).toEqual(planner)
+    expect(groups[1]?.workerModel).toBeUndefined()
+  })
+
+  it('resolves the effective member worker and plan models across task → group → workspace', () => {
+    const defaults = { model: worker }
+    const withGroup = { workerModel: { provider: 'deepseek', model: 'deepseek-r1' }, planModel: planner }
+    // task pin wins over the group
+    expect(effectiveMemberWorkerModel({ model: { provider: 'deepseek', model: 'task-model' } }, withGroup, defaults.model)).toEqual({ provider: 'deepseek', model: 'task-model' })
+    // group wins over the workspace default
+    expect(effectiveMemberWorkerModel({}, withGroup, defaults.model)).toEqual({ provider: 'deepseek', model: 'deepseek-r1' })
+    // workspace default fills when neither the task nor the group pins one
+    expect(effectiveMemberWorkerModel({}, {}, defaults.model)).toEqual(worker)
+    // plan model: task → group → workspace → undefined
+    expect(effectiveMemberPlanModel({}, withGroup, undefined)).toEqual(planner)
+    expect(effectiveMemberPlanModel({}, {}, undefined)).toBeUndefined()
+    expect(effectiveMemberPlanModel({ planModel: { provider: 'deepseek', model: 'task-plan' } }, withGroup, undefined)).toEqual({ provider: 'deepseek', model: 'task-plan' })
   })
 })

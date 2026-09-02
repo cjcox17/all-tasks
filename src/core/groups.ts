@@ -32,7 +32,7 @@ import {
   type DailyWindow,
 } from './endpoints.ts'
 import { isValidCron, nextRunAtMs } from './schedule.ts'
-import { normalizeTargetId, type ExecutionQueuedReason, type TaskRecord } from './tasks.ts'
+import { normalizeModelSelection, normalizeTargetId, type ExecutionQueuedReason, type TaskModelSelection, type TaskRecord } from './tasks.ts'
 export type { ExecutionQueuedReason } from './tasks.ts'
 
 /** Bound on group name / task-id string length (defense-in-depth). */
@@ -88,6 +88,19 @@ export interface TaskGroupRecord {
    * group list, and an empty effective list falls back to the global default).
    */
   endpoints?: string[]
+  /**
+   * Model selection members default to for their WORK phase (the execution
+   * model): a member's own model pin wins, then the group's worker model,
+   * then the workspace's model default, then the deployment default.
+   */
+  workerModel?: TaskModelSelection
+  /**
+   * Model selection members default to for their PLAN phase (the stronger
+   * model working under plan mode before the worker executes): a member's own
+   * plan-model pin wins, then the group's, then the workspace's. Absent means
+   * no plan phase for members that leave it blank.
+   */
+  planModel?: TaskModelSelection
   /** Daily hours (host-local) member launches must fall inside; absent = always. */
   allowedHours?: DailyWindow
   /** Only launch members inside the global off-peak window. */
@@ -163,6 +176,10 @@ export interface GroupCreateInput {
   maxParallel?: number
   /** Priority-ordered endpoint ids for member routing. */
   endpoints?: string[]
+  /** Model selection members default to for their work phase. */
+  workerModel?: TaskModelSelection
+  /** Model selection members default to for their plan phase. */
+  planModel?: TaskModelSelection
   /** Daily hours (host-local) member launches must fall inside. */
   allowedHours?: DailyWindow
   /** Only launch members inside the global off-peak window. */
@@ -247,6 +264,8 @@ export function createGroup(input: GroupCreateInput, now: number, id: string): T
   const mode = input.mode !== undefined && isGroupExecutionMode(input.mode) ? input.mode : 'sequential'
   const maxParallel = input.maxParallel === undefined ? undefined : normalizeMaxParallel(input.maxParallel)
   const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
+  const workerModel = input.workerModel === undefined ? undefined : normalizeModelSelection(input.workerModel)
+  const planModel = input.planModel === undefined ? undefined : normalizeModelSelection(input.planModel)
   const allowedHours = input.allowedHours === undefined ? undefined : normalizeDailyWindow(input.allowedHours)
   const schedule = groupScheduleFromRequest(input.schedule, now)
   const workspaceId = input.workspaceId === undefined ? undefined : normalizeTargetId(input.workspaceId)
@@ -257,6 +276,8 @@ export function createGroup(input: GroupCreateInput, now: number, id: string): T
     mode,
     ...(maxParallel === undefined ? {} : { maxParallel }),
     ...(endpoints === undefined ? {} : { endpoints }),
+    ...(workerModel === undefined ? {} : { workerModel }),
+    ...(planModel === undefined ? {} : { planModel }),
     ...(allowedHours === undefined ? {} : { allowedHours }),
     offPeakOnly: input.offPeakOnly === true,
     ...(input.maintainSession === true ? { maintainSession: true } : {}),
@@ -350,6 +371,10 @@ export interface GroupUpdatePatch {
   maxParallel?: number | null
   /** `null` clears the endpoint list (global default applies). */
   endpoints?: string[] | null
+  /** Model selection members default to for their work phase; `null` clears it. */
+  workerModel?: TaskModelSelection | null
+  /** Model selection members default to for their plan phase; `null` clears it. */
+  planModel?: TaskModelSelection | null
   /** `null` clears the allowed-hours window. */
   allowedHours?: DailyWindow | null
   offPeakOnly?: boolean
@@ -401,6 +426,18 @@ export function applyUpdateGroup(
     ? (patch.endpoints === null || patch.endpoints === undefined ? undefined : normalizeEndpointList(patch.endpoints))
     : undefined
   if ('endpoints' in patch && patch.endpoints !== null && patch.endpoints !== undefined && endpoints === undefined) {
+    return { groups, applied: false }
+  }
+  const workerModel = 'workerModel' in patch
+    ? (patch.workerModel === null || patch.workerModel === undefined ? undefined : normalizeModelSelection(patch.workerModel))
+    : undefined
+  if ('workerModel' in patch && patch.workerModel !== null && patch.workerModel !== undefined && workerModel === undefined) {
+    return { groups, applied: false }
+  }
+  const planModel = 'planModel' in patch
+    ? (patch.planModel === null || patch.planModel === undefined ? undefined : normalizeModelSelection(patch.planModel))
+    : undefined
+  if ('planModel' in patch && patch.planModel !== null && patch.planModel !== undefined && planModel === undefined) {
     return { groups, applied: false }
   }
   const allowedHours = 'allowedHours' in patch
@@ -473,6 +510,14 @@ export function applyUpdateGroup(
   if ('endpoints' in patch) {
     if (endpoints !== undefined) next.endpoints = endpoints
     else delete next.endpoints
+  }
+  if ('workerModel' in patch) {
+    if (workerModel !== undefined) next.workerModel = workerModel
+    else delete next.workerModel
+  }
+  if ('planModel' in patch) {
+    if (planModel !== undefined) next.planModel = planModel
+    else delete next.planModel
   }
   if ('allowedHours' in patch) {
     if (allowedHours !== undefined) next.allowedHours = allowedHours
@@ -587,6 +632,14 @@ export function normalizeGroupRows(values: unknown, tasks: readonly TaskRecord[]
         const endpoints = normalizeEndpointList(row.endpoints)
         return endpoints === undefined ? {} : { endpoints }
       })()),
+      ...(row.workerModel === undefined ? {} : (() => {
+        const workerModel = normalizeModelSelection(row.workerModel)
+        return workerModel === undefined ? {} : { workerModel }
+      })()),
+      ...(row.planModel === undefined ? {} : (() => {
+        const planModel = normalizeModelSelection(row.planModel)
+        return planModel === undefined ? {} : { planModel }
+      })()),
       ...(row.allowedHours === undefined ? {} : (() => {
         const allowedHours = normalizeDailyWindow(row.allowedHours)
         return allowedHours === undefined ? {} : { allowedHours }
@@ -639,6 +692,37 @@ export function effectiveEndpointIds(
   if (group?.endpoints !== undefined && group.endpoints.length > 0) return [...group.endpoints]
   if (workspaceDefault !== undefined && workspaceDefault.length > 0) return [...workspaceDefault]
   return undefined
+}
+
+/**
+ * The effective WORK model for one member: the task's own model pin wins,
+ * then the group's worker-model default, then the workspace's model default,
+ * then undefined (the deployment default applies at launch).
+ */
+export function effectiveMemberWorkerModel(
+  task: { model?: TaskModelSelection },
+  group?: { workerModel?: TaskModelSelection },
+  workspaceDefault?: TaskModelSelection,
+): TaskModelSelection | undefined {
+  if (task.model !== undefined) return task.model
+  if (group?.workerModel !== undefined) return group.workerModel
+  return workspaceDefault
+}
+
+/**
+ * The effective PLAN model for one member: the task's own plan-model pin
+ * wins, then the group's plan-model default, then the workspace's plan-model
+ * default, then undefined (no plan phase — the run executes directly with the
+ * work model).
+ */
+export function effectiveMemberPlanModel(
+  task: { planModel?: TaskModelSelection },
+  group?: { planModel?: TaskModelSelection },
+  workspaceDefault?: TaskModelSelection,
+): TaskModelSelection | undefined {
+  if (task.planModel !== undefined) return task.planModel
+  if (group?.planModel !== undefined) return group.planModel
+  return workspaceDefault
 }
 
 /**

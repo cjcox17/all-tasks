@@ -50,11 +50,44 @@ export function normalizeExecutionUsage(value: unknown): ExecutionUsage | undefi
 }
 
 /**
+ * Merge two token-usage blocks into one total (used to combine a plan
+ * phase's captured usage with the work phase's at settlement). Undefined
+ * inputs contribute nothing; the result is undefined when both are.
+ */
+export function mergeExecutionUsage(...parts: readonly (ExecutionUsage | undefined)[]): ExecutionUsage | undefined {
+  const total: ExecutionUsage = { inputTokens: 0, outputTokens: 0 }
+  let saw = false
+  for (const part of parts) {
+    if (part === undefined) continue
+    saw = true
+    total.inputTokens += part.inputTokens
+    total.outputTokens += part.outputTokens
+    if (part.cacheReadTokens !== undefined) total.cacheReadTokens = (total.cacheReadTokens ?? 0) + part.cacheReadTokens
+    if (part.cacheWriteTokens !== undefined) total.cacheWriteTokens = (total.cacheWriteTokens ?? 0) + part.cacheWriteTokens
+    if (part.reasoningTokens !== undefined) total.reasoningTokens = (total.reasoningTokens ?? 0) + part.reasoningTokens
+  }
+  return saw ? total : undefined
+}
+
+/**
  * Why the router holds a run before launch: no eligible endpoint, a group
  * capacity slot (sequential/parallel) is occupied, or the group's allowed
  * window is closed. Absent on launched runs.
  */
 export type ExecutionQueuedReason = 'endpoint' | 'group' | 'window' | 'workspace'
+
+/**
+ * The phase of a plan-then-work execution: `plan` (the plan-model turn under
+ * plan mode is being observed) or `work` (the worker-model turn that executes
+ * the approved plan is being observed). Absent on single-phase runs (a task
+ * without a resolved plan model), which behave exactly like before.
+ */
+export type ExecutionPhase = 'plan' | 'work'
+
+/** Whether an unknown value is a known execution phase. */
+export function isExecutionPhase(value: unknown): value is ExecutionPhase {
+  return value === 'plan' || value === 'work'
+}
 
 /**
  * One real execution attempt: the run's own id, the dsh session that ran it
@@ -126,6 +159,26 @@ export interface ExecutionRecord {
    * resumed turn. Absent on runs that were never paused.
    */
   watchFromAt?: number
+  /**
+   * Plan-then-work phase of a running execution: `plan` while the plan-model
+   * turn is observed, `work` after the worker was handed the plan (see
+   * {@link ExecutionPhase}). Absent on single-phase runs.
+   */
+  phase?: ExecutionPhase
+  /**
+   * The plan extracted at the plan→work transition (the plan model's plan —
+   * the `exit_plan_mode` tool-call argument when present, else the final
+   * assistant message of the plan turn). Persisted so a paused work phase can
+   * re-send the plan on `continue`; absent on runs without a plan phase.
+   */
+  plan?: string
+  /**
+   * Token accounting of the plan phase only, captured at the plan→work
+   * transition (see {@link ExecutionUsage}). The settled run's `usage` is the
+   * plan-phase total merged with the work-phase total, so the ledger reports
+   * the whole run's cost, not just the worker's.
+   */
+  planUsage?: ExecutionUsage
 }
 
 /**
@@ -204,9 +257,23 @@ export interface TaskRecord {
   permission?: TaskPermission
   /**
    * Model selection the execution session must be pinned to (a provider route
-   * + model id); absent means the deployment default model.
+   * + model id); absent means the deployment default model. This is the WORK
+   * model: the model the task's work phase runs on. When a plan model is also
+   * resolved (this task's own pin, else the group's / workspace's default),
+   * the run first plans with the plan model under plan mode and then executes
+   * with this model (see {@link ExecutionPhase}).
    */
   model?: TaskModelSelection
+  /**
+   * Model selection the execution session must be pinned to during the PLAN
+   * phase of a run: a provider route + model id (typically a stronger /
+   * costlier model) used while the task is in plan mode. Absent means no plan
+   * phase — the run executes directly with the work model, exactly like today.
+   * The plan model is a direct pin: it is not routed through the endpoint
+   * router (which resolves only the work model), and a rejected selection
+   * fails the run closed before the prompt.
+   */
+  planModel?: TaskModelSelection
   /**
    * Priority-ordered endpoint ids the router must route this task through
    * (the first eligible endpoint wins; absent means the global default list,
@@ -348,6 +415,12 @@ export interface NewTaskInput {
   /** Model selection the execution session must be pinned to; absent = deployment default. */
   model?: TaskModelSelection
   /**
+   * Model selection the execution session is pinned to during the plan phase
+   * (a stronger model working under plan mode before the work model executes);
+   * empty/absent = no plan phase, the run executes directly with the work model.
+   */
+  planModel?: TaskModelSelection
+  /**
    * Priority-ordered endpoint ids to route this task through (first eligible
    * wins; empty/absent = global default list, and an empty effective list =
    * no routing, direct model pin).
@@ -422,6 +495,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     workspaceId: normalizeTargetId(input.workspaceId),
     mode: normalizeTargetId(input.mode),
     model: normalizeModelSelection(input.model),
+    planModel: normalizeModelSelection(input.planModel),
     endpoints: normalizeEndpointList(input.endpoints),
     groupId: normalizeTargetId(input.groupId),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,

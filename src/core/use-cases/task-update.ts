@@ -20,6 +20,12 @@ export type TaskUpdatePatch = Partial<Pick<TaskRecord, 'title' | 'description' |
    */
   model?: TaskModelSelection | null
   /**
+   * Model selection the execution session is pinned to during the plan phase;
+   * `null` clears the pin and the task falls back to the group's / workspace's
+   * plan-model default (or no plan phase at all).
+   */
+  planModel?: TaskModelSelection | null
+  /**
    * Priority-ordered endpoint ids to route this task through; `null` (or an
    * empty array) clears the pin and the global default endpoint list applies.
    */
@@ -83,6 +89,9 @@ export function applyUpdateTask(
     const model = 'model' in patch
       ? (patch.model === null || patch.model === undefined ? undefined : normalizeModelSelection(patch.model))
       : undefined
+    const planModel = 'planModel' in patch
+      ? (patch.planModel === null || patch.planModel === undefined ? undefined : normalizeModelSelection(patch.planModel))
+      : undefined
     const endpoints = 'endpoints' in patch
       ? (patch.endpoints === null || patch.endpoints === undefined ? undefined : normalizeEndpointList(patch.endpoints))
       : undefined
@@ -90,15 +99,17 @@ export function applyUpdateTask(
       ? (patch.groupId === null || patch.groupId === undefined ? undefined : normalizeTargetId(patch.groupId))
       : undefined
     const permission = 'permission' in patch ? normalizePermission(task.permission, patch.permission) : undefined
-    // The patch may carry `model: null`/`endpoints: null`/`groupId: null` to
-    // clear a pin; the normalized value (or undefined) is written back so the
-    // ledger never stores null, and the rest of the patch spreads without it.
-    const { model: _patchedModel, endpoints: _patchedEndpoints, groupId: _patchedGroupId, ...patchRest } = patch
+    // The patch may carry `model: null`/`planModel: null`/`endpoints: null`/
+    // `groupId: null` to clear a pin; the normalized value (or undefined) is
+    // written back so the ledger never stores null, and the rest of the patch
+    // spreads without it.
+    const { model: _patchedModel, planModel: _patchedPlanModel, endpoints: _patchedEndpoints, groupId: _patchedGroupId, ...patchRest } = patch
     const next: TaskRecord = {
       ...task,
       ...patchRest,
       updatedAt: now,
       ...('model' in patch ? { model } : {}),
+      ...('planModel' in patch ? { planModel } : {}),
       ...('endpoints' in patch ? { endpoints } : {}),
       ...('groupId' in patch ? { groupId } : {}),
     }

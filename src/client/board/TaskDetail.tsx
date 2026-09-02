@@ -17,6 +17,7 @@ import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EditTaskModal } from './EditTaskModal.tsx'
 import { effectiveDefaultNames } from './execution-default-labels.ts'
 import { EndpointModelFields } from './EndpointModelFields.tsx'
+import { PlanModelField } from './PlanModelField.tsx'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
 import { STATUS_KEY } from './status-key.ts'
 
@@ -48,13 +49,19 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onCo
   const result = execution.result
   const waiting = execution.queuedAt !== undefined && execution.sessionId === undefined
   const paused = execution.pausedAt !== undefined
+  // A plan-then-work run shows its phase while running (plan mode first, then
+  // the worker's execution), so a long planning turn is never mistaken for a
+  // stuck worker.
+  const phaseLabel = result === undefined && !paused && !waiting && execution.phase !== undefined
+    ? (execution.phase === 'plan' ? t('detail.phase.plan') : t('detail.phase.work'))
+    : undefined
   return (
     <li className={css.executionRow} data-result={result} data-paused={paused || undefined}>
       <span className={css.executionBadge} data-result={result}>
         {result === undefined
           ? (paused
             ? t('detail.result.paused')
-            : waiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running'))
+            : waiting ? t(waitingKey(execution.queuedReason)) : phaseLabel ?? t('detail.result.running'))
           : t(RESULT_KEY[result])}
       </span>
       <span className={css.executionTimes}>
@@ -122,17 +129,36 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
   const permission = task.permission ?? ''
   const model = task.model
   const modelKey = model === undefined ? '' : modelSelectionKey(model)
-  // The workspace's execution defaults fill any blank target at runtime, so
-  // the blank "Workspace default" option names the effective default (the
-  // workspace default when one exists, else the deployment default), and
-  // unset endpoint/permission fields show it as a hint.
+  const planModel = task.planModel
+  const planModelKey = planModel === undefined ? '' : modelSelectionKey(planModel)
+  // The group's then the workspace's execution defaults fill any blank target
+  // at runtime, so the blank "Workspace default" option names the effective
+  // default (the group default when one exists, then the workspace default,
+  // else the deployment default), and unset endpoint/permission fields show
+  // it as a hint.
   const defaults = workspaceId === '' ? undefined : workspaceDefaults[workspaceId]
-  const { mode: defaultMode, model: defaultModel } = effectiveDefaultNames(
+  const defaultNames = effectiveDefaultNames(
     workspaceId === '' ? undefined : workspaceId,
+    groupId === '' ? undefined : groupId,
     workspaceDefaults,
+    groups,
     options.presets,
     options.models,
   )
+  const { mode: defaultMode } = defaultNames
+  // The worker-model blank option names the effective default (group →
+  // workspace); the plan-model blank option names it too, or "no plan phase"
+  // when nothing supplies one.
+  const workerModelBlank = defaultNames.workerModelSource === 'group'
+    ? t('exec.model.groupDefaultWithValue', { value: defaultNames.model ?? '' })
+    : defaultNames.workerModelSource === 'workspace'
+      ? t('exec.model.workspaceDefaultWithValue', { value: defaultNames.model ?? '' })
+      : t('exec.model.workspaceDefault')
+  const planModelBlank = defaultNames.planModelSource === 'group'
+    ? t('exec.planModel.groupDefaultWithValue', { value: defaultNames.planModel ?? '' })
+    : defaultNames.planModelSource === 'workspace'
+      ? t('exec.planModel.workspaceDefaultWithValue', { value: defaultNames.planModel ?? '' })
+      : t('exec.planModel.none')
   const defaultEndpoints = defaults?.endpoints === undefined || defaults.endpoints.length === 0
     ? undefined
     : defaults.endpoints.map(id => options.endpoints.find(option => option.id === id)?.name ?? id).join('、')
@@ -237,7 +263,7 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
         models={options.models}
         modelKey={modelKey}
         onModelChange={key => { controller.updateTask(task.id, { model: key === '' ? null : parseModelSelectionKey(key) }) }}
-        modelBlankLabel={defaultModel === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultModel })}
+        modelBlankLabel={workerModelBlank}
         effort={model?.reasoningEffort ?? ''}
         onEffortChange={effort => {
           if (model === undefined) return
@@ -245,6 +271,20 @@ function ExecutionSettingsSection({ controller, task, pending }: { controller: B
         }}
         disabled={pending}
         endpointsHint={task.endpoints === undefined || task.endpoints.length === 0 ? workspaceDefaultHint(defaultEndpoints) : undefined}
+      />
+
+      <PlanModelField
+        models={options.models}
+        modelKey={planModelKey}
+        onModelChange={key => { void controller.updateTask(task.id, { planModel: key === '' ? null : parseModelSelectionKey(key) }) }}
+        modelBlankLabel={planModelBlank}
+        effort={planModel?.reasoningEffort ?? ''}
+        onEffortChange={effort => {
+          if (planModel === undefined) return
+          void controller.updateTask(task.id, { planModel: withReasoningEffort(planModel, effort) })
+        }}
+        disabled={pending}
+        hint={<p className={css.settingsHint}>{t('new.planModelHint')}</p>}
       />
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('new.permission')}</span>

@@ -464,3 +464,56 @@ describe('pause / continue action gates', () => {
     }
   })
 })
+
+describe('all-tasks plan-model protocol gates', () => {
+  const plan = { provider: 'deepseek', model: 'deepseek-reasoner' }
+  const worker = { provider: 'deepseek', model: 'deepseek-chat' }
+
+  it('accepts a plan model on create and update and sanitizes it', () => {
+    const created = parseActionEnvelope({
+      requestId: 'r1',
+      action: { kind: 'create', id: 'task-a', input: { title: 'A', description: '', prompt: 'p', model: worker, planModel: { ...plan, reasoningEffort: '  high  ' } } },
+    })
+    expect(created?.action.kind).toBe('create')
+    if (created?.action.kind === 'create') {
+      expect(created.action.input.planModel).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' })
+    }
+    const updated = parseActionEnvelope({
+      requestId: 'r2',
+      action: { kind: 'update', taskId: 'task-a', patch: { planModel: plan } },
+    })
+    expect(updated?.action.kind).toBe('update')
+  })
+
+  it('rejects a malformed plan model on create, update, and group payloads', () => {
+    expect(parseActionEnvelope({ requestId: 'r1', action: { kind: 'create', id: 't', input: { title: 'A', description: '', prompt: 'p', planModel: { provider: '', model: 'x' } } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r2', action: { kind: 'update', taskId: 't', patch: { planModel: { provider: 'deepseek', model: '  ' } } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r3', action: { kind: 'create-group', id: 'g', input: { name: 'G', workerModel: { provider: 'x', model: '' } } } })).toBeUndefined()
+    expect(parseActionEnvelope({ requestId: 'r4', action: { kind: 'update-group', groupId: 'g', patch: { planModel: 42 } } })).toBeUndefined()
+  })
+
+  it('accepts null plan-model/worker-model clears and group model defaults', () => {
+    expect(parseActionEnvelope({ requestId: 'r1', action: { kind: 'update', taskId: 't', patch: { planModel: null } } })).toBeDefined()
+    const group = parseActionEnvelope({
+      requestId: 'r2',
+      action: { kind: 'update-group', groupId: 'g', patch: { workerModel: worker, planModel: null } },
+    })
+    expect(group?.action.kind).toBe('update-group')
+    const created = parseActionEnvelope({
+      requestId: 'r3',
+      action: { kind: 'create-group', id: 'g', input: { name: 'G', workerModel: worker, planModel: plan } },
+    })
+    expect(created?.action.kind).toBe('create-group')
+  })
+
+  it('gates planModel through the workspace-defaults patch', () => {
+    expect(parseActionEnvelope({
+      requestId: 'r1',
+      action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { planModel: plan } },
+    })).toBeDefined()
+    expect(parseActionEnvelope({
+      requestId: 'r2',
+      action: { kind: 'set-workspace-defaults', workspaceId: 'ws-a', patch: { planModel: { provider: 'deepseek' } } },
+    })).toBeUndefined()
+  })
+})

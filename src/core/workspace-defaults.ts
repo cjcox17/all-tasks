@@ -31,6 +31,7 @@ export const WORKSPACE_DEFAULTS_ID_BOUND = MODEL_FIELD_BOUND
 export interface ResolvedExecutionTargets {
   mode?: string
   model?: TaskModelSelection
+  planModel?: TaskModelSelection
   endpoints?: string[]
   permission?: TaskPermission
 }
@@ -44,7 +45,7 @@ export interface ResolvedExecutionTargets {
  * existing task's own approval state.
  */
 export function resolveExecutionTargets(
-  task: Pick<TaskRecord, 'mode' | 'model' | 'endpoints' | 'permission'>,
+  task: Pick<TaskRecord, 'mode' | 'model' | 'planModel' | 'endpoints' | 'permission'>,
   defaults: WorkspaceDefaultsRecord | undefined,
 ): ResolvedExecutionTargets {
   const resolved: ResolvedExecutionTargets = {}
@@ -52,6 +53,8 @@ export function resolveExecutionTargets(
   else if (defaults?.mode !== undefined && defaults.mode !== '') resolved.mode = defaults.mode
   if (task.model !== undefined) resolved.model = task.model
   else if (defaults?.model !== undefined) resolved.model = defaults.model
+  if (task.planModel !== undefined) resolved.planModel = task.planModel
+  else if (defaults?.planModel !== undefined) resolved.planModel = defaults.planModel
   if (task.endpoints !== undefined && task.endpoints.length > 0) resolved.endpoints = [...task.endpoints]
   else if (defaults?.endpoints !== undefined && defaults.endpoints.length > 0) resolved.endpoints = [...defaults.endpoints]
   if (task.permission !== undefined) resolved.permission = task.permission
@@ -65,6 +68,8 @@ export interface WorkspaceDefaultsRecord {
   mode?: string
   /** Model selection pinned to the new task; absent = deployment default. */
   model?: TaskModelSelection
+  /** Plan-phase model selection pinned to the new task; absent = no plan phase. */
+  planModel?: TaskModelSelection
   /** Priority-ordered endpoint ids the new task routes through; absent = no pin. */
   endpoints?: string[]
   /** Permission preset applied to the new task's session; absent = session default. */
@@ -80,6 +85,7 @@ export interface WorkspaceDefaultsRecord {
 export interface WorkspaceDefaultsPatch {
   mode?: string | null
   model?: TaskModelSelection | null
+  planModel?: TaskModelSelection | null
   endpoints?: string[] | null
   permission?: TaskPermission | null
   approved?: boolean | null
@@ -89,6 +95,7 @@ export interface WorkspaceDefaultsPatch {
 export function isWorkspaceDefaultsEmpty(record: WorkspaceDefaultsRecord): boolean {
   return record.mode === undefined
     && record.model === undefined
+    && record.planModel === undefined
     && record.endpoints === undefined
     && record.permission === undefined
     && record.approved === undefined
@@ -104,6 +111,7 @@ export function normalizeWorkspaceDefaults(value: unknown): WorkspaceDefaultsRec
   const raw = value as Record<string, unknown>
   const mode = boundedString(raw.mode)
   const model = normalizeModelSelection(raw.model)
+  const planModel = normalizeModelSelection(raw.planModel)
   const endpoints = normalizeEndpointList(raw.endpoints)
   const permission = isTaskPermission(raw.permission) ? raw.permission : undefined
   // Only the explicit `false` is stored (mirroring the task approval flag);
@@ -112,6 +120,7 @@ export function normalizeWorkspaceDefaults(value: unknown): WorkspaceDefaultsRec
   const record: WorkspaceDefaultsRecord = {
     ...(mode === undefined ? {} : { mode }),
     ...(model === undefined ? {} : { model }),
+    ...(planModel === undefined ? {} : { planModel }),
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(permission === undefined ? {} : { permission }),
     ...(approved === undefined ? {} : { approved }),
@@ -130,7 +139,7 @@ export function normalizeWorkspaceDefaultsPatch(value: unknown): WorkspaceDefaul
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const raw = value as Record<string, unknown>
   const patch: WorkspaceDefaultsPatch = {}
-  for (const key of ['mode', 'model', 'endpoints', 'permission', 'approved'] as const) {
+  for (const key of ['mode', 'model', 'planModel', 'endpoints', 'permission', 'approved'] as const) {
     if (!(key in raw)) continue
     const field = raw[key]
     if (field === null) {
@@ -141,10 +150,10 @@ export function normalizeWorkspaceDefaultsPatch(value: unknown): WorkspaceDefaul
       const mode = boundedString(field)
       if (mode === undefined) return undefined
       patch.mode = mode
-    } else if (key === 'model') {
+    } else if (key === 'model' || key === 'planModel') {
       const model = normalizeModelSelection(field)
       if (model === undefined) return undefined
-      patch.model = model
+      patch[key] = model
     } else if (key === 'endpoints') {
       const endpoints = normalizeEndpointList(field)
       if (endpoints === undefined) return undefined
@@ -174,6 +183,8 @@ export function applyWorkspaceDefaultsPatch(
   else if (patch.mode === null) delete next.mode
   if (patch.model !== undefined && patch.model !== null) next.model = patch.model
   else if (patch.model === null) delete next.model
+  if (patch.planModel !== undefined && patch.planModel !== null) next.planModel = patch.planModel
+  else if (patch.planModel === null) delete next.planModel
   if (patch.endpoints !== undefined && patch.endpoints !== null) next.endpoints = patch.endpoints
   else if (patch.endpoints === null) delete next.endpoints
   if (patch.permission !== undefined && patch.permission !== null) next.permission = patch.permission

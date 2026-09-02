@@ -789,6 +789,7 @@ describe('AllTasks workspace landing list', () => {
     expect(setWorkspaceDefaults.mock.calls[0][1]).toEqual({
       mode: null,
       model: null,
+      planModel: null,
       endpoints: null,
       permission: null,
       approved: false,

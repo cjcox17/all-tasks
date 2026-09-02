@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, modelSelectionKey, moveTaskBefore,
+  canMoveManually, createTask, EXECUTION_HISTORY_LIMIT, executionLabel, isTaskApproved, mergeExecutionUsage, modelSelectionKey, moveTaskBefore,
   normalizeModelSelection, parseModelSelectionKey, retainRecentExecutions, settleExecution, startExecution, withSchedule, withStatus,
 } from '../src/core/tasks.ts'
 
@@ -372,5 +372,46 @@ describe('moveTaskBefore', () => {
     const list = tasks(['a', 'b'])
     expect(moveTaskBefore(list, 'missing', 'a')).toBe(list)
     expect(moveTaskBefore(list, 'a', 'missing')).toBe(list)
+  })
+})
+
+describe('plan-model pin', () => {
+  it('normalizes the plan model at creation alongside the work model', () => {
+    const task = createTask({
+      title: 'T', description: '', prompt: 'p',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      planModel: { provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' },
+    }, NOW, 't1')
+    expect(task.model).toEqual({ provider: 'deepseek', model: 'deepseek-chat' })
+    expect(task.planModel).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' })
+  })
+
+  it('collapses a blank or malformed plan model to undefined (no plan phase)', () => {
+    const blank = createTask({ title: 'T', description: '', prompt: 'p', planModel: { provider: '', model: 'x' } }, NOW, 't1')
+    expect(blank.planModel).toBeUndefined()
+    const malformed = createTask({ title: 'T', description: '', prompt: 'p', planModel: { provider: 'deepseek', model: '  ' } }, NOW, 't2')
+    expect(malformed.planModel).toBeUndefined()
+    const absent = createTask({ title: 'T', description: '', prompt: 'p' }, NOW, 't3')
+    expect(absent.planModel).toBeUndefined()
+  })
+
+  it('bounds plan-model ids like the work model', () => {
+    const oversized = { provider: 'd'.repeat(300), model: 'm' }
+    expect(normalizeModelSelection(oversized)).toBeUndefined()
+  })
+})
+
+describe('mergeExecutionUsage', () => {
+  it('merges the plan-phase and work-phase totals into the run total', () => {
+    const merged = mergeExecutionUsage(
+      { inputTokens: 100, outputTokens: 50, reasoningTokens: 40 },
+      { inputTokens: 20, outputTokens: 10, cacheReadTokens: 5 },
+    )
+    expect(merged).toEqual({ inputTokens: 120, outputTokens: 60, reasoningTokens: 40, cacheReadTokens: 5 })
+  })
+
+  it('is undefined when every part is undefined and returns the only part otherwise', () => {
+    expect(mergeExecutionUsage(undefined, undefined)).toBeUndefined()
+    expect(mergeExecutionUsage(undefined, { inputTokens: 1, outputTokens: 2 })).toEqual({ inputTokens: 1, outputTokens: 2 })
   })
 })

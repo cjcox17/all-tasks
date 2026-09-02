@@ -214,11 +214,12 @@ function importedTask(value: unknown): TaskRecord | undefined {
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'planModel', 'endpoints', 'groupId', 'permission', 'schedule', 'approved'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
   if (input.approved !== undefined && typeof input.approved !== 'boolean') return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
+  if (input.planModel !== undefined && modelPayload(input.planModel) === undefined) return false
   // A malformed endpoint list (non-array, oversized, or non-string entries)
   // rejects the whole create instead of silently dropping the pin; an empty
   // array is fine (it normalizes to no pin).
@@ -237,12 +238,14 @@ function createInput(value: unknown): value is NewTaskInput {
 
 function updatePatch(value: unknown): boolean {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission'])) return false
+  if (patch === undefined || !exactKeys(patch, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'planModel', 'endpoints', 'groupId', 'permission'])) return false
   for (const key of ['title', 'description', 'prompt', 'workspaceId', 'mode'] as const) {
     if (!optionalString(patch[key])) return false
   }
   // null clears the model pin; an object must pass the model gate.
   if (patch.model !== undefined && patch.model !== null && modelPayload(patch.model) === undefined) return false
+  // null clears the plan-model pin; an object must pass the same gate.
+  if (patch.planModel !== undefined && patch.planModel !== null && modelPayload(patch.planModel) === undefined) return false
   // null (or an empty array) clears the endpoint pin; a non-empty array must
   // normalize.
   if (patch.endpoints !== undefined
@@ -275,12 +278,14 @@ function groupScheduleField(value: unknown): boolean {
 /** Gate a group create input. */
 function groupInput(value: unknown): value is GroupCreateInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['name', 'workspaceId', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'schedule'])) return false
+  if (input === undefined || !exactKeys(input, ['name', 'workspaceId', 'mode', 'maxParallel', 'endpoints', 'workerModel', 'planModel', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'schedule'])) return false
   if (typeof input.name !== 'string' || input.name.trim() === '' || input.name.length > GROUP_FIELD_BOUND) return false
   if (!optionalString(input.workspaceId)) return false
   if (input.mode !== undefined && !isGroupExecutionMode(input.mode)) return false
   if (input.maxParallel !== undefined && normalizeMaxParallel(input.maxParallel) === undefined) return false
   if (input.endpoints !== undefined && !Array.isArray(input.endpoints) && normalizeEndpointList(input.endpoints) === undefined) return false
+  if (input.workerModel !== undefined && modelPayload(input.workerModel) === undefined) return false
+  if (input.planModel !== undefined && modelPayload(input.planModel) === undefined) return false
   if (input.allowedHours !== undefined && normalizeDailyWindow(input.allowedHours) === undefined) return false
   if (input.offPeakOnly !== undefined && typeof input.offPeakOnly !== 'boolean') return false
   if (input.maintainSession !== undefined && typeof input.maintainSession !== 'boolean') return false
@@ -292,11 +297,13 @@ function groupInput(value: unknown): value is GroupCreateInput {
 /** Gate a group update patch (every field optional; null clears a field). */
 function groupUpdatePatch(value: unknown): value is GroupUpdatePatch {
   const patch = record(value)
-  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'finalStepTaskId', 'finalStepRequireSuccess', 'stopped', 'schedule'])) return false
+  if (patch === undefined || !exactKeys(patch, ['name', 'mode', 'maxParallel', 'endpoints', 'workerModel', 'planModel', 'allowedHours', 'offPeakOnly', 'maintainSession', 'compactBetween', 'finalStepTaskId', 'finalStepRequireSuccess', 'stopped', 'schedule'])) return false
   if (patch.name !== undefined && (typeof patch.name !== 'string' || patch.name.trim() === '' || patch.name.length > GROUP_FIELD_BOUND)) return false
   if (patch.mode !== undefined && !isGroupExecutionMode(patch.mode)) return false
   if (patch.maxParallel !== undefined && patch.maxParallel !== null && normalizeMaxParallel(patch.maxParallel) === undefined) return false
   if (patch.endpoints !== undefined && patch.endpoints !== null && !Array.isArray(patch.endpoints) && normalizeEndpointList(patch.endpoints) === undefined) return false
+  if (patch.workerModel !== undefined && patch.workerModel !== null && modelPayload(patch.workerModel) === undefined) return false
+  if (patch.planModel !== undefined && patch.planModel !== null && modelPayload(patch.planModel) === undefined) return false
   if (patch.allowedHours !== undefined && patch.allowedHours !== null && normalizeDailyWindow(patch.allowedHours) === undefined) return false
   if (patch.offPeakOnly !== undefined && typeof patch.offPeakOnly !== 'boolean') return false
   if (patch.maintainSession !== undefined && typeof patch.maintainSession !== 'boolean') return false
@@ -331,6 +338,12 @@ function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUp
   }
   if ('endpoints' in sanitized && sanitized.endpoints !== undefined && sanitized.endpoints !== null) {
     sanitized.endpoints = normalizeEndpointList(sanitized.endpoints)
+  }
+  if ('workerModel' in sanitized && sanitized.workerModel !== undefined && sanitized.workerModel !== null) {
+    sanitized.workerModel = modelPayload(sanitized.workerModel)
+  }
+  if ('planModel' in sanitized && sanitized.planModel !== undefined && sanitized.planModel !== null) {
+    sanitized.planModel = modelPayload(sanitized.planModel)
   }
   if ('allowedHours' in sanitized && sanitized.allowedHours !== undefined && sanitized.allowedHours !== null) {
     sanitized.allowedHours = normalizeDailyWindow(sanitized.allowedHours)
@@ -367,11 +380,12 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
       {
         const input = action.input as NewTaskInput
         const model = input.model === undefined ? undefined : modelPayload(input.model)
+        const planModel = input.planModel === undefined ? undefined : modelPayload(input.planModel)
         const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
         const groupId = input.groupId === undefined ? undefined : input.groupId.trim()
-        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId
+        const sanitized = model === input.model && planModel === input.planModel && endpoints === input.endpoints && groupId === input.groupId
           ? input
-          : { ...input, model, endpoints, groupId }
+          : { ...input, model, planModel, endpoints, groupId }
         return { requestId: envelope.requestId, action: { kind: 'create', id: action.id, input: sanitized } }
       }
     case 'update':
@@ -380,11 +394,12 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
       {
         const patch = action.patch as TaskUpdatePatch
         const model = patch.model === undefined || patch.model === null ? patch.model : modelPayload(patch.model)
+        const planModel = patch.planModel === undefined || patch.planModel === null ? patch.planModel : modelPayload(patch.planModel)
         const endpoints = patch.endpoints === undefined || patch.endpoints === null ? patch.endpoints : normalizeEndpointList(patch.endpoints)
         const groupId = patch.groupId === undefined || patch.groupId === null ? patch.groupId : patch.groupId.trim()
-        const sanitized = model === patch.model && endpoints === patch.endpoints && groupId === patch.groupId
+        const sanitized = model === patch.model && planModel === patch.planModel && endpoints === patch.endpoints && groupId === patch.groupId
           ? patch
-          : { ...patch, model, endpoints, groupId }
+          : { ...patch, model, planModel, endpoints, groupId }
         return { requestId: envelope.requestId, action: { kind: 'update', taskId, patch: sanitized } }
       }
     case 'create-group':

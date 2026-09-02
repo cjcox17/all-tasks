@@ -95,7 +95,12 @@ describe('WorkspaceDefaultsModal endpoint → model cascade', () => {
     const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
     const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
     expect(selectOf(container, chatKey)).toBeDefined()
-    expect([...container.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
+    // The worker model picker (endpoint-scoped) must not offer reasoner; the
+    // plan model picker is a direct pin and offers the full catalog.
+    const workerSelect = [...container.querySelectorAll('label')]
+      .find(element => element.querySelector('span')?.textContent === t('new.model'))
+      ?.querySelector('select') as HTMLSelectElement
+    expect([...workerSelect.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
     expect(container.textContent).toContain(t('exec.model.endpointHint'))
   })
 

@@ -150,3 +150,35 @@ describe('workspace-defaults runtime resolution', () => {
     expect(defaults.endpoints).toEqual(['default-endpoint'])
   })
 })
+
+describe('workspace plan-model default', () => {
+  const planner = { provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' }
+
+  it('normalizes a persisted plan-model default and drops malformed ones', () => {
+    const record = normalizeWorkspaceDefaults({ model: { provider: 'deepseek', model: 'deepseek-chat' }, planModel: planner })
+    expect(record?.planModel).toEqual(planner)
+    const malformed = normalizeWorkspaceDefaults({ planModel: { provider: 'deepseek', model: '  ' } })
+    expect(malformed).toBeUndefined()
+  })
+
+  it('sets and clears the plan model through a patch', () => {
+    const patch = normalizeWorkspaceDefaultsPatch({ planModel: planner })
+    expect(patch?.planModel).toEqual(planner)
+    const applied = applyWorkspaceDefaultsPatch(undefined, patch!)
+    expect(applied?.planModel).toEqual(planner)
+    const cleared = applyWorkspaceDefaultsPatch(applied, { planModel: null })
+    expect(cleared?.planModel).toBeUndefined()
+    expect(isWorkspaceDefaultsEmpty(cleared ?? {})).toBe(true)
+  })
+
+  it('rejects a malformed plan-model patch field', () => {
+    expect(normalizeWorkspaceDefaultsPatch({ planModel: { provider: '', model: 'x' } })).toBeUndefined()
+  })
+
+  it('resolves the task plan-model pin over the workspace default and the workspace default when blank', () => {
+    const defaults: WorkspaceDefaultsRecord = { planModel: planner }
+    expect(resolveExecutionTargets({}, defaults).planModel).toEqual(planner)
+    expect(resolveExecutionTargets({ planModel: { provider: 'deepseek', model: 'task-plan' } }, defaults).planModel).toEqual({ provider: 'deepseek', model: 'task-plan' })
+    expect(resolveExecutionTargets({}, {}).planModel).toBeUndefined()
+  })
+})

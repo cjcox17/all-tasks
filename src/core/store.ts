@@ -11,7 +11,7 @@
  */
 import { isValidCron } from './schedule.ts'
 import { normalizeEndpointList } from './endpoints.ts'
-import { isTaskPermission, isTaskStatus, normalizeExecutionUsage, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
+import { isExecutionPhase, isTaskPermission, isTaskStatus, normalizeExecutionUsage, normalizeModelSelection, normalizeTargetId, type ScheduleRule, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
 
 /** Persistence seam for the task ledger. */
 export interface TaskStore {
@@ -83,6 +83,9 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
     if (entry.endpointId !== undefined && typeof entry.endpointId !== 'string') return false
     if (entry.pausedAt !== undefined && typeof entry.pausedAt !== 'number') return false
     if (entry.watchFromAt !== undefined && typeof entry.watchFromAt !== 'number') return false
+    if (entry.phase !== undefined && entry.phase !== 'plan' && entry.phase !== 'work') return false
+    if (entry.plan !== undefined && typeof entry.plan !== 'string') return false
+    if (entry.planUsage !== undefined && (typeof entry.planUsage !== 'object' || entry.planUsage === null)) return false
   }
   return true
 }
@@ -153,8 +156,10 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     // The model selection is normalized like the other execution targets: a
     // malformed or blank selection from a future version clears the pin
     // instead of dropping the row. The endpoint pin list is normalized the
-    // same way (blank/malformed collapses to no routing).
+    // same way (blank/malformed collapses to no routing). The plan model
+    // follows the same gate (blank/malformed collapses to no plan phase).
     task.model = normalizeModelSelection(row.model)
+    task.planModel = normalizeModelSelection(row.planModel)
     task.endpoints = normalizeEndpointList(row.endpoints)
     task.groupId = normalizeTargetId(row.groupId)
     task.archivedAt = typeof row.archivedAt === 'number' && Number.isFinite(row.archivedAt) ? row.archivedAt : undefined
@@ -164,10 +169,13 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     task.approved = row.approved === false ? false : undefined
     // Token usage is normalized like the schedule: a malformed or missing
     // usage block clears to undefined (the adapter disclosed none) instead of
-    // dropping the row or leaking a damaged shape.
+    // dropping the row or leaking a damaged shape. The plan-phase capture is
+    // repaired the same way (its usage block and the phase marker).
     task.executions = task.executions.map(execution => ({
       ...execution,
       usage: normalizeExecutionUsage(execution.usage),
+      ...(execution.phase === undefined || isExecutionPhase(execution.phase) ? {} : { phase: undefined }),
+      ...(execution.planUsage === undefined ? {} : { planUsage: normalizeExecutionUsage(execution.planUsage) }),
     }))
     // Only the explicit auto-advance hold is persisted; absence (the default)
     // and `false` both normalize to undefined (participates in auto-advance).

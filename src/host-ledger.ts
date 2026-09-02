@@ -23,7 +23,7 @@ import {
   type TaskGroupRecord,
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
-import { canMoveManually, continueExecution, MANUAL_STATUSES, moveTaskBefore, pauseExecution, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, continueExecution, MANUAL_STATUSES, moveTaskBefore, pauseExecution, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionPhase, type ExecutionRecord, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
@@ -125,6 +125,12 @@ export interface OpenExecutionReference {
   readonly pausedAt?: number
   /** Observation boundary: the monitor ignores turn/end events before it. */
   readonly watchFromAt?: number
+  /**
+   * Plan-then-work phase: `plan` while the plan-model turn is observed (the
+   * monitor calls inspectPlan and transitions instead of settling), `work`
+   * after the worker was handed the plan. Absent on single-phase runs.
+   */
+  readonly phase?: ExecutionPhase
 }
 
 /** An open execution the router is holding for an eligible endpoint. */
@@ -555,6 +561,7 @@ export class HostTaskLedger {
           ...(execution.queuedAt === undefined ? {} : { queuedAt: execution.queuedAt }),
           ...(execution.pausedAt === undefined ? {} : { pausedAt: execution.pausedAt }),
           ...(execution.watchFromAt === undefined ? {} : { watchFromAt: execution.watchFromAt }),
+          ...(execution.phase === undefined ? {} : { phase: execution.phase }),
         })
       }
     }
@@ -954,6 +961,45 @@ export class HostTaskLedger {
       executions: task.executions.map(entry => entry.id === executionId ? { ...entry, sessionId, launchedAt: now } : entry),
     })
     this.commit()
+  }
+
+  /**
+   * Mark a plan-then-work execution's transition from its plan phase to its
+   * work phase: persist the extracted plan, the plan-phase usage, and the new
+   * observation boundary. Called AFTER the worker prompt was queued, so the
+   * ledger only claims the work phase once the session is actually executing
+   * it; a crash before this call simply re-transitions on recovery (the plan
+   * turn is already in the log, so the plan re-extracts).
+   */
+  markWorkPhase(taskId: string, executionId: string, plan: string, planUsage: ExecutionUsage | undefined, watchFromAt: number): void {
+    this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
+      ...task,
+      updatedAt: this.now(),
+      executions: task.executions.map(entry => entry.id !== executionId ? entry : {
+        ...entry,
+        phase: 'work' as const,
+        plan,
+        ...(planUsage === undefined ? {} : { planUsage }),
+        watchFromAt,
+      }),
+    })
+    this.commit()
+  }
+
+  /** Record that a launched execution is in its plan phase (the monitor inspects it via inspectPlan). */
+  markPlanPhase(taskId: string, executionId: string): void {
+    this.document.tasks = this.document.tasks.map(task => task.id !== taskId ? task : {
+      ...task,
+      updatedAt: this.now(),
+      executions: task.executions.map(entry => entry.id !== executionId ? entry : { ...entry, phase: 'plan' as const }),
+    })
+    this.commit()
+  }
+
+  /** The plan phase's captured token usage of one execution (for the settled run's merged total). */
+  planUsageOf(taskId: string, executionId: string): ExecutionUsage | undefined {
+    const task = this.document.tasks.find(item => item.id === taskId)
+    return task?.executions.find(entry => entry.id === executionId)?.planUsage
   }
 
   settle(taskId: string, executionId: string, outcome: 'succeeded' | 'failed' | 'cancelled', error?: string, summary?: string, usage?: ExecutionUsage): void {

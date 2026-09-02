@@ -14,6 +14,7 @@ import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t, type AllTasksKey } from '../locales.ts'
 import css from '../board.module.css'
 import { EndpointModelFields } from './EndpointModelFields.tsx'
+import { PlanModelField } from './PlanModelField.tsx'
 import { ModalShell } from './TaskForm.tsx'
 
 /** Workspace default-settings overlay. */
@@ -45,6 +46,11 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
     return model === undefined ? '' : modelSelectionKey(model)
   })
   const [reasoningEffort, setReasoningEffort] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.model?.reasoningEffort ?? '')
+  const [planModelKey, setPlanModelKey] = useState(() => {
+    const planModel = controller.getSnapshot().workspaceDefaults[workspaceId]?.planModel
+    return planModel === undefined ? '' : modelSelectionKey(planModel)
+  })
+  const [planReasoningEffort, setPlanReasoningEffort] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.planModel?.reasoningEffort ?? '')
   const [endpoints, setEndpoints] = useState<string[]>(() => [...(controller.getSnapshot().workspaceDefaults[workspaceId]?.endpoints ?? [])])
   const [permission, setPermission] = useState(() => controller.getSnapshot().workspaceDefaults[workspaceId]?.permission ?? '')
   // The approval default reads positively: on (the runtime default) means new
@@ -57,9 +63,11 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
     // clears the stored default (null), so saving an empty form removes the
     // workspace's entry instead of being a no-op.
     const model = modelKey === '' ? null : withReasoningEffort(parseModelSelectionKey(modelKey)!, reasoningEffort)
+    const planModel = planModelKey === '' ? null : withReasoningEffort(parseModelSelectionKey(planModelKey)!, planReasoningEffort)
     const patch: WorkspaceDefaultsPatch = {
       mode: mode === '' ? null : mode,
       model,
+      planModel,
       endpoints: endpoints.length === 0 ? null : endpoints,
       permission: permission === '' ? null : permission as TaskPermission,
       approved: approved ? null : false,
@@ -117,6 +125,16 @@ export function WorkspaceDefaultsModal({ controller, workspaceId, title, onClose
         onModelChange={setModelKey}
         effort={reasoningEffort}
         onEffortChange={setReasoningEffort}
+      />
+
+      <PlanModelField
+        models={options.models}
+        modelKey={planModelKey}
+        onModelChange={setPlanModelKey}
+        modelBlankLabel={t('exec.planModel.none')}
+        effort={planReasoningEffort}
+        onEffortChange={setPlanReasoningEffort}
+        hint={<p className={css.settingsHint}>{t('new.planModelHint')}</p>}
       />
 
       <label className={css.field}>

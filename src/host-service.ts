@@ -1,8 +1,9 @@
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRouterConfig, type RouteDecision } from './core/endpoints.ts'
-import { effectiveEndpointIds, groupCapacityFull, groupCompactsBetween, groupSharesSession, groupWindowOpen } from './core/groups.ts'
+import { effectiveEndpointIds, effectiveMemberPlanModel, effectiveMemberWorkerModel, groupCapacityFull, groupCompactsBetween, groupSharesSession, groupWindowOpen } from './core/groups.ts'
+import { buildWorkPrompt } from './core/plan-extract.ts'
 import { nextRunAtMs } from './core/schedule.ts'
-import type { TaskRecord } from './core/tasks.ts'
+import { mergeExecutionUsage, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
 import { resolveExecutionTargets } from './core/workspace-defaults.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
@@ -172,9 +173,11 @@ export class AllTasksHostService {
     }
     // A continue action re-prompts the paused session so the agent resumes
     // with its history (best-effort; a session that vanished settles as
-    // cancelled on the next poll).
+    // cancelled on the next poll). A paused work phase re-queues the work
+    // prompt (the plan is stored on the execution), a paused plan phase or
+    // single-phase run re-queues the task prompt.
     for (const resume of result.resumeRuns ?? []) {
-      void this.runner.continue(resume.task, resume.sessionId).catch(error => {
+      void this.runner.continue(resume.task, resume.sessionId, this.resumePromptFor(resume.task)).catch(error => {
         console.error('[dsh-all-tasks] session resume failed', error)
       })
     }
@@ -371,10 +374,17 @@ export class AllTasksHostService {
     // default list, then the global default list (an empty effective list =
     // no routing). The workspace defaults also fill a blank model pin so the
     // router checks the workspace-default model against endpoint eligibility.
+    // The WORK model is what the router routes: the task's own model pin wins,
+    // then the group's worker-model default, then the workspace's model
+    // default. The plan model is a direct pin (not routed).
     const defaults = task.workspaceId === undefined ? undefined : this.ledger.workspaceDefaultsFor(task.workspaceId)
     const effective = {
       ...task,
-      ...(task.model === undefined && defaults?.model !== undefined ? { model: defaults.model } : {}),
+      ...(task.model === undefined
+        ? (group?.workerModel !== undefined
+          ? { model: group.workerModel }
+          : defaults?.model !== undefined ? { model: defaults.model } : {})
+        : {}),
       endpoints: effectiveEndpointIds(task, group, defaults?.endpoints),
     }
     // A task pinned to a paused workspace launches nothing by any means until
@@ -510,12 +520,20 @@ export class AllTasksHostService {
 
   private async launch(task: TaskRecord, executionId: string, route?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
     try {
-      const effective = this.withWorkspaceDefaults(task)
+      const effective = this.withExecutionDefaults(task)
       const shared = this.sharedSessionFor(effective)
+      const planModel = effective.planModel
       const sessionId = shared === undefined || !(await this.runner.sessionExists(shared.sessionId))
-        ? await this.runner.launch(effective, route)
-        : await this.runner.launchShared(effective, route, shared.sessionId, shared.compact)
+        ? (planModel === undefined
+          ? await this.runner.launch(effective, route)
+          : await this.runner.launchPlan(effective, planModel))
+        : (planModel === undefined
+          ? await this.runner.launchShared(effective, route, shared.sessionId, shared.compact)
+          : await this.runner.launchSharedPlan(effective, planModel, shared.sessionId, shared.compact))
       this.ledger.attachSession(task.id, executionId, sessionId)
+      // A plan-then-work run observes its plan turn first and transitions to
+      // the work phase before settling; the monitor needs the phase marker.
+      if (planModel !== undefined) this.ledger.markPlanPhase(task.id, executionId)
       // The run may have been paused while its launch was in flight (no
       // session existed yet, so the pause action could not cancel it). A
       // paused run must never execute: halt the freshly attached session.
@@ -552,7 +570,7 @@ export class AllTasksHostService {
     if (shared === undefined) return undefined
     const previous = this.ledger.taskById(shared.taskId)
     if (previous !== undefined) {
-      const previousEffective = this.withWorkspaceDefaults(previous)
+      const previousEffective = this.withExecutionDefaults(previous)
       if (previousEffective.workspaceId !== task.workspaceId || previousEffective.mode !== task.mode) {
         throw new Error('maintain-session group members must share the same workspace and agent preset')
       }
@@ -562,16 +580,28 @@ export class AllTasksHostService {
 
   /**
    * The task view the runner composes: the task's own execution targets when
-   * set, otherwise the workspace defaults. The workspace defaults fill blank
-   * mode/model/permission (endpoints were already resolved by the router, so
-   * they are not read back here). A task with no workspace, or a workspace
-   * without defaults, passes through unchanged.
+   * set, otherwise the group's then the workspace's defaults. The resolution
+   * chain mirrors the router: the work model is the task's own pin, then the
+   * group's worker model, then the workspace's model default; the plan model
+   * is the task's own pin, then the group's, then the workspace's. Endpoints
+   * were already resolved by the router, so they are not read back here. A
+   * task with no group and no workspace passes through unchanged.
    */
-  private withWorkspaceDefaults(task: TaskRecord): TaskRecord {
-    if (task.workspaceId === undefined) return task
-    const defaults = this.ledger.workspaceDefaultsFor(task.workspaceId)
-    if (defaults === undefined) return task
-    return { ...task, ...resolveExecutionTargets(task, defaults) }
+  private withExecutionDefaults(task: TaskRecord): TaskRecord {
+    if (task.workspaceId === undefined && task.groupId === undefined) return task
+    const defaults = task.workspaceId === undefined ? undefined : this.ledger.workspaceDefaultsFor(task.workspaceId)
+    const group = task.groupId === undefined ? undefined : this.ledger.groupById(task.groupId)
+    if (defaults === undefined && group === undefined) return task
+    const resolved = resolveExecutionTargets(task, defaults)
+    const model = effectiveMemberWorkerModel(task, group, resolved.model)
+    const planModel = effectiveMemberPlanModel(task, group, resolved.planModel)
+    return {
+      ...task,
+      ...(resolved.mode === undefined ? {} : { mode: resolved.mode }),
+      ...(model === undefined ? {} : { model }),
+      ...(planModel === undefined ? {} : { planModel }),
+      ...(resolved.permission === undefined ? {} : { permission: resolved.permission }),
+    }
   }
 
   private async pollSessions(): Promise<void> {
@@ -613,22 +643,80 @@ export class AllTasksHostService {
       if (execution.pausedAt !== undefined) continue
       try {
         // A continued run observes only events after its latest resume: the
-        // pause's cancelled turn/end must never settle the run.
+        // pause's cancelled turn/end must never settle the run. A plan-phase
+        // run observes its plan turn and transitions to the work phase
+        // instead of settling (see below).
         const boundary = execution.watchFromAt ?? execution.startedAt
-        const result = await this.runner.inspect(execution.sessionId, boundary, sessions, execution.launchedAt)
+        const result = execution.phase === 'plan'
+          ? await this.runner.inspectPlan(execution.sessionId, boundary, sessions, execution.launchedAt)
+          : await this.runner.inspect(execution.sessionId, boundary, sessions, execution.launchedAt)
         if (result.outcome === 'pending') continue
+        if (result.outcome === 'planned') {
+          await this.advanceToWork(execution, result.plan, 'usage' in result ? result.usage : undefined)
+          continue
+        }
+        // A settled work-phase run reports the whole run's cost: the plan
+        // phase's captured usage merged with the work phase's (a single-phase
+        // run has no plan usage and merges to the work usage alone).
+        const usage = mergeExecutionUsage(
+          execution.phase === 'work' ? this.ledger.planUsageOf(execution.taskId, execution.executionId) : undefined,
+          'usage' in result ? result.usage : undefined,
+        )
         this.ledger.settle(
           execution.taskId,
           execution.executionId,
           result.outcome,
           'error' in result ? result.error : undefined,
           'summary' in result ? result.summary : undefined,
-          'usage' in result ? result.usage : undefined,
+          usage,
         )
       } catch {
         // A transient inspection failure never settles a running execution.
       }
     }
+  }
+
+  /**
+   * Hand one execution from its plan phase to its work phase: pin the work
+   * model, leave plan mode, queue the work prompt (plan + task), and only
+   * then persist the transition — the worker prompt is queued before the
+   * ledger claims the work phase, so a crash mid-transition re-transitions on
+   * recovery (the plan turn is already in the log). A failed transition
+   * settles the run failed: the plan exists but the worker never started.
+   */
+  private async advanceToWork(execution: OpenExecutionReference, plan: string, planUsage: ExecutionUsage | undefined): Promise<void> {
+    try {
+      const task = this.ledger.taskById(execution.taskId)
+      if (task === undefined) {
+        this.ledger.settle(execution.taskId, execution.executionId, 'failed', 'task no longer exists')
+        return
+      }
+      const effective = this.withExecutionDefaults(task)
+      // The work model: recompute the router's decision fresh (the endpoint
+      // config may have changed since launch). A routed run uses the routed
+      // selection; an unrouted run (no endpoints) pins the task's own work
+      // model directly. A 'wait' decision mid-run (endpoints changed and
+      // nothing serves now) falls back to the direct model pin rather than
+      // stalling a session that is already executing.
+      const route = this.routeFor(effective)
+      const selection = route.mode === 'routed' ? route.selection : effective.model
+      await this.runner.transitionToWork(execution.sessionId as string, effective, selection, plan)
+      this.ledger.markWorkPhase(execution.taskId, execution.executionId, plan, planUsage, this.now())
+    } catch (error) {
+      this.ledger.settle(execution.taskId, execution.executionId, 'failed', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  /**
+   * The prompt a paused `continue` should re-queue: for a work-phase
+   * plan-then-work execution the work prompt is rebuilt from the stored plan
+   * (plan mode is already off and the worker needs the plan, not the bare
+   * task prompt); everything else re-queues the task prompt as before.
+   */
+  private resumePromptFor(task: TaskRecord): string | undefined {
+    const execution = task.executions.find(candidate => candidate.endedAt === undefined)
+    if (execution?.phase === 'work' && execution.plan !== undefined) return buildWorkPrompt(execution.plan, task)
+    return undefined
   }
 
   private async tickSchedule(first: boolean): Promise<void> {
