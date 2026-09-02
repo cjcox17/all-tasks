@@ -34,6 +34,7 @@ import { AllTasksSettingsCard, AllTasksSettingsCardController, type AllTasksSett
 import { en, zh, type AllTasksKey } from './locales.ts'
 import { HttpAllTasksHostTransport } from './host-api.ts'
 import { hideMessageClocks, registerAssistantTimeShadow, showMessageClocks, type SessionTimesSlots } from './session-times.tsx'
+import { mountSessionArchiveButtons, type SessionArchiveListLike, type SessionArchiveWorkspacesLike } from './session-archive.ts'
 import { reportDailyHeartbeat } from './telemetry.ts'
 
 /** Locale namespace this plugin owns. */
@@ -138,6 +139,46 @@ export function apply(ctx: ClientContext): void {
     return settingsScope.subscribe(syncSessionTimeStyles)
   }, 'all-tasks: session-time styles')
   ctx.effect(() => registerAssistantTimeShadow(ctx.slots as unknown as SessionTimesSlots, sessionTimestampsEnabled), 'all-tasks: session-time assistant shadow')
+
+  // Session-row archive buttons (see session-archive.ts): a one-click archive
+  // icon next to the official "…" menu on every DSH sidebar session row.
+  // Independent of the board UI (it decorates the official session list), so
+  // it mounts with the plugin, gated by its own `sessionArchiveButtons`
+  // setting (default on).
+  const sessionArchiveEnabled = (): boolean => {
+    const snapshot = settingsScope.getSnapshot()
+    return snapshot.status === 'ready' ? (snapshot.value?.sessionArchiveButtons ?? true) : true
+  }
+  ctx.effect(() => {
+    const sessions = ctx.get('sessions') as unknown as ISessions
+    const workspaces = ctx.get('workspaces') as unknown as IWorkspaces
+    const overlay = mountSessionArchiveButtons({
+      sessions: () => sessions.list.getSnapshot() as unknown as SessionArchiveListLike,
+      workspaces: () => workspaces.list.getSnapshot() as unknown as SessionArchiveWorkspacesLike,
+      archive: sessionId => workspaces.archiveSession(sessionId as SessionId),
+      enabled: sessionArchiveEnabled,
+    })
+    // Renames and archive-set updates land as snapshot changes, not DOM
+    // mutations; refresh on both feeds (and on the setting toggle) so stale
+    // icons never survive a rename.
+    const refresh = (): void => {
+      try {
+        overlay.reconcile()
+      } catch {
+        // Cosmetic only: the overlay self-heals on the next sidebar mutation.
+      }
+    }
+    refresh()
+    const unsubscribe = [
+      sessions.list.subscribe(refresh),
+      workspaces.list.subscribe(refresh),
+      settingsScope.subscribe(refresh),
+    ]
+    return () => {
+      for (const off of unsubscribe) off()
+      overlay.dispose()
+    }
+  }, 'all-tasks: session-row archive overlay')
 
   // The sidebar entry and board view mount once the settings scope settles;
   // while the scope is still loading, the composition default is unknown, so
