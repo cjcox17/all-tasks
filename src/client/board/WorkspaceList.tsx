@@ -2,15 +2,16 @@
  * Workspace overview (the board's landing view): a Monday.com-style board
  * table. A column-header row labels the aligned count columns (To do / Pending
  * / Working / Scheduled / Finished / Failed / Total); each workspace is one
- * table row (a leading expand/collapse chevron, color-coded avatar + name,
- * right-aligned tabular counts, and the run / stop + pause/continue + settings
- * controls) that expands inline into
+ * card — its own bordered surface with a leading expand/collapse chevron,
+ * color-coded avatar + name, right-aligned tabular counts, and the run / stop
+ * + pause/continue + settings controls — that expands inline into
  * its groups — colored section headers with a name pill, mode badge, member
  * count, and a per-group collapse toggle — and its task rows (status dot,
- * title, aligned status label and badges). Workspace rows are expanded by
- * default so their tasks show underneath, in foldable layers. Clicking a
- * workspace row opens that workspace's kanban; clicking a task row opens the
- * task detail; the ⚙ button opens the workspace default-settings editor.
+ * title, aligned status label and badges), all inside the workspace's card.
+ * Workspace cards are expanded by default so their tasks show underneath, in
+ * foldable layers. Clicking a workspace row opens that workspace's kanban;
+ * clicking a task row opens the task detail; the ⚙ button opens the workspace
+ * default-settings editor.
  */
 import { useState } from 'react'
 import type { TaskGroupRecord } from '../../core/groups.ts'
