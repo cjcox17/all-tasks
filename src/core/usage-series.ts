@@ -5,6 +5,13 @@
  * Monday-aligned) — bucketed by each run's start time in the browser's local
  * time zone. Pure and framework-free so it is unit-testable in isolation.
  *
+ * An optional retention cutoff (`since`) applies the dashboard usage
+ * retention window the same way the summary cards do: executions that settled
+ * before `since` don't count, and buckets that end at or before it are clipped
+ * out of the window (the bucket containing the cutoff stays, because runs
+ * started there can still settle inside the window). Absent `since` means no
+ * window — the full fixed bucket count, all time.
+ *
  * Buckets are wall-clock aligned (clock hours, local days, local weeks), not
  * fixed millisecond slices, so DST transitions never split or mislabel a
  * bucket: each execution's bucket key is derived with the same
@@ -45,6 +52,13 @@ export interface UsageSeriesInput {
   /** Window end (ms epoch); the last bucket is the one containing this. */
   now: number
   pricing?: CostPricingInput
+  /**
+   * Optional retention cutoff (ms epoch, absent = all time): executions that
+   * settled before `since` don't count, and buckets that end at or before it
+   * are clipped out of the window — the same "settled within the window" rule
+   * the summary cards' token totals use (`usageRetentionHours`).
+   */
+  since?: number
 }
 
 /** Billed input tokens of one execution (uncached + cache read + cache write). */
@@ -83,6 +97,20 @@ export function previousBucketStart(start: number, granularity: UsageGranularity
   return date.getTime()
 }
 
+/**
+ * Step one bucket start one window unit forwards — the mirror of
+ * {@link previousBucketStart}, giving a bucket's exclusive end. Uses the same
+ * wall-clock arithmetic, so a DST transition still lands on a real local
+ * boundary and the two stay in lockstep.
+ */
+export function nextBucketStart(start: number, granularity: UsageGranularity): number {
+  const date = new Date(start)
+  if (granularity === 'hourly') date.setHours(date.getHours() + 1)
+  else if (granularity === 'daily') date.setDate(date.getDate() + 1)
+  else date.setDate(date.getDate() + 7)
+  return date.getTime()
+}
+
 /** Human axis label for a bucket start, in the browser locale. */
 export function bucketLabel(start: number, granularity: UsageGranularity): string {
   const date = new Date(start)
@@ -97,7 +125,9 @@ export function bucketLabel(start: number, granularity: UsageGranularity): strin
  * requested granularity, oldest bucket first. Executions without usage (the
  * adapter disclosed none, or the run settled before usage capture shipped)
  * contribute nothing; cancelled and failed runs count — they consumed tokens
- * and money just like successes, mirroring {@link computeDashboard}.
+ * and money just like successes, mirroring {@link computeDashboard}. When a
+ * retention `since` is given, executions that settled before it don't count
+ * and buckets whose end is at or before it are clipped from the window.
  *
  * The per-bucket cost estimate uses the same rule as the summary card: billed
  * input + output times the configured per-million prices, undefined when
@@ -107,7 +137,7 @@ export function computeUsageSeries(
   tasks: readonly TaskRecord[],
   input: UsageSeriesInput,
 ): UsageSeriesPoint[] {
-  const { granularity, now, pricing } = input
+  const { granularity, now, pricing, since } = input
   const count = USAGE_WINDOW[granularity]
   // Build the window backwards from the bucket containing `now`, so the last
   // bucket is always the current hour/day/week and earlier buckets are
@@ -126,10 +156,21 @@ export function computeUsageSeries(
     })
     cursor = previousBucketStart(cursor, granularity)
   }
+  // A retention cutoff clips the visible window to the buckets that can still
+  // hold qualifying usage: a bucket is kept while its end (next boundary) is
+  // after `since`. The bucket containing `since` stays whole — runs started
+  // there can settle inside the window. At least the current bucket always
+  // survives, since its end lies in the future.
+  if (since !== undefined) {
+    while (buckets.length > 1 && nextBucketStart(buckets[0]!.start, granularity) <= since) {
+      buckets.shift()
+    }
+  }
   const byStart = new Map<number, UsageSeriesPoint>(buckets.map(point => [point.start, point]))
   for (const task of tasks) {
     for (const execution of task.executions) {
       if (execution.usage === undefined || execution.endedAt === undefined) continue
+      if (since !== undefined && execution.endedAt < since) continue
       const point = byStart.get(bucketStart(execution.startedAt, granularity))
       if (point === undefined) continue
       point.available = true

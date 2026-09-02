@@ -1126,7 +1126,7 @@ export function AllTasks({ controller }: { controller: BoardController }) {
               ? undefined
               : t('dash.usageWindow', { hours: String(snapshot.usageRetentionHours) })}
           />
-          <UsageCharts tasks={tasks} pricing={snapshot.pricing} />
+          <UsageCharts tasks={tasks} pricing={snapshot.pricing} retentionHours={snapshot.usageRetentionHours} />
           <WorkspaceList
             tasks={tasks}
             workspaces={snapshot.executionOptions.workspaces}

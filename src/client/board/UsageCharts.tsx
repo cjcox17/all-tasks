@@ -5,6 +5,13 @@
  * series come from the pure {@link computeUsageSeries} (bucketed by run start
  * time in the browser's local time zone, fixed recent windows).
  *
+ * When a usage retention window (`retentionHours`) is active, the charts
+ * mirror the summary cards: executions settled outside the window don't
+ * count, and the plotted buckets are clipped to the window (a coarse
+ * granularity under a short retention shows only the buckets the window
+ * reaches). The panel hint then names the retention window instead of the
+ * fixed granularity look-back, so the visible range reads correctly.
+ *
  * Bars are plain HTML/CSS columns — no chart dependency — with native `title`
  * tooltips and `data-dsh-part` / `data-start` / `data-value` attributes for
  * skins and tests. The current-hour/day/week bucket rolls with a 60 s clock
@@ -12,9 +19,9 @@
  * window at mount time.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { CostPricingInput } from '../../core/dashboard.ts'
+import { HOUR_MS, type CostPricingInput } from '../../core/dashboard.ts'
 import type { TaskRecord } from '../../core/tasks.ts'
-import { computeUsageSeries, type UsageGranularity } from '../../core/usage-series.ts'
+import { USAGE_WINDOW, computeUsageSeries, type UsageGranularity } from '../../core/usage-series.ts'
 import { t, type AllTasksKey } from '../locales.ts'
 import css from '../board.module.css'
 
@@ -123,10 +130,20 @@ function UsagePanel({ chart, title, hint, children }: {
 }
 
 /**
- * The dashboard usage section. `tasks` and `pricing` come from the controller
- * snapshot; granularity is local view state (one dropdown drives both charts).
+ * The dashboard usage section. `tasks`, `pricing`, and the optional
+ * `retentionHours` usage window come from the controller snapshot;
+ * granularity is local view state (one dropdown drives both charts).
  */
-export function UsageCharts({ tasks, pricing }: { tasks: readonly TaskRecord[]; pricing?: CostPricingInput }) {
+export function UsageCharts({ tasks, pricing, retentionHours }: {
+  tasks: readonly TaskRecord[]
+  pricing?: CostPricingInput
+  /**
+   * Dashboard usage window in hours (absent/0 = all time): executions settled
+   * outside it don't count and older buckets are clipped from the charts,
+   * mirroring the summary cards' token totals and cost estimate.
+   */
+  retentionHours?: number
+}) {
   const [granularity, setGranularity] = useState<UsageGranularity>('daily')
   // Roll the window end so the "current" bucket stays current while the
   // landing view is open, even when no snapshot revision arrives.
@@ -137,15 +154,31 @@ export function UsageCharts({ tasks, pricing }: { tasks: readonly TaskRecord[]; 
   }, [])
 
   const series = useMemo(
-    () => computeUsageSeries(tasks, { granularity, now, pricing }),
-    [tasks, granularity, now, pricing],
+    () => computeUsageSeries(tasks, {
+      granularity,
+      now,
+      pricing,
+      since: retentionHours !== undefined && retentionHours > 0
+        ? now - retentionHours * HOUR_MS
+        : undefined,
+    }),
+    [tasks, granularity, now, pricing, retentionHours],
   )
 
   const anyUsage = series.some(point => point.available)
   const maxTokens = series.reduce((max, point) => Math.max(max, point.input + point.output + point.reasoning), 0)
   const maxCost = series.reduce((max, point) => Math.max(max, point.cost ?? 0), 0)
   const pricingMissing = anyUsage && pricing === undefined
-  const windowHint = t(WINDOW_KEYS[granularity])
+  // The granularity hint names the fixed look-back; when a retention window
+  // clips the series shorter than that (a coarse granularity under a short
+  // retention), the hint switches to the retention window itself, so the
+  // visible bucket range reads correctly.
+  const retentionLabel = retentionHours !== undefined && retentionHours > 0
+    ? t('dash.usageWindow', { hours: String(retentionHours) })
+    : undefined
+  const windowHint = retentionLabel !== undefined && series.length < USAGE_WINDOW[granularity]
+    ? retentionLabel
+    : t(WINDOW_KEYS[granularity])
 
   const tokenBars: UsageBarPoint[] = series.map(point => ({
     start: point.start,

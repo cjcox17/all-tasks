@@ -78,7 +78,7 @@ export function tokenTotalsOf(tasks: readonly TaskRecord[], since?: number): Tok
 }
 
 /** One hour in milliseconds, used by the dashboard retention window. */
-const HOUR_MS = 3_600_000
+export const HOUR_MS = 3_600_000
 
 /**
  * Compute the board-wide dashboard metrics from the ledger snapshot.

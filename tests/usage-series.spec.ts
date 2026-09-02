@@ -8,6 +8,7 @@ import {
   billedInputOf,
   bucketStart,
   computeUsageSeries,
+  nextBucketStart,
   previousBucketStart,
 } from '../src/core/usage-series.ts'
 import { createTask, type ExecutionRecord, type TaskRecord } from '../src/core/tasks.ts'
@@ -59,6 +60,14 @@ describe('previousBucketStart', () => {
     expect(previousBucketStart(at(2025, 2, 12, 14), 'hourly')).toBe(at(2025, 2, 12, 13))
     expect(previousBucketStart(at(2025, 2, 12), 'daily')).toBe(at(2025, 2, 11))
     expect(previousBucketStart(at(2025, 2, 10), 'weekly')).toBe(at(2025, 2, 3))
+  })
+})
+
+describe('nextBucketStart', () => {
+  it('steps forward one clock hour, local day, or local week (the mirror of previousBucketStart)', () => {
+    expect(nextBucketStart(at(2025, 2, 12, 14), 'hourly')).toBe(at(2025, 2, 12, 15))
+    expect(nextBucketStart(at(2025, 2, 12), 'daily')).toBe(at(2025, 2, 13))
+    expect(nextBucketStart(at(2025, 2, 10), 'weekly')).toBe(at(2025, 2, 17))
   })
 })
 
@@ -152,6 +161,59 @@ describe('computeUsageSeries', () => {
     const daily = computeUsageSeries(tasks, { granularity: 'daily', now })
     expect(daily.at(-1)!.input).toBe(120)
     expect(daily.at(-1)!.output).toBe(60)
+  })
+})
+
+describe('computeUsageSeries retention cutoff', () => {
+  it('clips buckets ending at or before the cutoff and keeps the partial bucket containing it', () => {
+    const now = at(2025, 2, 12, 15, 30)
+    const since = now - 24 * 3_600_000 // last 24 hours → Feb 11 15:30
+    const daily = computeUsageSeries([], { granularity: 'daily', now, since })
+    // Only today (Feb 12) and the partial bucket holding the cutoff (Feb 11) survive.
+    expect(daily.map(point => point.start)).toEqual([at(2025, 2, 11), at(2025, 2, 12)])
+    const weekly = computeUsageSeries([], { granularity: 'weekly', now, since })
+    // Feb 12 2025 is a Wednesday; the current Monday-aligned week (Feb 10)
+    // holds the cutoff, and the previous week ended before it — one bucket left.
+    expect(weekly.map(point => point.start)).toEqual([at(2025, 2, 10)])
+    const hourly = computeUsageSeries([], { granularity: 'hourly', now, since })
+    // The hourly window (24 buckets back to Feb 11 16:00) already ends inside
+    // the retention, so nothing is clipped.
+    expect(hourly).toHaveLength(24)
+  })
+
+  it('excludes executions settled before the cutoff and counts ones settled inside it, even when started earlier', () => {
+    const now = at(2025, 2, 12, 15, 30)
+    const since = now - 24 * 3_600_000 // Feb 11 15:30
+    const tasks = [
+      task({
+        executions: [
+          // Settled inside the window → counts, in today's bucket.
+          execution({ id: 'today', startedAt: at(2025, 2, 12, 10, 0), endedAt: at(2025, 2, 12, 11, 0), usage: { inputTokens: 100, outputTokens: 50 } }),
+          // Started in the partial bucket but settled before the cutoff → excluded.
+          execution({ id: 'early', startedAt: at(2025, 2, 11, 9, 0), endedAt: at(2025, 2, 11, 10, 0), usage: { inputTokens: 200, outputTokens: 100 } }),
+          // Started before the cutoff but settled inside it → counts, in the partial bucket.
+          execution({ id: 'boundary', startedAt: at(2025, 2, 11, 9, 0), endedAt: at(2025, 2, 11, 20, 0), usage: { inputTokens: 10, outputTokens: 5 } }),
+        ],
+      }),
+    ]
+    const daily = computeUsageSeries(tasks, { granularity: 'daily', now, since })
+    expect(daily).toHaveLength(2)
+    const today = daily.at(-1)!
+    expect(today.input).toBe(100)
+    expect(today.output).toBe(50)
+    const partial = daily[0]!
+    expect(partial.input).toBe(10)
+    expect(partial.output).toBe(5)
+    expect(partial.available).toBe(true)
+  })
+
+  it('treats a cutoff older than the fixed window as all time (nothing clipped)', () => {
+    const now = at(2025, 2, 12, 15, 30)
+    const since = at(2024, 1, 1) // a year back
+    for (const granularity of ['hourly', 'daily', 'weekly'] as const) {
+      const series = computeUsageSeries([], { granularity, now, since })
+      expect(series).toHaveLength(USAGE_WINDOW[granularity])
+    }
   })
 })
 
