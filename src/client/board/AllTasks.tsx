@@ -31,6 +31,7 @@ import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard, parseTaskDragPayload } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
+import { UsageCharts } from './UsageCharts.tsx'
 import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
 import { WorkspaceList } from './WorkspaceList.tsx'
 import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
@@ -1083,6 +1084,7 @@ export function AllTasks({ controller }: { controller: BoardController }) {
       {view === undefined && (
         <>
           <Dashboard metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.pricing)} />
+          <UsageCharts tasks={snapshot.tasks} pricing={snapshot.pricing} />
           <WorkspaceList
             tasks={snapshot.tasks}
             workspaces={snapshot.executionOptions.workspaces}

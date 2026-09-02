@@ -1126,6 +1126,182 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 .dashCard[data-tone='tokens'] .dashValue { color: var(--dsw-alias-state-business-primary); }
 .dashCard[data-tone='cost'] .dashValue { color: var(--dsw-alias-state-business-primary); }
 
+/* --- usage charts (cost / tokens over time, below the summary cards) --------- */
+
+.usageSection {
+  flex: none;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: 14px 0 2px;
+}
+
+.usageHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 8px;
+}
+
+.usageTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.usageSelectWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usageSelectLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usageSelect {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.usageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usagePanel {
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+}
+
+.usagePanelTitle {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usagePanelHint {
+  margin: 0 0 8px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.usageEmpty {
+  padding: 28px 4px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The bar plot: a top gridline with the scale value, then one column per
+   bucket. Columns distribute evenly; a column's stacked segments scale to the
+   tallest stacked total, so the tallest column reaches the gridline. */
+.usageBars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usageScale {
+  position: relative;
+  height: 12px;
+  border-top: 1px solid var(--dsw-alias-separator-primary);
+}
+
+.usageScaleValue {
+  position: absolute;
+  top: -1px;
+  right: 0;
+  transform: translateY(-100%);
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.usagePlot {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 120px;
+}
+
+.usageCol {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usageTrack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+}
+
+.usageStack {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  border-radius: 2px 2px 0 0;
+}
+
+.usageCost { background: var(--dsw-alias-state-business-primary); }
+.usageInput { background: var(--dsw-alias-state-business-primary); }
+.usageOutput { background: var(--dsw-alias-state-warn-primary); }
+.usageReasoning { background: #8b5cf6; }
+
+.usageLabel {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usageLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.usageLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.usageLegendItem > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
 /* --- workspace overview directory (landing view) ----------------------------- */
 
 /* Scroll region; centers the board card below the header. */
@@ -1873,6 +2049,10 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
   .dashboard {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .usageGrid {
+    grid-template-columns: 1fr;
   }
 
   .listAvatar {
