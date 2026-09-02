@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { computeDashboard, tokenTotalsOf } from '../src/core/dashboard.ts'
+import { DEEPSEEK_OFFICIAL_PROVIDER } from '../src/core/pricing.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskGroupRecord } from '../src/core/groups.ts'
 
@@ -58,12 +59,53 @@ describe('computeDashboard', () => {
     expect(metrics.successRate).toBeCloseTo(0.5)
   })
 
-  it('computes a cost estimate from token usage and pricing, and omits it otherwise', () => {
-    const withUsage = task({
-      executions: [{ id: 'e', sessionId: 's', startedAt: 0, endedAt: 1, result: 'succeeded', error: undefined, usage: { inputTokens: 1_000_000, outputTokens: 500_000 } }],
+  describe('cost estimate (per-execution pricing)', () => {
+    // Mon 2026-07-13 UTC: 02:00 is inside the peak window, 12:00 is off-peak.
+    const PEAK = Date.UTC(2026, 6, 13, 2)
+    const OFF_PEAK = Date.UTC(2026, 6, 13, 12)
+    const OFFICIAL: Array<{ id: string; provider: string; defaultModel: string }> = [
+      { id: 'ds', provider: DEEPSEEK_OFFICIAL_PROVIDER, defaultModel: 'deepseek-v4-flash' },
+    ]
+
+    function usageExec(startedAt: number, usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }, endpointId?: string) {
+      return { id: 'e', sessionId: 's', startedAt, launchedAt: startedAt, endedAt: startedAt + 1000, result: 'succeeded' as const, error: undefined, ...(endpointId === undefined ? {} : { endpointId }), usage }
+    }
+
+    it('bills official DeepSeek runs at peak or off-peak official rates by launch instant', () => {
+      const peak = task({ executions: [usageExec(PEAK, { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'ds')] })
+      // deepseek-v4-flash peak: 1M miss @ 0.44 + 1M out @ 1.32.
+      expect(computeDashboard([peak], [], OFFICIAL).cost).toBeCloseTo(0.44 + 1.32)
+      const offPeak = task({ executions: [usageExec(OFF_PEAK, { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'ds')] })
+      // Off-peak = half of peak: 0.22 + 0.66.
+      expect(computeDashboard([offPeak], [], OFFICIAL).cost).toBeCloseTo(0.22 + 0.66)
+      // A weekend run inside a weekday peak window is fully off-peak.
+      const weekend = task({ executions: [usageExec(Date.UTC(2026, 6, 18, 8), { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'ds')] })
+      expect(computeDashboard([weekend], [], OFFICIAL).cost).toBeCloseTo(0.22 + 0.66)
     })
-    expect(computeDashboard([withUsage], [], { inputPerMillion: 0.27, outputPerMillion: 1.10 })?.cost).toBeCloseTo(0.27 + 0.55)
-    expect(computeDashboard([withUsage], [])?.cost).toBeUndefined()
-    expect(computeDashboard([task()], [], { inputPerMillion: 0.27, outputPerMillion: 1.10 })?.cost).toBeUndefined()
+
+    it('bills cache-read input at the cache-hit rate and cache writes at the miss rate', () => {
+      const t = task({ executions: [usageExec(OFF_PEAK, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 }, 'ds')] })
+      expect(computeDashboard([t], [], OFFICIAL).cost).toBeCloseTo(0.007 + 0.22)
+    })
+
+    it('bills local endpoints at their own configured rates', () => {
+      const local = [{ id: 'lm', provider: 'lm-studio', costPerMillionInputTokens: 1, costPerMillionOutputTokens: 2 }]
+      const t = task({ executions: [usageExec(0, { inputTokens: 1_000_000, outputTokens: 500_000 }, 'lm')] })
+      expect(computeDashboard([t], [], local).cost).toBeCloseTo(1 + 1) // 1M in @ 1 + 0.5M out @ 2
+    })
+
+    it('omits the cost without an applicable rate and when no endpoints are supplied', () => {
+      const unpriced = [{ id: 'lm', provider: 'lm-studio' }]
+      const t = task({ executions: [usageExec(0, { inputTokens: 1_000_000, outputTokens: 1 }, 'lm')] })
+      expect(computeDashboard([t], [], unpriced).cost).toBeUndefined()
+      expect(computeDashboard([t], []).cost).toBeUndefined()
+      expect(computeDashboard([task()], [], OFFICIAL).cost).toBeUndefined()
+    })
+
+    it('sums per-execution costs across tasks and executions', () => {
+      const peak = task({ executions: [usageExec(PEAK, { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'ds')] })
+      const offPeak = task({ executions: [usageExec(OFF_PEAK, { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'ds')] })
+      expect(computeDashboard([peak, offPeak], [], OFFICIAL).cost).toBeCloseTo(0.44 + 1.32 + 0.22 + 0.66)
+    })
   })
 })

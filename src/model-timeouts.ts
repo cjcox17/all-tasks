@@ -21,6 +21,7 @@
  * so a bad value is refused by DSH, not silently stored.
  */
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import { DEEPSEEK_OFFICIAL_PROVIDER } from './core/pricing.ts'
 
 /** DSH's default stream-idle timeout (dsh-llm-pi-ai / dsh-llm-deepseek `DEFAULT_STREAM_IDLE_TIMEOUT_MS`). */
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000
@@ -28,8 +29,12 @@ export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000
 /** `setTimeout`'s maximum delay; dsh-timeout caps every watchdog at this bound. */
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
 
-/** Provider route id of the official DeepSeek adapter (configures through `llm-deepseek`). */
-export const DEEPSEEK_PROVIDER = 'deepseek-official'
+/**
+ * Provider route id of the official DeepSeek adapter (configures through
+ * `llm-deepseek`). Canonically defined with the official price table in
+ * `core/pricing.ts` and re-exported here for the timeout editor.
+ */
+export const DEEPSEEK_PROVIDER = DEEPSEEK_OFFICIAL_PROVIDER
 
 /** The two settings namespaces that own model timeouts. */
 export type ModelTimeoutNamespace = 'llm-pi-ai' | 'llm-deepseek'

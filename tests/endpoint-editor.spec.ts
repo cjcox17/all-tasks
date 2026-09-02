@@ -18,6 +18,8 @@ const FULL_VIEW: EndpointEditorView = {
   defaultModel: 'qwen/qwen3.8-27b',
   idleSeconds: 900,
   totalSeconds: 3600,
+  costPerMillionInputTokens: 0.27,
+  costPerMillionOutputTokens: 1.1,
 }
 
 const PROVIDERS: readonly EndpointProviderInfo[] = [
@@ -56,8 +58,10 @@ describe('readEndpointEditorState', () => {
       defaultModel: '',
       idleSeconds: 900,
       totalSeconds: 3600,
+      costPerMillionInputTokens: 0,
+      costPerMillionOutputTokens: 0,
     })
-    expect(state.endpoints[1]).toMatchObject({ provider: DEEPSEEK_PROVIDER, idleSeconds: 300, totalSeconds: 0 })
+    expect(state.endpoints[1]).toMatchObject({ provider: DEEPSEEK_PROVIDER, idleSeconds: 300, totalSeconds: 0, costPerMillionInputTokens: 0, costPerMillionOutputTokens: 0 })
     expect(state.defaultEndpoints).toEqual(['deepseek', 'lm-studio-nas'])
   })
 
@@ -134,6 +138,8 @@ describe('parseEndpointEditorPatch', () => {
           defaultModel: 'qwen/qwen3.8-27b',
           idleSeconds: 900,
           totalSeconds: 3600,
+          costPerMillionInputTokens: 0.27,
+          costPerMillionOutputTokens: 1.1,
         },
       ],
       defaultEndpoints: ['lm-studio-nas'],
@@ -150,6 +156,8 @@ describe('parseEndpointEditorPatch', () => {
       defaultModel: '',
       idleSeconds: 300,
       totalSeconds: 0,
+      costPerMillionInputTokens: 0,
+      costPerMillionOutputTokens: 0,
     })
     expect(state.defaultEndpoints).toEqual([])
   })
@@ -165,6 +173,8 @@ describe('parseEndpointEditorPatch', () => {
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', idleSeconds: 86_401 }] })).toThrow(/idleSeconds/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', idleSeconds: 1.5 }] })).toThrow(/idleSeconds/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', totalSeconds: -1 }] })).toThrow(/totalSeconds/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', costPerMillionInputTokens: -1 }] })).toThrow(/costPerMillionInputTokens/)
+    expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p', costPerMillionOutputTokens: 'x' }] })).toThrow(/costPerMillionOutputTokens/)
     expect(() => parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p' }], defaultEndpoints: ['nope'] })).toThrow(/unknown endpoint/)
     expect(parseEndpointEditorPatch({ endpoints: [{ id: 'a', provider: 'p' }], defaultEndpoints: ['a', 'a'] })).toEqual({
       endpoints: [expect.objectContaining({ id: 'a' })],
@@ -188,6 +198,8 @@ describe('endpointEditorOps', () => {
       provider: 'lm-studio',
       models: ['qwen/qwen3.8-27b', 'qwen/qwen3-coder-30b'],
       defaultModel: 'qwen/qwen3.8-27b',
+      costPerMillionInputTokens: 0.27,
+      costPerMillionOutputTokens: 1.1,
     })
   })
 

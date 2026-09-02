@@ -42,6 +42,14 @@ export interface EndpointEditorView {
   idleSeconds: number
   /** Effective total request timeout in seconds; 0 = unset (pi-ai only). */
   totalSeconds: number
+  /**
+   * Local pricing for the dashboard cost estimate: USD per 1M input tokens
+   * (0 = not configured; the official DeepSeek route bills its hard-coded
+   * peak/off-peak rates instead and hides these fields).
+   */
+  costPerMillionInputTokens: number
+  /** Local pricing for the dashboard cost estimate: USD per 1M output tokens. */
+  costPerMillionOutputTokens: number
 }
 
 /** One known provider route the editor can attach an endpoint to. */
@@ -141,6 +149,9 @@ function viewOf(raw: unknown, byProvider: ReadonlyMap<string, ModelTimeoutView>)
       ? Math.round(DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000)
       : Math.round(timeout.streamIdleTimeoutMs / 1000),
     totalSeconds: timeout?.timeoutMs === undefined ? 0 : Math.round(timeout.timeoutMs / 1000),
+    // Clamp defensively: a hand-edited negative price means "not configured".
+    costPerMillionInputTokens: Math.max(numberOr(entry.costPerMillionInputTokens, 0), 0),
+    costPerMillionOutputTokens: Math.max(numberOr(entry.costPerMillionOutputTokens, 0), 0),
   }
 }
 
@@ -211,6 +222,16 @@ export function parseEndpointEditorPatch(value: unknown): EndpointEditorState {
     for (const model of models) {
       if (model.length > ENDPOINT_FIELD_BOUND) throw new Error(`endpoints[${index}].models entry is too long`)
     }
+    // Local pricing for the cost estimate: a finite non-negative number, 0 = not
+    // configured. Absent collapses to 0 so the section stays hand-editable.
+    const price = (field: string): number => {
+      const value = entry[field]
+      if (value === undefined) return 0
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new Error(`endpoints[${index}].${field} must be a non-negative number`)
+      }
+      return value
+    }
     endpoints.push({
       id,
       name,
@@ -219,6 +240,8 @@ export function parseEndpointEditorPatch(value: unknown): EndpointEditorState {
       defaultModel,
       idleSeconds: wholeSeconds(entry.idleSeconds ?? Math.round(DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000), `endpoints[${index}].idleSeconds`, false),
       totalSeconds: wholeSeconds(entry.totalSeconds ?? 0, `endpoints[${index}].totalSeconds`, true),
+      costPerMillionInputTokens: price('costPerMillionInputTokens'),
+      costPerMillionOutputTokens: price('costPerMillionOutputTokens'),
     })
   }
   const defaultEndpoints: string[] = []
@@ -240,6 +263,8 @@ function rawOf(view: EndpointEditorView): Record<string, unknown> {
   if (view.name !== '') raw.name = view.name
   if (view.models.length > 0) raw.models = view.models
   if (view.defaultModel !== '') raw.defaultModel = view.defaultModel
+  if (view.costPerMillionInputTokens > 0) raw.costPerMillionInputTokens = view.costPerMillionInputTokens
+  if (view.costPerMillionOutputTokens > 0) raw.costPerMillionOutputTokens = view.costPerMillionOutputTokens
   return raw
 }
 

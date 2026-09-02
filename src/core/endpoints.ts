@@ -77,6 +77,15 @@ export interface EndpointConfig {
   models: string[]
   /** Model used when the task's model pin cannot be served by this endpoint. */
   defaultModel?: string
+  /**
+   * Local pricing for the dashboard cost estimate: USD per 1M input tokens.
+   * 0/absent = not configured (the endpoint's runs then have no estimate,
+   * unless the provider is the official DeepSeek route, which uses the
+   * hard-coded official peak/off-peak rates instead).
+   */
+  costPerMillionInputTokens?: number
+  /** Local pricing for the dashboard cost estimate: USD per 1M output tokens. */
+  costPerMillionOutputTokens?: number
 }
 
 /** The resolved router configuration (normalized; never trusts raw input). */
@@ -152,12 +161,22 @@ export function normalizeEndpoint(value: unknown): EndpointConfig | undefined {
       if (models.length >= ENDPOINT_MODELS_BOUND) break
     }
   }
+  // Local per-million pricing for the cost estimate; malformed or non-positive
+  // values collapse to absent (0 = not configured), like the default model.
+  const price = (field: string): number | undefined => {
+    const value = raw[field]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+  }
+  const inputPerMillion = price('costPerMillionInputTokens')
+  const outputPerMillion = price('costPerMillionOutputTokens')
   return {
     id,
     name,
     provider,
     models,
     ...(boundedString(raw.defaultModel, ENDPOINT_FIELD_BOUND) === undefined ? {} : { defaultModel: boundedString(raw.defaultModel, ENDPOINT_FIELD_BOUND) }),
+    ...(inputPerMillion === undefined ? {} : { costPerMillionInputTokens: inputPerMillion }),
+    ...(outputPerMillion === undefined ? {} : { costPerMillionOutputTokens: outputPerMillion }),
   }
 }
 

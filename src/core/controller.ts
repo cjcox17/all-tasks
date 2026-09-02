@@ -105,12 +105,14 @@ export interface ExecutionEndpointOption {
   models?: readonly string[]
   /** Fallback model id the router uses when the task's pin cannot be served by this endpoint. */
   defaultModel?: string
-}
-
-/** Per-token pricing for the dashboard cost estimate (USD per 1M tokens). */
-export interface CostPricing {
-  inputPerMillion: number
-  outputPerMillion: number
+  /**
+   * Local pricing for the dashboard cost estimate: USD per 1M input tokens
+   * (0/absent = not configured; the official DeepSeek route instead bills the
+   * hard-coded official peak/off-peak rates).
+   */
+  costPerMillionInputTokens?: number
+  /** Local pricing for the dashboard cost estimate: USD per 1M output tokens. */
+  costPerMillionOutputTokens?: number
 }
 
 /** The execution-target option sets the UI feeds into the controller. */
@@ -164,8 +166,6 @@ export interface ControllerSnapshot {
   /** Picker option sets (workspace list + agent-preset roster). */
   executionOptions: ExecutionOptionsSnapshot
   pendingTaskIds: readonly string[]
-  /** Per-token pricing for the dashboard cost estimate (absent = not configured). */
-  pricing?: CostPricing
   /**
    * Whether the new-task dialog auto-generates a title from the run prompt
    * (the `autoTitle` setting pushed from the client wiring; absent on legacy
@@ -221,7 +221,6 @@ export class BoardController {
   private readonly uuid: () => string
   private readonly pendingTaskIds = new Set<string>()
   private readonly taskQueues = new Map<string, Promise<void>>()
-  private pricing: CostPricing | undefined
   private autoTitle = true
   private transportError: string | undefined
   private hostState: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
@@ -274,7 +273,6 @@ export class BoardController {
       selectedTaskId: this.selectedTaskId,
       executionOptions: this.executionOptions,
       pendingTaskIds: [...this.pendingTaskIds],
-      ...(this.pricing === undefined ? {} : { pricing: this.pricing }),
       autoTitle: this.autoTitle,
       ...(this.transportError === undefined ? {} : { transportError: this.transportError }),
       ...(this.hostState === undefined ? {} : { host: this.hostState }),
@@ -435,12 +433,6 @@ export class BoardController {
    */
   setExecutionOptions(patch: Partial<ExecutionOptionsSnapshot>): void {
     this.executionOptions = { ...this.executionOptions, ...patch }
-    this.notify()
-  }
-
-  /** Set the per-token pricing the dashboard's cost estimate uses (from settings). */
-  setPricing(pricing: CostPricing | undefined): void {
-    this.pricing = pricing
     this.notify()
   }
 

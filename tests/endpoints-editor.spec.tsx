@@ -43,6 +43,7 @@ const GET_BODY = {
       id: 'lm-studio-nas', name: 'LM Studio (NAS)', provider: 'lm-studio',
       models: ['qwen/qwen3.8-27b'], defaultModel: 'qwen/qwen3.8-27b',
       idleSeconds: 900, totalSeconds: 3600,
+      costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.1,
     },
   ],
   defaultEndpoints: ['lm-studio-nas'],
@@ -94,6 +95,9 @@ describe('EndpointsEditor', () => {
     expect(inputOf(row, 'endpoint-name-0').value).toBe('LM Studio (NAS)')
     expect(inputOf(row, 'endpoint-idle-0').value).toBe('900')
     expect(inputOf(row, 'endpoint-total-0').value).toBe('3600')
+    // Local pricing prefills for the non-official endpoint.
+    expect(inputOf(row, 'endpoint-cost-input-0').value).toBe('0.27')
+    expect(inputOf(row, 'endpoint-cost-output-0').value).toBe('1.1')
     // The provider's model list renders as checkboxes (models: 2 known).
     const modelBoxes = row.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     expect(modelBoxes.length).toBe(2)
@@ -130,13 +134,16 @@ describe('EndpointsEditor', () => {
       providerSelect.value = 'deepseek-official'
       providerSelect.dispatchEvent(new Event('change', { bubbles: true }))
     })
+    // The official DeepSeek route hides local pricing and shows its auto-rate note.
+    expect(blank.querySelector('[data-dsh-part="endpoint-official-pricing-1"]')).not.toBeNull()
+    expect(blank.querySelector('input[id$="endpoint-cost-input-1"]')).toBeNull()
     act(() => { buttonByText(container, 'settings.endpointSave').click() })
     await flush()
 
     const posts = fetchMock.mock.calls.filter(call => (call[1] as RequestInit | undefined)?.method === 'POST')
     expect(posts).toHaveLength(1)
     const body = JSON.parse(String((posts[0][1] as RequestInit).body)) as { endpoints: Array<Record<string, unknown>>; defaultEndpoints?: string[] }
-    expect(body.endpoints[0]).toMatchObject({ id: 'lm-studio-nas', provider: 'lm-studio', idleSeconds: 600 })
+    expect(body.endpoints[0]).toMatchObject({ id: 'lm-studio-nas', provider: 'lm-studio', idleSeconds: 600, costPerMillionInputTokens: 0.27, costPerMillionOutputTokens: 1.1 })
     expect(body.endpoints[1]).toMatchObject({ id: 'endpoint-2', provider: 'deepseek-official' })
     expect(body.defaultEndpoints).toEqual(['lm-studio-nas'])
     expect(container.textContent).toContain('settings.endpointSaved')
@@ -203,6 +210,14 @@ describe('EndpointsEditor', () => {
     act(() => { buttonByText(container, 'settings.endpointSave').click() })
     await flush()
     expect(rowOf(container, 'lm-studio-nas').querySelector('[role="alert"]')?.textContent).toBe('settings.endpointInvalidNumber')
+    expect(fetchMock.mock.calls.some(call => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(false)
+
+    // A negative local price is rejected too.
+    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-idle-0'), '900') })
+    act(() => { setValue(inputOf(rowOf(container, 'lm-studio-nas'), 'endpoint-cost-input-0'), '-1') })
+    act(() => { buttonByText(container, 'settings.endpointSave').click() })
+    await flush()
+    expect(rowOf(container, 'lm-studio-nas').querySelector('[role="alert"]')?.textContent).toBe('settings.endpointInvalidPrice')
     expect(fetchMock.mock.calls.some(call => (call[1] as RequestInit | undefined)?.method === 'POST')).toBe(false)
   })
 
