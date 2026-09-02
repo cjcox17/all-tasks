@@ -1,11 +1,13 @@
 /**
- * Group-banner CSS guards: the banner must stay a self-contained block —
- * its header wraps so the trailing action buttons (notably the Manage gear)
- * never overflow the dashed group box on a narrow column — and the
- * Running/Pending pills stay compact, pill-shaped, and visible against the
- * column background, with a spinner that respects the reduced-motion
- * preference (like the card spinner). A regression here would silently hide
- * the group's live status or push its controls outside the group box.
+ * Group-banner CSS guards: the banner is a self-contained block stacked in
+ * three rows — the title, then the pills (mode badge, live status,
+ * stopped/paused/scheduled, member count), then the control icons — and each
+ * row wraps so the trailing action buttons (notably the Manage gear) never
+ * overflow the dashed group box on a narrow column. The Running/Pending pills
+ * stay compact, pill-shaped, and visible against the column background, with a
+ * spinner that respects the reduced-motion preference (like the card spinner).
+ * A regression here would silently hide the group's live status or push its
+ * controls outside the group box.
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -13,16 +15,31 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(new URL('../src/client/board.module.css', import.meta.url), 'utf8')
 
 describe('group banner css', () => {
-  it('wraps the header so banner controls stay inside the group box', () => {
+  it('stacks the header in three rows and wraps each row so controls stay inside the group box', () => {
     const header = css.match(/\.groupHeader\s*\{([^}]*)\}/)?.[1] ?? ''
+    // The title, the pills and the control icons each get their own row.
+    expect(header).toContain('flex-direction: column')
     // The grid's narrowest column (220px) cannot hold name + mode badge +
-    // status pills + count + four action buttons on one line; without
-    // wrapping the trailing Manage gear overflows the group section and
-    // paints outside the dashed box (regression: gear rendered outside).
-    expect(header).toContain('flex-wrap: wrap')
-    // No horizontal scrollbar trap inside the header either.
-    expect(header).not.toContain('overflow-x: auto')
-    expect(header).not.toContain('overflow-x: scroll')
+    // status pills + count + four action buttons on one line; the pills and
+    // the control-icon rows wrap instead, so the trailing Manage gear never
+    // overflows the group section and paints outside the dashed box
+    // (regression: gear rendered outside).
+    for (const row of ['groupHeaderPills', 'groupHeaderActions']) {
+      const block = css.match(new RegExp(`\\.${row}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+      expect(block, `.${row}`).toContain('flex-wrap: wrap')
+      // No horizontal scrollbar trap inside a header row either.
+      expect(block, `.${row}`).not.toContain('overflow-x: auto')
+      expect(block, `.${row}`).not.toContain('overflow-x: scroll')
+    }
+  })
+
+  it('keeps the title on its own full-width row', () => {
+    const name = css.match(/\.groupName\s*\{([^}]*)\}/)?.[1] ?? ''
+    // The title never shares a line with the pills or the controls: it does
+    // not grow or shrink in the column flow and truncates with an ellipsis.
+    expect(name).toContain('flex: none')
+    expect(name).toContain('white-space: nowrap')
+    expect(name).toContain('text-overflow: ellipsis')
   })
 
   it('renders the status pills as a compact rounded pill', () => {

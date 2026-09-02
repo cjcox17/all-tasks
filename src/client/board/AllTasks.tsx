@@ -147,10 +147,12 @@ function pendingReasonsHint(reasons: readonly ExecutionQueuedReason[]): string {
 }
 
 /**
- * Group section header inside a column: name, member count, mode badge, live
- * Running/Pending status, start/stop/resume, manage. The whole header is a
- * drag source so a group can be moved between manual columns in one action
- * (see the column drop handler).
+ * Group section header inside a column, laid out in three stacked rows: the
+ * title, then the pills (mode badge, live Running/Pending/Final-step status,
+ * stopped/paused/scheduled, member count), then the control icons (start /
+ * pause / continue / stop / manage). The whole header is a drag source so a
+ * group can be moved between manual columns in one action (see the column
+ * drop handler).
  */
 function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause, onContinue, onResume, onManage, onDragStart }: {
   group: TaskGroupRecord
@@ -216,74 +218,89 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
         <span className={css.groupGrip} title={t('group.dragHint')} aria-hidden="true">⠿</span>
       )}
       <span className={css.groupName} title={group.name}>{group.name}</span>
-      <span className={css.groupBadge} data-mode={group.mode}>
-        {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
-      </span>
-      {status.running > 0 && (
-        <span className={css.groupStatus} data-kind="running" title={t('group.runningHint')}>
-          <span className={css.groupStatusSpinner} aria-hidden="true" />
-          {t('group.running')}
-          {status.running > 1 ? ` ${status.running}` : ''}
+      <div className={css.groupHeaderPills}>
+        <span className={css.groupBadge} data-mode={group.mode}>
+          {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
         </span>
-      )}
-      {status.pending > 0 && (
-        <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
-          {t('group.pending')}
-          {status.pending > 1 ? ` ${status.pending}` : ''}
-        </span>
-      )}
-      {status.finalStepWaiting && (
-        <span className={css.groupStatus} data-kind="finalstep" title={t('card.finalStepWaitingHint')}>
-          {t('group.finalStepWaitingBadge')}
-        </span>
-      )}
-      {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
-      {paused && <span className={css.groupPaused}>{t('group.paused')}</span>}
-      {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
-      <span className={css.groupCount}>{count}</span>
-      {!stopped && !paused && (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.start')}
-          title={t('group.startHint')}
-          disabled={!canStart}
-          onClick={onStart}
-        >
-          ▶
-        </button>
-      )}
-      {paused ? (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.continue')}
-          title={t('group.continue')}
-          onClick={onContinue}
-        >
-          ▶
-        </button>
-      ) : stopped ? (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.resume')}
-          onClick={onResume}
-        >
-          ▶
-        </button>
-      ) : (
-        <>
+        {status.running > 0 && (
+          <span className={css.groupStatus} data-kind="running" title={t('group.runningHint')}>
+            <span className={css.groupStatusSpinner} aria-hidden="true" />
+            {t('group.running')}
+            {status.running > 1 ? ` ${status.running}` : ''}
+          </span>
+        )}
+        {status.pending > 0 && (
+          <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
+            {t('group.pending')}
+            {status.pending > 1 ? ` ${status.pending}` : ''}
+          </span>
+        )}
+        {status.finalStepWaiting && (
+          <span className={css.groupStatus} data-kind="finalstep" title={t('card.finalStepWaitingHint')}>
+            {t('group.finalStepWaitingBadge')}
+          </span>
+        )}
+        {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
+        {paused && <span className={css.groupPaused}>{t('group.paused')}</span>}
+        {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
+        <span className={css.groupCount}>{count}</span>
+      </div>
+      <div className={css.groupHeaderActions}>
+        {!stopped && !paused && (
           <button
             type="button"
             className={css.ghostButton}
-            aria-label={t('group.pause')}
-            title={t('group.pause')}
-            disabled={!hasOpen}
-            onClick={onPause}
+            aria-label={t('group.start')}
+            title={t('group.startHint')}
+            disabled={!canStart}
+            onClick={onStart}
           >
-            ⏸
+            ▶
           </button>
+        )}
+        {paused ? (
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.continue')}
+            title={t('group.continue')}
+            onClick={onContinue}
+          >
+            ▶
+          </button>
+        ) : stopped ? (
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.resume')}
+            onClick={onResume}
+          >
+            ▶
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={css.ghostButton}
+              aria-label={t('group.pause')}
+              title={t('group.pause')}
+              disabled={!hasOpen}
+              onClick={onPause}
+            >
+              ⏸
+            </button>
+            <button
+              type="button"
+              className={css.ghostButton}
+              aria-label={t('group.stop')}
+              disabled={!hasOpen}
+              onClick={onStop}
+            >
+              ⏹
+            </button>
+          </>
+        )}
+        {paused && (
           <button
             type="button"
             className={css.ghostButton}
@@ -293,27 +310,16 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
           >
             ⏹
           </button>
-        </>
-      )}
-      {paused && (
+        )}
         <button
           type="button"
           className={css.ghostButton}
-          aria-label={t('group.stop')}
-          disabled={!hasOpen}
-          onClick={onStop}
+          aria-label={t('group.manage')}
+          onClick={onManage}
         >
-          ⏹
+          ⚙
         </button>
-      )}
-      <button
-        type="button"
-        className={css.ghostButton}
-        aria-label={t('group.manage')}
-        onClick={onManage}
-      >
-        ⚙
-      </button>
+      </div>
     </header>
   )
 }

@@ -737,13 +737,13 @@ html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-eve
 
 .groupHeader {
   display: flex;
-  align-items: center;
-  /* A narrow column (the grid minimum is 220px) cannot fit the whole banner
-     on one line: name, mode badge, live status pills, count, and up to four
-     action buttons exceed it, and with the default nowrap the trailing
-     controls (notably the Manage gear) overflow the group box and paint
-     outside it. Wrapping keeps every control inside the dashed group section. */
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  /* Three stacked rows: the title, then the pills, then the control icons.
+     A narrow column (the grid minimum is 220px) cannot fit name, mode badge,
+     status pills, count and up to four action buttons on one line, so each
+     row wraps independently — the trailing Manage gear always stays inside
+     the dashed group section instead of painting outside it. */
   gap: 6px;
   padding: 6px 8px;
   flex: none;
@@ -760,8 +760,9 @@ html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-eve
   user-select: none;
 }
 
+/* Row 1: the group title, on its own full-width line. */
 .groupName {
-  flex: 1;
+  flex: none;
   min-width: 0;
   font-size: 12px;
   font-weight: 700;
@@ -769,6 +770,26 @@ html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-eve
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Row 2: mode badge, live status pills, stopped/paused/scheduled chips and
+   the member count. Wraps on a narrow column so no pill overflows the box. */
+.groupHeaderPills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Row 3: the control icons (start / pause / continue / stop / manage).
+   Wraps too, so the controls always stay inside the group box. */
+.groupHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 /* A draggable card or group header signals its move handle with a grab
