@@ -1144,7 +1144,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
    rather than a full-bleed wall; it scrolls horizontally only if a very narrow
    view forces it to. */
 .directory {
-  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 70px;
+  --dir-columns: 30px minmax(0, 1fr) repeat(6, 64px) 56px 88px 70px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1185,7 +1185,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
 /* Empty leading cell in the header that mirrors the row chevron column. */
 .headChevron {
-  width: 26px;
+  width: 30px;
 }
 
 /* One workspace (or the All-tasks row): a table row plus an expandable body. */
@@ -1338,10 +1338,13 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 }
 
 /* The leading chevron toggles the inline directory; rotates to point down when
-   open. */
+   open. Bigger than the base icon button so the row collapse control reads as
+   the row's primary toggle and is easy to hit. */
 .listChevron {
   align-self: center;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
   transition: transform 120ms ease;
 }
 
@@ -1349,12 +1352,15 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   transform: rotate(90deg);
 }
 
-/* The expanded content below a workspace row: its groups + ungrouped tasks. */
+/* The expanded content below a workspace row: its groups + ungrouped tasks.
+   Indented past the row's chevron column (30px + the 10px grid gap) so the
+   nested data reads as belonging under the workspace name rather than as a
+   sibling flush with the row. */
 .directoryBody {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 0 6px;
+  padding: 10px 0 6px 40px;
 }
 
 /* One group section: a Monday.com-style colored band — tinted surface, colored
@@ -1382,16 +1388,16 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 14px;
   transition: transform 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
@@ -1517,7 +1523,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 /* A workspace with nothing on board shows a quiet hint when expanded. */
 .listEmpty {
   margin: 0;
-  padding: 10px 4px 6px;
+  padding: 10px 4px 6px 40px;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1877,7 +1883,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 70px;
+    --dir-columns: 30px minmax(0, 1fr) repeat(6, 48px) 48px 76px 70px;
     padding: 4px 0 12px;
   }
 
