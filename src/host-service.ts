@@ -5,6 +5,7 @@ import { nextRunAtMs } from './core/schedule.ts'
 import type { TaskRecord } from './core/tasks.ts'
 import { resolveExecutionTargets } from './core/workspace-defaults.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference, type QueuedRunReference } from './host-ledger.ts'
+import { OpenQuestionWatcher } from './host-questions.ts'
 import { HostExecutionRunner, SessionLaunchError, type SessionCommandDispatcher, type SessionSummary } from './host-runner.ts'
 import { endpointEditorOps, endpointTimeoutPatches, readEndpointEditorState, readEndpointProviderCatalog, type EndpointEditorState } from './endpoint-editor.ts'
 import {
@@ -15,7 +16,7 @@ import {
   type ModelTimeoutView,
 } from './model-timeouts.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
-import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from './protocol.ts'
+import type { AllTasksAction, AllTasksEventPayload, AllTasksSessionQuestion, AllTasksSnapshot } from './protocol.ts'
 import { suggestTaskTitle, type TitleSuggestionRequest } from './title-suggest.ts'
 
 const SESSION_POLL_MS = 5_000
@@ -37,6 +38,8 @@ export class AllTasksHostService {
   readonly ledger: HostTaskLedger
   readonly runner: HostExecutionRunner
   readonly power: PowerInhibitor
+  /** Live open-question tracker (which execution session waits for an answer). */
+  readonly questions: OpenQuestionWatcher
   private readonly api: ApiProxy
   private readonly listeners = new Set<() => void>()
   private timers: Array<ReturnType<typeof setInterval>> = []
@@ -71,6 +74,8 @@ export class AllTasksHostService {
     this.now = options.now ?? Date.now
     if (options.routerConfig !== undefined) this.routerConfig = options.routerConfig
     this.settings = options.settings
+    this.questions = new OpenQuestionWatcher(api, { ...(options.now === undefined ? {} : { now: options.now }) })
+    this.questions.onChange(() => { this.emit() })
     this.ledger.subscribe(() => {
       this.syncPowerReasons()
       this.emit()
@@ -95,6 +100,7 @@ export class AllTasksHostService {
     this.syncPowerReasons()
     this.timers.push(setInterval(() => { this.schedulePoll() }, SESSION_POLL_MS))
     this.timers.push(setInterval(() => { this.scheduleTick(false) }, SCHEDULE_TICK_MS))
+    this.questions.start()
     this.schedulePoll()
     this.scheduleTick(true)
     this.scheduleRoutePass()
@@ -138,6 +144,7 @@ export class AllTasksHostService {
       workflows: state.workflows,
       workspaceDefaults: state.workspaceDefaults,
       workspacePaused: state.workspacePaused,
+      sessionQuestions: this.questionViews(),
       scheduler: state.scheduler,
       power: this.power.snapshot(),
     }
@@ -146,7 +153,34 @@ export class AllTasksHostService {
   /** SSE frame payload; deliberately skips the tasks deep-clone of {@link snapshot}. */
   eventPayload(): AllTasksEventPayload {
     const { revision, scheduler } = this.ledger.summary()
-    return { revision, scheduler, power: this.power.snapshot() }
+    return {
+      revision,
+      scheduler,
+      power: this.power.snapshot(),
+      sessionQuestions: this.questionViews(),
+    }
+  }
+
+  /**
+   * The open asks the board should publish, keyed by session id: the watcher's
+   * live state intersected with the sessions of open, unpaused executions —
+   * a question in a session the board does not own, or on a paused/stopped
+   * run, is never advertised (and the poll prunes those entries entirely).
+   */
+  private questionViews(): Record<string, AllTasksSessionQuestion> {
+    const views: Record<string, AllTasksSessionQuestion> = {}
+    for (const execution of this.ledger.runtimeView().openExecutions) {
+      if (execution.sessionId === undefined || execution.pausedAt !== undefined) continue
+      const question = this.questions.get(execution.sessionId)
+      if (question !== undefined) {
+        views[execution.sessionId] = {
+          askedAt: question.askedAt,
+          count: question.count,
+          ...(question.summary === undefined ? {} : { summary: question.summary }),
+        }
+      }
+    }
+    return views
   }
 
   subscribe(listener: () => void): () => void {
@@ -198,6 +232,7 @@ export class AllTasksHostService {
       workflows: result.state.workflows,
       workspaceDefaults: result.state.workspaceDefaults,
       workspacePaused: result.state.workspacePaused,
+      sessionQuestions: this.questionViews(),
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }
@@ -300,6 +335,7 @@ export class AllTasksHostService {
     for (const timer of this.timers.splice(0)) clearInterval(timer)
     this.launching.clear()
     this.power.dispose()
+    this.questions.stop()
     this.ledger.dispose()
     this.listeners.clear()
   }
@@ -610,6 +646,14 @@ export class AllTasksHostService {
     })
     // No unconditional emit here: real changes already emit through the
     // ledger subscription (settles) and the gated power listener above.
+    // Drop question entries whose session is no longer an open, unpaused
+    // execution (a stopped/paused run resolves its ask via the session
+    // cancel; this is the safety net when no resolution frame ever arrived).
+    const keepSessions = new Set<string>()
+    for (const execution of runtime.openExecutions) {
+      if (execution.sessionId !== undefined && execution.pausedAt === undefined) keepSessions.add(execution.sessionId)
+    }
+    this.questions.prune(keepSessions)
     await this.reconcileExecutions(running.items, runtime.openExecutions)
   }
 

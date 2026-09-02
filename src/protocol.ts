@@ -55,6 +55,23 @@ export interface AllTasksSchedulerSnapshot {
   error?: string
 }
 
+/**
+ * One open `ask_user_question` on an execution session: the session's agent
+ * asked the human a question and its turn is waiting for the answer. Tracked
+ * Host-side from the DSH mux stream's `question/requested` /
+ * `question/resolved` frames and carried in snapshots/SSE frames as a
+ * volatile overlay — it never touches the durable ledger, so an ask that
+ * opens and closes does not bump the ledger revision.
+ */
+export interface AllTasksSessionQuestion {
+  /** When the question was asked (ms epoch). */
+  askedAt: number
+  /** How many questions the open ask carries (one `ask()` = one batch). */
+  count: number
+  /** The batch's first question text, for card/detail hints. */
+  summary?: string
+}
+
 export interface AllTasksSnapshot {
   schemaVersion: typeof ALL_TASKS_SCHEMA_VERSION
   revision: number
@@ -76,6 +93,12 @@ export interface AllTasksSnapshot {
    * empty map) on snapshots from an older Host.
    */
   workspacePaused?: Record<string, number>
+  /**
+   * Open `ask_user_question`s per execution session, keyed by session id (see
+   * {@link AllTasksSessionQuestion}). Volatile: changes do not bump the
+   * ledger revision, and the field is absent on snapshots from an older Host.
+   */
+  sessionQuestions?: Record<string, AllTasksSessionQuestion>
   scheduler: AllTasksSchedulerSnapshot
   power: AllTasksPowerSnapshot
 }
@@ -85,6 +108,8 @@ export interface AllTasksEventPayload {
   revision: number
   scheduler: AllTasksSchedulerSnapshot
   power: AllTasksPowerSnapshot
+  /** Live open-question overlay; present only on frames from a current Host. */
+  sessionQuestions?: Record<string, AllTasksSessionQuestion>
 }
 
 /**

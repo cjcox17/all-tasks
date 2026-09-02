@@ -22,7 +22,8 @@ import {
   type GroupRuntimeStatus,
   type TaskGroupRecord,
 } from '../../core/groups.ts'
-import { COLUMNS, ARCHIVABLE_STATUSES, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
+import { COLUMNS, ARCHIVABLE_STATUSES, canMoveManually, openExecutionOf, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
+import type { AllTasksSessionQuestion } from '../../protocol.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
 import { Dashboard } from './Dashboard.tsx'
@@ -102,6 +103,19 @@ function canStartTask(task: TaskRecord): boolean {
   return !task.executions.some(execution => execution.endedAt === undefined)
 }
 
+/**
+ * The open ask of a task's running execution, if its session is waiting on
+ * the human's answer: the session to open and the question text for hints.
+ * Undefined when the task has no open run, no session, or no open question.
+ */
+function openQuestionOf(task: TaskRecord, sessionQuestions: Record<string, AllTasksSessionQuestion>):
+  { sessionId: string; question: AllTasksSessionQuestion } | undefined {
+  const open = openExecutionOf(task)
+  if (open === undefined || open.sessionId === undefined) return undefined
+  const question = sessionQuestions[open.sessionId]
+  return question === undefined ? undefined : { sessionId: open.sessionId, question }
+}
+
 /** The per-card start button for standalone (ungrouped) cards: sits beside the card, like approve. */
 function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) => void }) {
   return (
@@ -141,7 +155,7 @@ function HideTaskButton({ onHide }: { onHide: () => void }) {
  * re-renders only when its own task changes — not when a sibling card status,
  * the filter, or the selection moves.
  */
-const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner, finalStep, finalStepWaiting }: {
+const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpen, onDragStart, hideSpinner, finalStep, finalStepWaiting, waiting, waitingHint, answerSessionId, onAnswer }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
@@ -152,9 +166,32 @@ const MemoTaskCard = memo(function MemoTaskCard({ task, pending, timeZone, onOpe
   finalStep?: boolean
   /** The final step is gated: other group members are still unfinished. */
   finalStepWaiting?: boolean
+  /** The open execution's session is waiting on the human's answer. */
+  waiting?: boolean
+  /** The question text, for the card's tooltip. */
+  waitingHint?: string
+  /** The session to open when this card is clicked while waiting. */
+  answerSessionId?: string
+  /** Opens a session's conversation (answering an open question there). */
+  onAnswer?: (sessionId: string) => void
 }) {
   const onClick = useCallback(() => { onOpen(task.id) }, [task.id, onOpen])
-  return <TaskCard task={task} pending={pending} timeZone={timeZone} onClick={onClick} onDragStart={onDragStart} hideSpinner={hideSpinner} finalStep={finalStep} finalStepWaiting={finalStepWaiting} />
+  return (
+    <TaskCard
+      task={task}
+      pending={pending}
+      timeZone={timeZone}
+      onClick={onClick}
+      onDragStart={onDragStart}
+      hideSpinner={hideSpinner}
+      finalStep={finalStep}
+      finalStepWaiting={finalStepWaiting}
+      waiting={waiting}
+      waitingHint={waitingHint}
+      answerSessionId={answerSessionId}
+      onAnswer={onAnswer}
+    />
+  )
 })
 
 /** Human hint for a pending group: the reason(s) its held members wait. */
@@ -371,7 +408,7 @@ function GroupBanner({ group, count, status, canStart, hideCount, onHide, onStar
  * flight. Single-member pause/continue stays available through the group
  * banner (Pause group) and the task detail's open-execution row.
  */
-function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onHideSettled, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget, finalStepBlocked }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onHideSettled, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget, finalStepBlocked, sessionQuestions, onAnswer }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Open-execution status of the whole group (running/queued members). */
@@ -400,6 +437,10 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   dropTarget?: DropTarget
   /** Whether the group's final step is gated on unsettled members (all tasks considered). */
   finalStepBlocked: boolean
+  /** Open `ask_user_question`s per session (the board's live overlay). */
+  sessionQuestions: Record<string, AllTasksSessionQuestion>
+  /** Opens a member's session (answering an open question there). */
+  onAnswer: (sessionId: string) => void
 }) {
   const overGroup = dropTarget?.zone === 'group' && dropTarget.groupId === group.id
   // The group's settled members in this column — what its banner's Hide button
@@ -431,6 +472,7 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
         // the card explains the wait). Stop/approve stay available.
         const isFinalStep = group.finalStepTaskId === task.id
         const finalStepWaiting = isFinalStep && finalStepBlocked
+        const question = openQuestionOf(task, sessionQuestions)
         // One contextual action per member, shown as a circle on the card's
         // right edge (inside the card — the card itself is a button, so the
         // action stays a sibling in the DOM and is overlaid by the wrapper).
@@ -461,6 +503,10 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
               hideSpinner={action !== undefined}
               finalStep={isFinalStep}
               finalStepWaiting={finalStepWaiting}
+              waiting={question !== undefined}
+              waitingHint={question?.question.summary}
+              answerSessionId={question?.sessionId}
+              onAnswer={onAnswer}
             />
             {action !== undefined && (
               <button
@@ -529,6 +575,12 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
   const canStartGroup = useCallback((groupId: string): boolean =>
     tasks.some(task => task.groupId === groupId && canStartTask(task)),
   [tasks])
+  /** Live open-question overlay from the Host (absent = no run waits). */
+  const sessionQuestions = snapshot.sessionQuestions ?? {}
+  /** Opens a session's conversation — the click target of a waiting card. */
+  const answerInSession = useCallback((sessionId: string): void => {
+    controller.openSession(sessionId)
+  }, [controller])
 
   // Groups are workspace-scoped: a workspace kanban shows only the groups of
   // that workspace (the unassigned-scope groups render inside its Unassigned
@@ -932,6 +984,8 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                 onDragStart={startDrag}
                 dropTarget={dropTarget}
                 finalStepBlocked={groupFinalStepBlocked(group, tasks)}
+                sessionQuestions={sessionQuestions}
+                onAnswer={answerInSession}
               />
             )
             return (
@@ -969,9 +1023,10 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                     const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
                     const open = task.executions.find(execution => execution.endedAt === undefined)
                     const paused = task.status === 'running' && open?.pausedAt !== undefined
+                    const question = openQuestionOf(task, sessionQuestions)
                     return (
                       <div key={task.id} className={showAction ? css.cardWrap : undefined}>
-                        <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} />
+                        <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} waiting={question !== undefined} waitingHint={question?.question.summary} answerSessionId={question?.sessionId} onAnswer={answerInSession} />
                         {task.approved === false ? (
                           <button
                             type="button"
@@ -1027,9 +1082,10 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                         const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
                         const open = task.executions.find(execution => execution.endedAt === undefined)
                         const paused = task.status === 'running' && open?.pausedAt !== undefined
+                        const question = openQuestionOf(task, sessionQuestions)
                         return (
                           <div key={task.id} className={showAction ? css.cardWrap : undefined}>
-                            <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} />
+                            <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} waiting={question !== undefined} waitingHint={question?.question.summary} answerSessionId={question?.sessionId} onAnswer={answerInSession} />
                             {task.approved === false ? (
                               <button
                                 type="button"

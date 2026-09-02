@@ -1120,6 +1120,24 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding: 1px 8px;
 }
 
+/* A running card whose session asked the human a question and is waiting for
+   the answer: the pill under the meta row, and a blue accent that pops among
+   the running (amber) cards. Clicking the card opens that session. */
+.cardWaitingAnswer {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.card[data-waiting] {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
 /* Final-step pill on the card meta row: this member is the group's designated
    merge step — it runs only after every other member has settled. The waiting
    variant pops while other members are still unfinished. */
@@ -2179,6 +2197,16 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 .executionBadge[data-result='cancelled'] {
   color: var(--dsw-alias-label-tertiary);
   background: transparent;
+}
+
+/* An open execution row whose session is waiting on the human's answer. */
+.executionRow[data-waiting] {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.executionRow[data-waiting] .executionBadge {
+  color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
 }
 
 .executionTimes {
