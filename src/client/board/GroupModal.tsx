@@ -15,11 +15,14 @@ import type { BoardController } from '../../core/controller.ts'
 import { parseClock } from '../../core/endpoints.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import type { GroupExecutionMode, TaskGroupRecord } from '../../core/groups.ts'
+import { modelSelectionKey, parseModelSelectionKey } from '../../core/tasks.ts'
+import { withReasoningEffort } from '../reasoning-effort.ts'
 import { t } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import css from '../board.module.css'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { EndpointOrderEditor } from './EndpointOrderEditor.tsx'
+import { PlanModelField } from './PlanModelField.tsx'
 import { ModalShell } from './TaskForm.tsx'
 
 export function GroupModal({ controller, group, workspaceId, onClose }: {
@@ -40,6 +43,10 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
   const [mode, setMode] = useState<GroupExecutionMode>(group?.mode ?? 'sequential')
   const [maxParallel, setMaxParallel] = useState(group?.maxParallel === undefined ? '' : String(group.maxParallel))
   const [endpoints, setEndpoints] = useState<string[]>(group?.endpoints ?? [])
+  const [workerModelKey, setWorkerModelKey] = useState(group?.workerModel === undefined ? '' : modelSelectionKey(group.workerModel))
+  const [workerEffort, setWorkerEffort] = useState(group?.workerModel?.reasoningEffort ?? '')
+  const [planModelKey, setPlanModelKey] = useState(group?.planModel === undefined ? '' : modelSelectionKey(group.planModel))
+  const [planEffort, setPlanEffort] = useState(group?.planModel?.reasoningEffort ?? '')
   const [windowEnabled, setWindowEnabled] = useState(group?.allowedHours !== undefined)
   const [windowStart, setWindowStart] = useState(group?.allowedHours?.start ?? '')
   const [windowEnd, setWindowEnd] = useState(group?.allowedHours?.end ?? '')
@@ -103,6 +110,8 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
         mode,
         maxParallel: maxParallel.trim() === '' ? null : Number(maxParallel),
         endpoints: endpoints.length === 0 ? null : endpoints,
+        workerModel: workerModelKey === '' ? null : withReasoningEffort(parseModelSelectionKey(workerModelKey)!, workerEffort),
+        planModel: planModelKey === '' ? null : withReasoningEffort(parseModelSelectionKey(planModelKey)!, planEffort),
         allowedHours: !windowEnabled ? null : { start: windowStart, end: windowEnd },
         offPeakOnly,
         maintainSession: mode === 'sequential' && maintainSession,
@@ -117,6 +126,8 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
         mode,
         ...(maxParallel.trim() === '' ? {} : { maxParallel: Number(maxParallel) }),
         ...(endpoints.length === 0 ? {} : { endpoints }),
+        ...(workerModelKey === '' ? {} : { workerModel: withReasoningEffort(parseModelSelectionKey(workerModelKey)!, workerEffort) }),
+        ...(planModelKey === '' ? {} : { planModel: withReasoningEffort(parseModelSelectionKey(planModelKey)!, planEffort) }),
         ...(!windowEnabled ? {} : { allowedHours: { start: windowStart, end: windowEnd } }),
         offPeakOnly,
         ...(mode === 'sequential' && maintainSession ? { maintainSession: true } : {}),
@@ -228,6 +239,28 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
         <span className={css.fieldLabel}>{t('group.endpoints')}</span>
         <EndpointOrderEditor endpoints={endpoints} options={snapshot.executionOptions.endpoints} onChange={setEndpoints} />
       </label>
+
+      <PlanModelField
+        models={snapshot.executionOptions.models}
+        modelKey={workerModelKey}
+        onModelChange={setWorkerModelKey}
+        modelBlankLabel={t('exec.model.default')}
+        effort={workerEffort}
+        onEffortChange={setWorkerEffort}
+        label={t('group.workerModel')}
+        hint={<p className={css.detailText}>{t('group.workerModelHint')}</p>}
+      />
+
+      <PlanModelField
+        models={snapshot.executionOptions.models}
+        modelKey={planModelKey}
+        onModelChange={setPlanModelKey}
+        modelBlankLabel={t('exec.planModel.none')}
+        effort={planEffort}
+        onEffortChange={setPlanEffort}
+        label={t('group.planModel')}
+        hint={<p className={css.detailText}>{t('group.planModelHint')}</p>}
+      />
 
       <label className={css.scheduleToggle}>
         <input

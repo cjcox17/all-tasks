@@ -307,7 +307,7 @@ describe('HostExecutionRunner model pin', () => {
     }
     const task = modelTask({ provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' })
     await expect(new HostExecutionRunner(api as unknown as ApiProxy).launch(task)).resolves.toBe('session-a')
-    expect(order).toEqual(['create', 'selectModel', 'rename', 'prompt'])
+    expect(order).toEqual(['create', 'rename', 'selectModel', 'prompt'])
     expect(selectModel.mock.calls[0][0].payload).toMatchObject({
       sessionId: 'session-a',
       provider: 'deepseek',
@@ -354,7 +354,7 @@ describe('HostExecutionRunner model pin', () => {
           rpcId: request.rpcId,
           result: { ok: false as const, error: { code: 'model-unavailable', message: 'model is not served' } },
         }),
-        rename: vi.fn(),
+        rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Run me', seq: 1 }),
         prompt,
       },
     }
@@ -503,5 +503,179 @@ describe('pause / continue runner behavior', () => {
     // A boundary before the pause's aborted turn still settles cancelled
     // (the run was stopped while unpaused at that point).
     await expect(runner.inspect('session-a', 1_000)).resolves.toEqual({ outcome: 'cancelled', error: 'execution was stopped' })
+  })
+})
+
+describe('HostExecutionRunner plan-then-work', () => {
+  const PLANNER = { provider: 'deepseek', model: 'deepseek-reasoner' }
+  const WORKER = { provider: 'deepseek', model: 'deepseek-chat' }
+
+  function planTask(): TaskRecord {
+    return {
+      ...createTask({ title: 'Plan me', description: '', prompt: 'do the work' }, 1, 'task-a'),
+      model: WORKER,
+      planModel: PLANNER,
+    }
+  }
+
+  it('launches the plan phase: plan model, /plan, then the plan prompt', async () => {
+    const order: string[] = []
+    const execute = vi.fn(async (_sessionId: string, line: string) => {
+      order.push(`command:${line}`)
+      return { kind: 'success' as const }
+    })
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload: Record<string, unknown> }) => {
+      order.push(`selectModel:${request.payload.model}`)
+      expect(request.payload).toMatchObject({ sessionId: 'session-a', provider: 'deepseek', model: 'deepseek-reasoner' })
+      return ok(request, { selected: { provider: 'deepseek', model: 'deepseek-reasoner' } })
+    })
+    const prompt = vi.fn(async (request: { rpcId: unknown; payload: { content: Array<{ text?: string }> } }) => {
+      order.push('prompt')
+      expect(request.payload.content[0]?.text).toContain('do the work')
+      return ok(request, { accepted: true })
+    })
+    const api = {
+      sessions: {
+        create: async (request: { rpcId: unknown }) => { order.push('create'); return ok(request, { sessionId: 'session-a' }) },
+        rename: async (request: { rpcId: unknown }) => { order.push('rename'); return ok(request, { title: 'Plan me', seq: 1 }) },
+        selectModel,
+        prompt,
+      },
+    }
+    await expect(new HostExecutionRunner(api as unknown as ApiProxy, { execute }).launchPlan(planTask(), PLANNER)).resolves.toBe('session-a')
+    expect(order).toEqual(['create', 'rename', 'selectModel:deepseek-reasoner', 'command:/plan', 'prompt'])
+  })
+
+  it('fails closed when the plan model selection is rejected', async () => {
+    const prompt = vi.fn()
+    const api = {
+      sessions: {
+        create: async (request: { rpcId: unknown }) => ok(request, { sessionId: 'session-a' }),
+        rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Plan me', seq: 1 }),
+        selectModel: async (request: { rpcId: unknown }) => ({
+          rpcId: request.rpcId,
+          result: { ok: false as const, error: { code: 'model-unavailable', message: 'plan model is not served' } },
+        }),
+        prompt,
+      },
+    }
+    const launch = new HostExecutionRunner(api as unknown as ApiProxy).launchPlan(planTask(), PLANNER)
+    await expect(launch).rejects.toBeInstanceOf(SessionLaunchError)
+    await expect(launch).rejects.toMatchObject({ sessionId: 'session-a' })
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('transitions to the work phase: worker model, /plan off, then the work prompt with the plan', async () => {
+    const order: string[] = []
+    const execute = vi.fn(async (_sessionId: string, line: string) => {
+      order.push(`command:${line}`)
+      return { kind: 'success' as const }
+    })
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload: Record<string, unknown> }) => {
+      order.push(`selectModel:${request.payload.model}`)
+      return ok(request, { selected: { provider: 'deepseek', model: 'deepseek-chat' } })
+    })
+    const prompt = vi.fn(async (request: { rpcId: unknown; payload: { content: Array<{ text?: string }> } }) => {
+      order.push('prompt')
+      expect(request.payload.content[0]?.text).toContain('# Approved plan')
+      expect(request.payload.content[0]?.text).toContain('do the work')
+      return ok(request, { accepted: true })
+    })
+    const api = { sessions: { selectModel, prompt } }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy, { execute })
+    await runner.transitionToWork('session-a', planTask(), WORKER, '# Approved plan\nStep 1')
+    expect(order).toEqual(['selectModel:deepseek-chat', 'command:/plan off', 'prompt'])
+  })
+
+  it('inspectPlan yields planned with the extracted plan once the plan turn ends', async () => {
+    const events = [
+      { event: { type: 'turn/start', seq: 1, time: 100, data: {} } },
+      { event: { type: 'assistant/message', seq: 2, time: 200, data: { message: { role: 'assistant', content: [{ type: 'text', text: '# Plan\nDo it.' }] } } } },
+      { event: { type: 'turn/end', seq: 3, time: 300, data: { reason: { kind: 'complete' } } } },
+    ]
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }),
+        history: async (request: { rpcId: unknown }) => ok(request, { events, hasMore: false }),
+      },
+    }
+    const result = await new HostExecutionRunner(api as unknown as ApiProxy).inspectPlan('session-a', 0, undefined, 50)
+    expect(result).toMatchObject({ outcome: 'planned', plan: '# Plan\nDo it.' })
+  })
+
+  it('inspectPlan auto-approves a plan turn stuck awaiting the exit_plan_mode review', async () => {
+    const cancel = vi.fn(async (request: { rpcId: unknown }) => ok(request, { cancelled: true }))
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: true }] }),
+        history: async (request: { rpcId: unknown; payload?: { maxMessages?: number } }) => {
+          // The review probe reads the tail; the full scan reads the boundary page.
+          const maxMessages = request.payload?.maxMessages
+          const events = maxMessages === 20
+            ? [{ event: { type: 'tool/call', seq: 5, time: 500, data: { name: 'exit_plan_mode', arguments: JSON.stringify({ plan: '# Plan\nFrom tool' }) } } }]
+            : [
+              { event: { type: 'turn/start', seq: 1, time: 100, data: {} } },
+              { event: { type: 'tool/call', seq: 5, time: 500, data: { name: 'exit_plan_mode', arguments: JSON.stringify({ plan: '# Plan\nFrom tool' }) } } },
+            ]
+          return ok(request, { events, hasMore: false })
+        },
+        cancel,
+      },
+    }
+    const result = await new HostExecutionRunner(api as unknown as ApiProxy).inspectPlan('session-a', 0, undefined, 50)
+    expect(result).toMatchObject({ outcome: 'planned', plan: '# Plan\nFrom tool' })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('inspectPlan fails the run when the plan turn ends with no plan text', async () => {
+    const events = [
+      { event: { type: 'turn/start', seq: 1, time: 100, data: {} } },
+      { event: { type: 'turn/end', seq: 2, time: 300, data: { reason: { kind: 'complete' } } } },
+    ]
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }),
+        history: async (request: { rpcId: unknown }) => ok(request, { events, hasMore: false }),
+      },
+    }
+    await expect(new HostExecutionRunner(api as unknown as ApiProxy).inspectPlan('session-a', 0, undefined, 50))
+      .resolves.toMatchObject({ outcome: 'failed', error: 'plan phase produced no plan' })
+  })
+
+  it('inspectPlan fails the run when the plan turn errored', async () => {
+    const events = [
+      { event: { type: 'turn/end', seq: 1, time: 300, data: { reason: { kind: 'error' } } } },
+    ]
+    const api = {
+      sessions: {
+        list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }),
+        history: async (request: { rpcId: unknown }) => ok(request, { events, hasMore: false }),
+      },
+    }
+    await expect(new HostExecutionRunner(api as unknown as ApiProxy).inspectPlan('session-a', 0, undefined, 50))
+      .resolves.toMatchObject({ outcome: 'failed', error: 'plan turn ended with an error' })
+  })
+
+  it('continue re-queues the work prompt when the paused execution is in its work phase', async () => {
+    const prompt = vi.fn(async (request: { rpcId: unknown; payload: { content: Array<{ text?: string }> } }) => {
+      expect(request.payload.content[0]?.text).toContain('# Approved plan')
+      return ok(request, { accepted: true })
+    })
+    const api = { sessions: { prompt } }
+    await new HostExecutionRunner(api as unknown as ApiProxy).continue(planTask(), 'session-a', '# Approved plan\nStep 1')
+    expect(prompt).toHaveBeenCalledOnce()
+  })
+
+  it('launches the plan phase into a shared session without creating a new one', async () => {
+    const create = vi.fn()
+    const execute = vi.fn(async (_sessionId: string, line: string) => ({ kind: 'success' as const, text: line }))
+    const selectModel = vi.fn(async (request: { rpcId: unknown }) => ok(request, { selected: { provider: 'deepseek', model: 'deepseek-reasoner' } }))
+    const prompt = vi.fn(async (request: { rpcId: unknown }) => ok(request, { accepted: true }))
+    const api = { sessions: { create, selectModel, prompt } }
+    const runner = new HostExecutionRunner(api as unknown as ApiProxy, { execute })
+    await expect(runner.launchSharedPlan(planTask(), PLANNER, 'shared-session', false)).resolves.toBe('shared-session')
+    expect(create).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledWith('shared-session', '/plan', expect.anything())
+    expect((prompt.mock.calls[0][0] as { payload?: unknown }).payload).toMatchObject({ sessionId: 'shared-session', mode: 'queue' })
   })
 })

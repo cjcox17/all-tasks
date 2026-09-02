@@ -378,8 +378,11 @@ describe('NewTaskModal endpoint-constrained model picker', () => {
     const chatKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-chat' })
     const reasonerKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
     expect(selectOf(container, chatKey)).toBeDefined()
-    // deepseek-reasoner is not on the endpoint's model list, so it must vanish.
-    expect([...container.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
+    // deepseek-reasoner is not on the endpoint's model list, so the WORKER
+    // model picker (the endpoint-scoped one) must not offer it; the plan
+    // model picker is a direct pin and legitimately offers the full catalog.
+    const workerSelect = fieldSelectOf(container, t('new.model'))
+    expect([...workerSelect.querySelectorAll('option')].some(option => option.value === reasonerKey)).toBe(false)
   })
 
   it('keeps a pinned model outside the endpoint list as a stale row with a hint', async () => {
@@ -541,5 +544,50 @@ describe('NewTaskModal auto-generated title', () => {
     await act(async () => { submit.click() })
     expect(createTaskConfirmed).toHaveBeenCalledOnce()
     expect(createTaskConfirmed.mock.calls[0][0].title).toBe('Draft the release notes')
+  })
+})
+
+describe('NewTaskModal plan model picker', () => {
+  it('renders the plan model picker with a "no plan phase" blank and the worker model picker', async () => {
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'))
+    const planSelect = fieldSelectOf(container, t('new.planModel'))
+    const blank = [...planSelect.querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.planModel.none'))
+    // The worker model picker (endpoint-scoped) still exists beside it.
+    expect(fieldSelectOf(container, t('new.model'))).toBeDefined()
+  })
+
+  it('submits the pinned plan model with its reasoning effort', async () => {
+    const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
+    const { container } = await renderModal(createTaskConfirmed)
+
+    setFieldValue(container.querySelector('input') as HTMLInputElement, 'Write a plan')
+    const planKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    await act(async () => { setSelect(fieldSelectOf(container, t('new.planModel')), planKey) })
+    await act(async () => { setSelect(selectOf(container, 'high'), 'high') })
+
+    const submit = container.querySelector('button[type="submit"]') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(createTaskConfirmed).toHaveBeenCalledOnce()
+    const input = createTaskConfirmed.mock.calls[0][0] as NewTaskInput
+    expect(input.planModel).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' })
+  })
+
+  it('pre-fills the plan model from the workspace defaults', async () => {
+    const planKey = modelSelectionKey({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    const planModel = { provider: 'deepseek', model: 'deepseek-reasoner' }
+    const { container } = await renderModal(
+      async input => createTask(input, Date.now(), 't-new'),
+      [], [], [{ workspaceId: 'ws-a', title: 'Alpha' }], [],
+      {
+        defaultWorkspaceId: 'ws-a',
+        defaults: { planModel },
+        workspaceDefaults: { 'ws-a': { planModel } },
+      },
+    )
+    const planSelect = fieldSelectOf(container, t('new.planModel'))
+    expect(planSelect.value).toBe(planKey)
+    const blank = [...planSelect.querySelectorAll('option')].find(option => option.value === '')
+    expect(blank?.textContent).toBe(t('exec.planModel.workspaceDefaultWithValue', { value: 'deepseek · deepseek-reasoner' }))
   })
 })

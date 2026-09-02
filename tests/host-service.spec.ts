@@ -607,3 +607,178 @@ describe('AllTasksHostService pause gates', () => {
     service.dispose()
   })
 })
+
+
+describe('AllTasksHostService plan-then-work', () => {
+  function event(seq: number, type: string, data: unknown, time: number): { event: { type: string; seq: number; time: number; data: unknown } } {
+    return { event: { type, seq, time, data } }
+  }
+
+  function planTurn(base: number) {
+    return [
+      event(1, 'turn/start', {}, base + 2_100),
+      event(2, 'assistant/message', { message: { role: 'assistant', content: [{ type: 'text', text: '# Plan\nDo the work.' }] }, usage: { inputTokens: 100, outputTokens: 50 } }, base + 2_200),
+      event(3, 'turn/end', { reason: { kind: 'complete' } }, base + 2_300),
+    ]
+  }
+
+  function workTurn(base: number) {
+    return [
+      event(10, 'turn/start', {}, base + 1_100),
+      event(11, 'assistant/message', { message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] }, usage: { inputTokens: 50, outputTokens: 10 } }, base + 1_200),
+      event(12, 'turn/end', { reason: { kind: 'complete' } }, base + 1_300),
+    ]
+  }
+
+  it('plans with the plan model, hands the plan to the worker, and settles with merged usage', async () => {
+    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 'task-a', input: {
+        title: 'Plan me', description: '', prompt: 'do the work',
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+        planModel: { provider: 'deepseek', model: 'deepseek-reasoner' },
+      },
+    })
+    const order: string[] = []
+    const create = vi.fn(async (request) => { order.push('create'); return ok(request, { sessionId: 'session-a' }) })
+    const rename = vi.fn(async (request) => { order.push('rename'); return ok(request, { title: 'Plan me', seq: 1 }) })
+    const selectModel = vi.fn(async (request: { rpcId: unknown; payload: { model: string } }) => {
+      order.push(`select:${request.payload.model}`)
+      return ok(request, { selected: { provider: 'deepseek', model: request.payload.model } })
+    })
+    const execute = vi.fn(async (_sessionId: string, line: string) => {
+      order.push(`cmd:${line}`)
+      return { kind: 'success' as const }
+    })
+    const prompt = vi.fn(async (request) => {
+      order.push('prompt')
+      return ok(request, { accepted: true })
+    })
+    // The history mock switches once the service marks the work phase: the
+    // plan phase scans the plan turn, the work phase scans the work turn.
+    let phase: 'plan' | 'work' = 'plan'
+    const history = vi.fn(async (request: { rpcId: unknown }) => {
+      const events = phase === 'plan' ? planTurn(now) : workTurn(now)
+      return ok(request, { events, hasMore: false })
+    })
+    const list = vi.fn(async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }))
+    const api = { sessions: { create, rename, selectModel, prompt, history, list } } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      commandDispatcher: { execute },
+    })
+
+    // The run action launches the plan phase: plan model pinned, /plan, plan prompt.
+    service.apply('run-1', { kind: 'run', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    let execution = ledger.state().tasks[0].executions[0]
+    expect(execution.phase).toBe('plan')
+    expect(execution.sessionId).toBe('session-a')
+
+    // The plan turn ends: reconcile transitions to the work phase in the SAME
+    // session — worker model, /plan off, the work prompt with the plan — and
+    // records the plan + plan-phase usage + the new observation boundary.
+    now = new Date(2026, 7, 16, 10, 1, 0).getTime()
+    await (service as unknown as { pollSessions(): Promise<void> }).pollSessions()
+    execution = ledger.state().tasks[0].executions[0]
+    expect(execution.phase).toBe('work')
+    expect(execution.plan).toContain('# Plan\nDo the work.')
+    expect(execution.planUsage).toBeDefined()
+    expect(execution.watchFromAt).toBe(now)
+
+    // The work turn ends: the run settles with the plan + work usage merged.
+    phase = 'work'
+    now = new Date(2026, 7, 16, 10, 2, 0).getTime()
+    await (service as unknown as { pollSessions(): Promise<void> }).pollSessions()
+    execution = ledger.state().tasks[0].executions[0]
+    expect(execution.result).toBe('succeeded')
+    expect(execution.endedAt).toBeDefined()
+    expect(execution.usage).toEqual({ inputTokens: 150, outputTokens: 60 })
+    // The transition ran the worker hand-off after the plan prompt.
+    expect(order).toEqual([
+      'create', 'rename', 'select:deepseek-reasoner', 'cmd:/plan', 'prompt',
+      'select:deepseek-chat', 'cmd:/plan off', 'prompt',
+    ])
+    service.dispose()
+  })
+
+  it('settles a plan-phase failure without ever launching the worker', async () => {
+    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    ledger.applyRequest('create', {
+      kind: 'create', id: 'task-a', input: {
+        title: 'Plan me', description: '', prompt: 'do the work',
+        model: { provider: 'deepseek', model: 'deepseek-chat' },
+        planModel: { provider: 'deepseek', model: 'deepseek-reasoner' },
+      },
+    })
+    const selectModel = vi.fn(async (request: { rpcId: unknown }) => ok(request, { selected: { provider: 'deepseek', model: 'deepseek-reasoner' } }))
+    const execute = vi.fn(async () => ({ kind: 'success' as const }))
+    const prompt = vi.fn(async (request) => ok(request, { accepted: true }))
+    const history = vi.fn(async (request: { rpcId: unknown }) => ok(request, {
+      events: [event(3, 'turn/end', { reason: { kind: 'error' } }, now + 2_300)],
+      hasMore: false,
+    }))
+    const list = vi.fn(async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: false }] }))
+    const api = { sessions: {
+      create: async (request: { rpcId: unknown }) => ok(request, { sessionId: 'session-a' }),
+      rename: async (request: { rpcId: unknown }) => ok(request, { title: 'Plan me', seq: 1 }),
+      selectModel, prompt, history, list,
+    } } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+      commandDispatcher: { execute },
+    })
+    service.apply('run-1', { kind: 'run', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    await (service as unknown as { pollSessions(): Promise<void> }).pollSessions()
+    const execution = ledger.state().tasks[0].executions[0]
+    expect(execution.result).toBe('failed')
+    expect(execution.error).toContain('plan turn ended with an error')
+    // The worker hand-off never ran: only the plan prompt was sent.
+    expect(prompt).toHaveBeenCalledOnce()
+    service.dispose()
+  })
+
+  it('resumes a paused work phase with the stored plan, not the bare task prompt', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    const base = createTask({
+      title: 'Plan me', description: '', prompt: 'do the work',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      planModel: { provider: 'deepseek', model: 'deepseek-reasoner' },
+    }, now, 'task-a')
+    const opened = startExecution(base, now, 'execution-a').task
+    const imported = {
+      ...opened,
+      executions: opened.executions.map(execution => ({
+        ...execution,
+        sessionId: 'session-a',
+        phase: 'work' as const,
+        plan: '# Plan\nStep 1',
+        watchFromAt: now,
+      })),
+    }
+    ledger.applyRequest('import', { kind: 'import', sourceId: 'browser', tasks: [imported] })
+    const prompt = vi.fn(async (request: { rpcId: unknown; payload: { content: Array<{ text?: string }> } }) => {
+      expect(request.payload.content[0]?.text).toContain('# Plan\nStep 1')
+      expect(request.payload.content[0]?.text).toContain('do the work')
+      return ok(request, { accepted: true })
+    })
+    const api = { sessions: { prompt } } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, { ledger, power: new PowerInhibitor({ platform: 'linux' }) })
+    // Pause then continue: continue re-queues the work prompt (the plan is on
+    // the execution record), so the worker resumes with the plan in hand.
+    service.apply('pause-1', { kind: 'pause', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    service.apply('continue-1', { kind: 'continue', taskId: 'task-a' })
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(prompt).toHaveBeenCalledOnce()
+    service.dispose()
+  })
+})

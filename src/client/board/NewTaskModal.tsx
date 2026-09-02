@@ -22,6 +22,7 @@ import { t, type AllTasksKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { effectiveDefaultNames } from './execution-default-labels.ts'
 import { EndpointModelFields } from './EndpointModelFields.tsx'
+import { PlanModelField } from './PlanModelField.tsx'
 import { suggestTaskTitleClient } from '../title-suggest.ts'
 import { ModalShell, TaskContentFields } from './TaskForm.tsx'
 import css from '../board.module.css'
@@ -49,6 +50,8 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
   const [mode, setMode] = useState(defaults?.mode ?? '')
   const [modelKey, setModelKey] = useState(defaults?.model === undefined ? '' : modelSelectionKey(defaults.model))
   const [reasoningEffort, setReasoningEffort] = useState(defaults?.model?.reasoningEffort ?? '')
+  const [planModelKey, setPlanModelKey] = useState(defaults?.planModel === undefined ? '' : modelSelectionKey(defaults.planModel))
+  const [planReasoningEffort, setPlanReasoningEffort] = useState(defaults?.planModel?.reasoningEffort ?? '')
   const [endpoints, setEndpoints] = useState<string[]>(defaults?.endpoints ? [...defaults.endpoints] : [])
   const [groupId, setGroupId] = useState('')
   const [permission, setPermission] = useState(defaults?.permission ?? '')
@@ -191,6 +194,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
     const effectiveTitle = title.trim() !== '' ? title : fallbackTitle(prompt, description)
     setPending(true)
     const model = modelKey === '' ? undefined : parseModelSelectionKey(modelKey)
+    const planModel = planModelKey === '' ? undefined : parseModelSelectionKey(planModelKey)
     const task = await controller.createTaskConfirmed({
       title: effectiveTitle,
       description,
@@ -198,6 +202,7 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
       workspaceId: workspaceId === '' ? undefined : workspaceId,
       mode: mode === '' ? undefined : mode,
       model: model === undefined ? undefined : withReasoningEffort(model, reasoningEffort),
+      planModel: planModel === undefined ? undefined : withReasoningEffort(planModel, planReasoningEffort),
       endpoints: endpoints.length === 0 ? undefined : endpoints,
       groupId: groupId === '' ? undefined : groupId,
       permission: permission === '' ? undefined : permission as TaskPermission,
@@ -234,15 +239,31 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
     }
   }
 
-  // A blank execution target resolves at run time to the workspace's default
-  // (the currently selected workspace) or the deployment default, so name the
-  // effective default in the pickers' blank options.
+  // A blank execution target resolves at run time to the group's default,
+  // then the workspace's default (the currently selected workspace), then the
+  // deployment default, so name the effective default in the pickers' blank
+  // options.
   const defaultNames = effectiveDefaultNames(
     workspaceId === '' ? undefined : workspaceId,
+    groupId === '' ? undefined : groupId,
     workspaceDefaults,
+    groups,
     options.presets,
     options.models,
   )
+  // The worker-model blank option names the effective default (group →
+  // workspace); the plan-model blank option names it too, or "no plan phase"
+  // when nothing supplies one.
+  const workerModelBlank = defaultNames.workerModelSource === 'group'
+    ? t('exec.model.groupDefaultWithValue', { value: defaultNames.model ?? '' })
+    : defaultNames.workerModelSource === 'workspace'
+      ? t('exec.model.workspaceDefaultWithValue', { value: defaultNames.model ?? '' })
+      : t('exec.model.workspaceDefault')
+  const planModelBlank = defaultNames.planModelSource === 'group'
+    ? t('exec.planModel.groupDefaultWithValue', { value: defaultNames.planModel ?? '' })
+    : defaultNames.planModelSource === 'workspace'
+      ? t('exec.planModel.workspaceDefaultWithValue', { value: defaultNames.planModel ?? '' })
+      : t('exec.planModel.none')
 
   // The endpoint → model cascade (EndpointModelFields) keeps the model select
   // inside the endpoint selection: only models at least one pinned endpoint
@@ -351,9 +372,19 @@ export function NewTaskModal({ controller, onClose, defaultWorkspaceId, defaults
           models={options.models}
           modelKey={modelKey}
           onModelChange={setModelKey}
-          modelBlankLabel={defaultNames.model === undefined ? t('exec.model.workspaceDefault') : t('exec.model.workspaceDefaultWithValue', { value: defaultNames.model })}
+          modelBlankLabel={workerModelBlank}
           effort={reasoningEffort}
           onEffortChange={setReasoningEffort}
+        />
+
+        <PlanModelField
+          models={options.models}
+          modelKey={planModelKey}
+          onModelChange={setPlanModelKey}
+          modelBlankLabel={planModelBlank}
+          effort={planReasoningEffort}
+          onEffortChange={setPlanReasoningEffort}
+          hint={<p className={css.settingsHint}>{t('new.planModelHint')}</p>}
         />
 
         <label className={css.field}>

@@ -394,3 +394,40 @@ describe('paused execution persistence', () => {
     expect(isTaskRecord({ ...paused, executions: [{ ...paused.executions[0], watchFromAt: null }] })).toBe(false)
   })
 })
+
+describe('parseLedger plan-then-work fields', () => {
+  it('round-trips the plan model and the execution plan-phase fields', () => {
+    const base = createTask({
+      title: 'T', description: '', prompt: 'p',
+      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      planModel: { provider: 'deepseek', model: 'deepseek-reasoner' },
+    }, NOW, 't1')
+    const running = {
+      ...base,
+      executions: [{
+        id: 'e1', sessionId: 's1', startedAt: NOW, launchedAt: NOW,
+        endedAt: undefined, result: undefined, error: undefined,
+        phase: 'work', plan: '# Plan\nStep 1',
+        planUsage: { inputTokens: 100, outputTokens: 50 },
+        watchFromAt: NOW + 10,
+      }],
+    }
+    const [parsed] = parseLedger(JSON.stringify([running]))
+    expect(parsed?.planModel).toEqual({ provider: 'deepseek', model: 'deepseek-reasoner' })
+    expect(parsed?.executions[0].phase).toBe('work')
+    expect(parsed?.executions[0].plan).toBe('# Plan\nStep 1')
+    expect(parsed?.executions[0].planUsage).toEqual({ inputTokens: 100, outputTokens: 50 })
+  })
+
+  it('drops rows carrying an unknown execution phase and repairs a malformed plan usage', () => {
+    const base = createTask({ title: 'T', description: '', prompt: 'p' }, NOW, 't1')
+    const badPhase = { ...base, executions: [{ id: 'e1', startedAt: NOW, phase: 'warp' }] }
+    expect(parseLedger(JSON.stringify([badPhase]))).toEqual([])
+    const badUsage = {
+      ...base,
+      executions: [{ id: 'e2', startedAt: NOW, phase: 'work', planUsage: { inputTokens: 'lots', outputTokens: 1 } }],
+    }
+    const [parsed] = parseLedger(JSON.stringify([badUsage]))
+    expect(parsed?.executions[0].planUsage).toBeUndefined()
+  })
+})
