@@ -5,7 +5,10 @@
  * Pure functions so the landing view is unit-testable without a DOM. The
  * "All tasks" entry (workspaceId undefined) counts every on-board task
  * across all workspaces, including unassigned ones; a per-workspace entry
- * counts the tasks pinned to that workspace id.
+ * counts the tasks pinned to that workspace id. The caller passes the
+ * board-filtered task/group lists (see workspace-filter.ts boardTasks /
+ * boardGroups), so tasks and groups of workspaces deleted from the runtime
+ * list never surface here.
  */
 import { orderedGroupMembers, type TaskGroupRecord } from '../../core/groups.ts'
 import type { TaskRecord } from '../../core/tasks.ts'
@@ -32,7 +35,7 @@ export interface WorkspaceCounts {
 export interface WorkspaceListEntry {
   /** Workspace-list id (always defined; the All overview row is built by the list). */
   workspaceId: string
-  /** Display title (runtime workspace title, or the id for a vanished workspace). */
+  /** Display title (the runtime workspace title). */
   title: string
   counts: WorkspaceCounts
 }
@@ -63,36 +66,22 @@ export function countWorkspaceTasks(
 }
 
 /**
- * Build the landing entries: one per runtime workspace (in runtime order),
- * plus workspaces pinned by tasks but missing from the runtime list (deleted
- * or renamed workspaces stay visible with the id as the title), so no
- * pinned tasks ever disappear from the overview. The "All tasks" entry is
- * the caller's concern (it carries localized copy).
+ * Build the landing entries: one per runtime workspace, in runtime order.
+ * Workspaces deleted from the runtime list are gone together with their
+ * tasks — the caller passes the board-filtered task list (see
+ * workspace-filter.ts boardTasks), so no vanished-workspace row is ever
+ * synthesized here. The "All tasks" entry is the caller's concern (it
+ * carries localized copy).
  */
 export function workspaceListEntries(
   tasks: readonly TaskRecord[],
   workspaces: readonly { workspaceId: string; title: string }[],
 ): WorkspaceListEntry[] {
-  const seen = new Set<string>()
-  const entries: WorkspaceListEntry[] = []
-  for (const workspace of workspaces) {
-    seen.add(workspace.workspaceId)
-    entries.push({
-      workspaceId: workspace.workspaceId,
-      title: workspace.title,
-      counts: countWorkspaceTasks(tasks, workspace.workspaceId),
-    })
-  }
-  for (const task of tasks) {
-    if (task.workspaceId === undefined || seen.has(task.workspaceId)) continue
-    seen.add(task.workspaceId)
-    entries.push({
-      workspaceId: task.workspaceId,
-      title: task.workspaceId,
-      counts: countWorkspaceTasks(tasks, task.workspaceId),
-    })
-  }
-  return entries
+  return workspaces.map(workspace => ({
+    workspaceId: workspace.workspaceId,
+    title: workspace.title,
+    counts: countWorkspaceTasks(tasks, workspace.workspaceId),
+  }))
 }
 
 /**

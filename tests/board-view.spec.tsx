@@ -745,15 +745,28 @@ describe('AllTasks workspace landing list', () => {
     expect(unassignedGroup!.textContent).toContain('Member U')
   })
 
-  it('keeps workspaces pinned by tasks but missing from the runtime list visible in the grid', async () => {
+  it('hides workspaces deleted from the runtime list together with their tasks once the baseline is ready', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't-g', title: 'Ghost pinned', status: 'todo', workspaceId: 'ws-gone' })],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [], workspacesReady: true },
+    })
+    // No row for the vanished workspace (rows always come from the runtime list).
+    expect(listRows(container).map(row => row.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
+    // The pinned task is hidden from the All overview as well.
+    await openAllTasks(container)
+    expect(hasCard(container, 'Ghost pinned')).toBe(false)
+  })
+
+  it('keeps vanished-pinned tasks visible until the workspace baseline is ready', async () => {
     const { container } = await renderBoard({
       tasks: [task({ id: 't-g', title: 'Ghost pinned', status: 'todo', workspaceId: 'ws-gone' })],
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
     })
-    const ghost = listRow(container, 'ws-gone')
-    expect(ghost.textContent).toContain('ws-gone')
-    expect(cellOf(ghost, 'todo')).toBe('1')
-    await openWorkspace(container, 'ws-gone')
+    // Rows are never synthesized for missing workspaces…
+    expect(listRows(container).map(row => row.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
+    // …but without a loaded baseline the runtime list is not authoritative, so
+    // the pinned task is not treated as deleted and stays in the All overview.
+    await openAllTasks(container)
     expect(hasCard(container, 'Ghost pinned')).toBe(true)
   })
 

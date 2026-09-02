@@ -33,7 +33,7 @@ import { TaskCard, parseTaskDragPayload } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
 import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
 import { WorkspaceList } from './WorkspaceList.tsx'
-import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
+import { boardGroups, boardTasks, liveWorkspaceIds, matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
 
 /** A 1x1 transparent GIF: hides the native drag ghost so the board draws its own. */
 const TRANSPARENT_DRAG_IMAGE =
@@ -420,9 +420,17 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
 }
 
 /** The kanban view (always scoped to one workspace, or the All overview). */
-function KanbanView({ controller, snapshot, workspaceId, onBack }: {
+function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }: {
   controller: BoardController
   snapshot: ReturnType<BoardController['getSnapshot']>
+  /**
+   * The board's visible tasks (see boardTasks): tasks of workspaces deleted
+   * from the runtime list are already filtered out, so they never surface in
+   * any column, group, Unassigned section, or the archive.
+   */
+  tasks: readonly TaskRecord[]
+  /** The board's visible groups (see boardGroups): vanished-workspace groups filtered out. */
+  groups: readonly TaskGroupRecord[]
   /** The active workspace id; undefined = the All-tasks overview. */
   workspaceId: string | undefined
   onBack: () => void
@@ -438,7 +446,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
   // workspace's pinned tasks plus the unassigned remainder (never hidden).
   // The unapproved-only filter narrows to tasks waiting for approval (their
   // gate blocks every run path until approved).
-  const visible = snapshot.tasks.filter(task =>
+  const visible = tasks.filter(task =>
     (archiveView ? task.archivedAt !== undefined : task.archivedAt === undefined)
     && matchesFilter(task, filter)
     && matchesWorkspace(task, workspaceId)
@@ -447,15 +455,15 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
   /** Whether any on-board member of a group can be started right now. */
   const canStartGroup = useCallback((groupId: string): boolean =>
-    snapshot.tasks.some(task => task.groupId === groupId && canStartTask(task)),
-  [snapshot.tasks])
+    tasks.some(task => task.groupId === groupId && canStartTask(task)),
+  [tasks])
 
   // Groups are workspace-scoped: a workspace kanban shows only the groups of
   // that workspace (the unassigned-scope groups render inside its Unassigned
   // section below); the All overview spans every workspace's groups.
   const scopeGroups = workspaceId === undefined
-    ? snapshot.groups
-    : snapshot.groups.filter(group => group.workspaceId === workspaceId)
+    ? groups
+    : groups.filter(group => group.workspaceId === workspaceId)
 
   const workspaceTitle = workspaceId === undefined
     ? t('board.title')
@@ -522,7 +530,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       setDropTarget({ column, zone: 'column', y: 0 })
       return
     }
-    const dragged = snapshot.tasks.find(task => task.id === drag.id)
+    const dragged = tasks.find(task => task.id === drag.id)
     if (dragged === undefined) return
     const moveAllowed = canMoveManually(dragged.status, column)
     if (dragged.status !== column && !moveAllowed) return
@@ -535,7 +543,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
       // A group of another workspace scope is not a drop target for this task
       // (membership is workspace-locked); treat the hover as the column.
-      const group = snapshot.groups.find(candidate => candidate.id === groupEl.dataset.group)
+      const group = groups.find(candidate => candidate.id === groupEl.dataset.group)
       if (group !== undefined && dragged.workspaceId === group.workspaceId) {
         setDropTarget({
           column,
@@ -551,7 +559,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       return
     }
     setDropTarget({ column, zone: 'column', y })
-  }, [drag, snapshot.tasks])
+  }, [drag, tasks, groups])
 
   const handleCardsDragLeave = useCallback((column: TaskStatus) => (event: ReactDragEvent<HTMLDivElement>): void => {
     const related = event.relatedTarget as Node | null
@@ -604,9 +612,9 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (raw.startsWith('group:')) {
       if (column !== 'backlog' && column !== 'todo') return
       const groupId = raw.slice('group:'.length)
-      const droppedGroup = snapshot.groups.find(group => group.id === groupId)
+      const droppedGroup = groups.find(group => group.id === groupId)
       if (droppedGroup !== undefined && droppedGroup.stopped !== true) {
-        const members = snapshot.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+        const members = tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
         if (members.every(member => member.status !== 'running')) {
           // Dropping the group back onto its own column is a no-op: a status
           // rewrite would bump every member's updatedAt and make the cards
@@ -619,12 +627,12 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     }
     const taskId = parseTaskDragPayload(raw)
     if (taskId === undefined) return
-    const dragged = snapshot.tasks.find(task => task.id === taskId)
+    const dragged = tasks.find(task => task.id === taskId)
     if (dragged === undefined) return
     const target = event.target as Element
     const groupEl = target.closest('[data-group]')
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
-      const group = snapshot.groups.find(candidate => candidate.id === groupEl!.dataset.group)
+      const group = groups.find(candidate => candidate.id === groupEl!.dataset.group)
       // Membership is workspace-locked: a task can only join (or reorder
       // inside) a group of its own workspace scope; a foreign-scope group
       // falls through to the column/unassigned handling below.
@@ -677,7 +685,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (dragged.status === column || canMoveManually(dragged.status, column)) {
       controller.reorderTask(taskId, taskBeforePointer(column, taskId, event.clientY))
     }
-  }, [snapshot, controller, taskBeforePointer, unassignedCardBeforePointer])
+  }, [tasks, groups, controller, taskBeforePointer, unassignedCardBeforePointer])
 
   return (
     <>
@@ -726,7 +734,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         >
           {archiveView
             ? t('board.backToBoard')
-            : t('board.archiveView', { count: String(snapshot.tasks.filter(task => task.archivedAt !== undefined).length) })}
+            : t('board.archiveView', { count: String(tasks.filter(task => task.archivedAt !== undefined).length) })}
         </button>
         {workspaceId !== undefined && (
           <button
@@ -771,26 +779,29 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           </section>
         ) : (
           COLUMNS.map(column => {
-            const tasks = visible.filter(task => task.status === column.status)
-            const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceId)
+            const columnTasks = visible.filter(task => task.status === column.status)
+            const { pinned, unassigned } = splitWorkspaceTasks(columnTasks, workspaceId)
             const ungrouped = pinned.filter(task => task.groupId === undefined)
             const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
             const grouped = scopeGroups
-              .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
+              .map(group => ({ group, members: orderedGroupMembers(group, columnTasks) }))
               .filter(entry => entry.members.length > 0)
             // In a workspace-scoped view the Unassigned section also hosts the
             // unassigned-scope groups (only unassigned tasks can be members),
             // so grouped unassigned tasks never disappear from the board.
             const unassignedGrouped = workspaceId !== undefined
-              ? snapshot.groups
+              ? groups
                 .filter(group => group.workspaceId === undefined)
                 .map(group => ({ group, members: orderedGroupMembers(group, unassigned) }))
                 .filter(entry => entry.members.length > 0)
               : []
             // Groups with no members anywhere still show (in the todo column)
-            // so they stay visible and manageable after creation.
+            // so they stay visible and manageable after creation. "Anywhere"
+            // spans the whole board-visible task list (`tasks`), not this
+            // column — a group whose members sit in another column must not
+            // be duplicated as an empty shell here.
             const emptyGroups = column.status === 'todo'
-              ? scopeGroups.filter(group => !snapshot.tasks.some(task => task.groupId === group.id))
+              ? scopeGroups.filter(group => !tasks.some(task => task.groupId === group.id))
               : []
             const overColumn = dropTarget?.column === column.status
             // One group section renderer shared by the main, unassigned, and
@@ -800,7 +811,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 key={group.id}
                 group={group}
                 members={members}
-                status={groupRuntimeStatus(group, snapshot.tasks)}
+                status={groupRuntimeStatus(group, tasks)}
                 canStart={canStartGroup(group.id)}
                 pendingIds={snapshot.pendingTaskIds}
                 timeZone={snapshot.host?.scheduler.timeZone}
@@ -816,7 +827,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onResume={() => { void controller.resumeGroup(group.id) }}
                 onDragStart={startDrag}
                 dropTarget={dropTarget}
-                finalStepBlocked={groupFinalStepBlocked(group, snapshot.tasks)}
+                finalStepBlocked={groupFinalStepBlocked(group, tasks)}
               />
             )
             return (
@@ -829,7 +840,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 <header className={css.columnHeader}>
                   <span className={css.statusDot} data-status={column.status} aria-hidden="true" />
                   <h3 className={css.columnTitle}>{t(STATUS_KEY[column.status])}</h3>
-                  <span className={css.columnCount}>{tasks.length}</span>
+                  <span className={css.columnCount}>{columnTasks.length}</span>
                 </header>
                 <div
                   className={css.cards}
@@ -947,7 +958,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                   {overColumn && dropTarget?.zone === 'column' && (
                     <div className={css.dropIndicator} style={{ top: Math.max(0, dropTarget.y) }} aria-hidden="true" />
                   )}
-                  {tasks.length === 0 && emptyGroups.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
+                  {columnTasks.length === 0 && emptyGroups.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
                 </div>
               </section>
             )
@@ -1030,6 +1041,16 @@ export function AllTasks({ controller }: { controller: BoardController }) {
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
   const selected = selectedTaskOf(snapshot)
 
+  // Board-visible tasks and groups: once the runtime workspace baseline has
+  // loaded, a task or group pinned to a workspace missing from that list
+  // (deleted in the sidebar) is hidden from the board entirely. Until the
+  // baseline is ready the list may be empty or stale (startup / reconnect),
+  // so nothing is filtered — the ledger pins stay untouched either way.
+  const liveIds = liveWorkspaceIds(snapshot.executionOptions.workspaces)
+  const hideVanished = snapshot.executionOptions.workspacesReady === true
+  const tasks = hideVanished ? boardTasks(snapshot.tasks, liveIds) : snapshot.tasks
+  const groups = hideVanished ? boardGroups(snapshot.groups, liveIds) : snapshot.groups
+
   return (
     <div className={css.board} data-dsh-all-tasks-board="" data-dsh-plugin="all-tasks">
       {view === undefined ? (
@@ -1066,6 +1087,8 @@ export function AllTasks({ controller }: { controller: BoardController }) {
         <KanbanView
           controller={controller}
           snapshot={snapshot}
+          tasks={tasks}
+          groups={groups}
           workspaceId={view.workspaceId}
           onBack={backToWorkspaces}
         />
@@ -1082,11 +1105,11 @@ export function AllTasks({ controller }: { controller: BoardController }) {
 
       {view === undefined && (
         <>
-          <Dashboard metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.pricing)} />
+          <Dashboard metrics={computeDashboard(tasks, groups, snapshot.pricing)} />
           <WorkspaceList
-            tasks={snapshot.tasks}
+            tasks={tasks}
             workspaces={snapshot.executionOptions.workspaces}
-            groups={snapshot.groups}
+            groups={groups}
             pendingTaskIds={snapshot.pendingTaskIds}
             workspacePaused={snapshot.workspacePaused}
             onOpen={openWorkspace}

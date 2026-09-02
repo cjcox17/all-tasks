@@ -176,6 +176,10 @@ export function apply(ctx: ClientContext): void {
           workspaceId: item.workspaceId,
           title: item.title !== '' ? item.title : item.path,
         })),
+        // Readiness gate for the "hide deleted workspaces" filter: only a
+        // loaded workspace baseline (workspace.list + session.list succeeded)
+        // is authoritative enough to treat a missing id as a deletion.
+        workspacesReady: snapshot.baselinesReady,
       })
     }
     pushWorkspaceOptions()
