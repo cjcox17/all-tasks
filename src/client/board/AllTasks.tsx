@@ -653,8 +653,14 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           }
         } else {
           // Join the group (appended to its member order) — no need to edit
-          // the task's group in the detail view.
+          // the task's group in the detail view. Dropping onto a group in
+          // another column also moves the task to that column, mirroring the
+          // column-background path (the dragover gate already allowed it);
+          // otherwise the card would keep its old status and stay behind.
           void controller.updateTask(taskId, { groupId: group.id })
+          if (dragged.status !== column && canMoveManually(dragged.status, column)) {
+            controller.moveTask(taskId, column)
+          }
         }
         return
       }
