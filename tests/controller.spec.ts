@@ -798,3 +798,107 @@ describe('BoardController workspace fan-out', () => {
     controller.dispose()
   })
 })
+
+describe('BoardController live open questions (sessionQuestions)', () => {
+  const running = (id: string, sessionId: string): TaskRecord => ({
+    ...createTask({ title: '任务A', description: '', prompt: '干活' }, NOW, id),
+    status: 'running', updatedAt: NOW + 1,
+    executions: [{ id: 'e1', sessionId, startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }],
+  })
+  const questions = { 's-9': { askedAt: NOW + 2, count: 1, summary: '继续？' } }
+
+  it('exposes the Host open-question overlay carried by the snapshot', async () => {
+    const remote = { ...snapshot(2, [running('task-a', 's-9')]), sessionQuestions: questions }
+    const controller = new BoardController({
+      store: new InMemoryTaskStore(),
+      sessions: new FakeSessions(),
+      transport: {
+        bootstrap: async () => remote,
+        state: async () => remote,
+        action: async () => remote,
+        subscribe: () => () => undefined,
+      },
+      now: () => NOW,
+      uuid,
+    })
+    controller.start()
+    await controller.retryHostSync()
+
+    expect(controller.getSnapshot().sessionQuestions).toEqual(questions)
+    controller.dispose()
+  })
+
+  it('treats an absent overlay on the snapshot as none (older Host)', async () => {
+    const controller = new BoardController({
+      store: new InMemoryTaskStore(),
+      sessions: new FakeSessions(),
+      transport: {
+        bootstrap: async () => snapshot(2, [running('task-a', 's-9')]),
+        state: async () => snapshot(2, [running('task-a', 's-9')]),
+        action: async () => snapshot(2, [running('task-a', 's-9')]),
+        subscribe: () => () => undefined,
+      },
+      now: () => NOW,
+      uuid,
+    })
+    controller.start()
+    await controller.retryHostSync()
+
+    expect(controller.getSnapshot().sessionQuestions).toEqual({})
+    controller.dispose()
+  })
+
+  it('applies same-revision SSE frames carrying sessionQuestions in place, without refetching', async () => {
+    const base = snapshot(1, [running('task-a', 's-9')])
+    let onEvent: ((event?: AllTasksEventPayload) => void) | undefined
+    const state = vi.fn(async () => base)
+    const transport: AllTasksTransport = {
+      bootstrap: async () => base,
+      state,
+      action: async () => base,
+      subscribe: listener => { onEvent = listener; return () => undefined },
+    }
+    const controller = new BoardController({
+      store: new InMemoryTaskStore(),
+      sessions: new FakeSessions(),
+      transport,
+      now: () => NOW,
+      uuid,
+    })
+    controller.start()
+    await controller.retryHostSync()
+    expect(controller.getSnapshot().sessionQuestions).toEqual({})
+    expect(state).not.toHaveBeenCalled()
+
+    // An ask opens: the Host pushes the overlay on the unchanged revision.
+    onEvent?.({
+      revision: 1,
+      scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
+      power: snapshot(1).power,
+      sessionQuestions: questions,
+    })
+    await flush()
+    expect(controller.getSnapshot().sessionQuestions).toEqual(questions)
+    expect(state).not.toHaveBeenCalled()
+
+    // The ask resolves: an empty overlay clears it, still without a refetch.
+    onEvent?.({
+      revision: 1,
+      scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' },
+      power: snapshot(1).power,
+      sessionQuestions: {},
+    })
+    await flush()
+    expect(controller.getSnapshot().sessionQuestions).toEqual({})
+    expect(state).not.toHaveBeenCalled()
+
+    // A heartbeat frame without the field keeps the last overlay untouched.
+    onEvent?.({ revision: 1, scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' }, power: snapshot(1).power, sessionQuestions: questions })
+    await flush()
+    onEvent?.({ revision: 1, scheduler: { timeZone: 'UTC', ledgerId: 'ledger-a' }, power: snapshot(1).power })
+    await flush()
+    expect(controller.getSnapshot().sessionQuestions).toEqual(questions)
+    expect(state).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+})

@@ -42,7 +42,7 @@ import {
   type WorkflowUpdatePatch,
 } from './workflows.ts'
 import { HIDE_TASKS_LIMIT } from '../protocol.ts'
-import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../protocol.ts'
+import type { AllTasksAction, AllTasksEventPayload, AllTasksSessionQuestion, AllTasksSnapshot } from '../protocol.ts'
 
 export interface AllTasksTransport {
   bootstrap(legacy: readonly TaskRecord[]): Promise<AllTasksSnapshot>
@@ -177,6 +177,12 @@ export interface ControllerSnapshot {
    * and open executions stay halted until continued.
    */
   workspacePaused: Record<string, number>
+  /**
+   * Open `ask_user_question`s per execution session, keyed by session id (the
+   * live overlay pushed by the Host). Absent on snapshots from the legacy
+   * in-memory path or an older Host — the UI reads it as "no run waits".
+   */
+  sessionQuestions?: Record<string, AllTasksSessionQuestion>
   boardOpen: boolean
   /** True when the board shows the archive view instead of the columns. */
   archiveView: boolean
@@ -235,6 +241,7 @@ export class BoardController {
   private workflows: WorkflowRecord[] = []
   private workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {}
   private workspacePaused: Record<string, number> = {}
+  private sessionQuestions: Record<string, AllTasksSessionQuestion> = {}
   private boardOpen = false
   private archiveView = false
   private selectedTaskId: string | undefined
@@ -294,6 +301,7 @@ export class BoardController {
       workflows: this.workflows,
       workspaceDefaults: this.workspaceDefaults,
       workspacePaused: { ...this.workspacePaused },
+      sessionQuestions: { ...this.sessionQuestions },
       boardOpen: this.boardOpen,
       archiveView: this.archiveView,
       selectedTaskId: this.selectedTaskId,
@@ -1071,16 +1079,21 @@ export class BoardController {
   }
 
   /**
-   * SSE frames carry revision/scheduler/power. When the revision matches the
-   * one already applied, apply the frame's scheduler/power in place and skip
-   * the full /state fetch; otherwise the 5 s heartbeat would re-clone and
-   * re-serialize the whole ledger per tab even while nothing changes.
+   * SSE frames carry revision/scheduler/power and the live open-question
+   * overlay. When the revision matches the one already applied, apply the
+   * frame's fields in place and skip the full /state fetch; otherwise the 5 s
+   * heartbeat would re-clone and re-serialize the whole ledger per tab even
+   * while nothing changes. Question frames ride the same channel with an
+   * unchanged revision, so an ask opening or closing lands here too.
    */
   private onRemoteEvent(event: AllTasksEventPayload | undefined): void {
     if (event !== undefined && this.hostState !== undefined && event.revision === this.hostState.revision
       && typeof event.scheduler === 'object' && event.scheduler !== null
       && typeof event.power === 'object' && event.power !== null) {
       this.hostState = { revision: event.revision, scheduler: event.scheduler, power: event.power }
+      if (typeof event.sessionQuestions === 'object' && event.sessionQuestions !== null) {
+        this.sessionQuestions = event.sessionQuestions
+      }
       this.notify()
       return
     }
@@ -1115,6 +1128,7 @@ export class BoardController {
     this.workflows = snapshot.workflows ?? []
     this.workspaceDefaults = snapshot.workspaceDefaults ?? {}
     this.workspacePaused = snapshot.workspacePaused ?? {}
+    this.sessionQuestions = snapshot.sessionQuestions ?? {}
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }
     this.transportError = undefined
     if (this.selectedTaskId !== undefined && !this.tasks.some(task => task.id === this.selectedTaskId)) {

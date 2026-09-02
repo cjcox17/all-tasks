@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ApiProxy, MuxFrame, RpcId, RpcRequest } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostTaskLedger } from '../src/host-ledger.ts'
 import { AllTasksHostService } from '../src/host-service.ts'
@@ -19,6 +19,11 @@ function root(): string {
 function ok<T>(request: { rpcId: unknown }, value: T) {
   return { rpcId: request.rpcId, result: { ok: true as const, value } }
 }
+
+/** Test question frames use plain strings where the wire types brand ids. */
+type TestQuestionFrame =
+  | { type: 'question/requested'; sessionId: string; questions: Array<{ id: string; question: string }> }
+  | { type: 'question/resolved'; sessionId: string; questionRpcId: string; outcome: 'answered' | 'cancelled' }
 
 afterEach(() => {
   for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true })
@@ -604,6 +609,104 @@ describe('AllTasksHostService pause gates', () => {
     expect(cancel.mock.calls[0][0].payload).toMatchObject({ sessionId: 'session-a' })
     expect(ledger.state().tasks[0].executions[0].pausedAt).toBe(now)
     expect(ledger.state().tasks[0].executions[0].sessionId).toBe('session-a')
+    service.dispose()
+  })
+})
+
+describe('AllTasksHostService open-question overlay', () => {
+  it('publishes open asks only for open, unpaused execution sessions and prunes the rest on poll', async () => {
+    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    const base = createTask({ title: 'A', description: '', prompt: '' }, now - 60_000, 'task-a')
+    const opened = startExecution(base, now - 30_000, 'execution-a').task
+    const running = {
+      ...opened,
+      status: 'running' as const,
+      executions: opened.executions.map(execution => ({ ...execution, sessionId: 'session-a' })),
+    }
+    ledger.applyRequest('import', { kind: 'import', sourceId: 'browser', tasks: [running] })
+
+    // A pushable mux fake: frames arrive after the watcher subscribes.
+    const queue: RpcRequest<MuxFrame>[] = []
+    const waits: Array<() => void> = []
+    const mux = vi.fn(() => (async function* () {
+      for (;;) {
+        while (queue.length > 0) yield queue.shift()!
+        await new Promise<void>(resolve => { waits.push(resolve) })
+      }
+    })())
+    const push = (payload: TestQuestionFrame, rpcId: string): void => {
+      queue.push({ rpcId: rpcId as RpcId, payload: payload as unknown as MuxFrame })
+      waits.shift()?.()
+    }
+    const api = {
+      events: { mux },
+      sessions: { list: async (request: { rpcId: unknown }) => ok(request, { items: [{ sessionId: 'session-a', running: true }] }) },
+    } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    service.questions.start()
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    // Both sessions ask; only session-a belongs to an open execution.
+    push({ type: 'question/requested', sessionId: 'session-a', questions: [{ id: 'a', question: '继续？' }] }, 'q-1')
+    push({ type: 'question/requested', sessionId: 'session-x', questions: [{ id: 'b', question: '别的会话' }] }, 'q-2')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    const expected = { 'session-a': { askedAt: now, count: 1, summary: '继续？' } }
+    expect(service.snapshot().sessionQuestions).toEqual(expected)
+    expect(service.eventPayload().sessionQuestions).toEqual(expected)
+
+    // The poll prunes the watcher entry of the non-execution session.
+    await (service as unknown as { pollSessions(): Promise<void> }).pollSessions()
+    expect(service.questions.get('session-x')).toBeUndefined()
+    expect(service.questions.get('session-a')).toBeDefined()
+    expect(service.snapshot().sessionQuestions).toEqual(expected)
+    service.dispose()
+  })
+
+  it('never advertises an ask whose run is paused (the pause cancelled the turn)', async () => {
+    let now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const ledger = new HostTaskLedger(root(), () => now)
+    const base = createTask({ title: 'A', description: '', prompt: '' }, now - 60_000, 'task-a')
+    const opened = startExecution(base, now - 30_000, 'execution-a').task
+    const running = {
+      ...opened,
+      status: 'running' as const,
+      executions: opened.executions.map(execution => ({ ...execution, sessionId: 'session-a', pausedAt: now - 1_000 })),
+    }
+    ledger.applyRequest('import', { kind: 'import', sourceId: 'browser', tasks: [running] })
+    const queue: RpcRequest<MuxFrame>[] = []
+    const waits: Array<() => void> = []
+    const mux = vi.fn(() => (async function* () {
+      for (;;) {
+        while (queue.length > 0) yield queue.shift()!
+        await new Promise<void>(resolve => { waits.push(resolve) })
+      }
+    })())
+    const push = (payload: TestQuestionFrame, rpcId: string): void => {
+      queue.push({ rpcId: rpcId as RpcId, payload: payload as unknown as MuxFrame })
+      waits.shift()?.()
+    }
+    const api = {
+      events: { mux },
+      sessions: { list: async (request: { rpcId: unknown }) => ok(request, { items: [] }) },
+    } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger,
+      power: new PowerInhibitor({ platform: 'linux' }),
+      now: () => now,
+    })
+    service.questions.start()
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    push({ type: 'question/requested', sessionId: 'session-a', questions: [{ id: 'a', question: '继续？' }] }, 'q-1')
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    expect(service.questions.get('session-a')).toBeDefined()
+    expect(service.snapshot().sessionQuestions).toEqual({})
     service.dispose()
   })
 })

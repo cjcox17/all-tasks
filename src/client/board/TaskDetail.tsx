@@ -36,7 +36,7 @@ function waitingKey(reason: ExecutionRecord['queuedReason']): AllTasksKey {
 }
 
 /** One execution-history row. */
-function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onContinue }: {
+function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onContinue, waitingAnswer, waitingHint }: {
   execution: ExecutionRecord
   timeZone?: string
   endpointName: (id: string) => string
@@ -44,17 +44,23 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onCo
   /** Present only for the open execution (pause/continue affordances). */
   onPause?: () => void
   onContinue?: () => void
+  /** The run's session is waiting on the human's answer (open ask). */
+  waitingAnswer?: boolean
+  /** The question text, for the row's hints. */
+  waitingHint?: string
 }) {
   const result = execution.result
-  const waiting = execution.queuedAt !== undefined && execution.sessionId === undefined
+  const queuedWaiting = execution.queuedAt !== undefined && execution.sessionId === undefined
   const paused = execution.pausedAt !== undefined
   return (
-    <li className={css.executionRow} data-result={result} data-paused={paused || undefined}>
+    <li className={css.executionRow} data-result={result} data-paused={paused || undefined} data-waiting={waitingAnswer || undefined}>
       <span className={css.executionBadge} data-result={result}>
         {result === undefined
           ? (paused
             ? t('detail.result.paused')
-            : waiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running'))
+            : waitingAnswer
+              ? t('detail.result.waitingAnswer')
+              : queuedWaiting ? t(waitingKey(execution.queuedReason)) : t('detail.result.running'))
           : t(RESULT_KEY[result])}
       </span>
       <span className={css.executionTimes}>
@@ -69,7 +75,9 @@ function ExecutionRow({ execution, timeZone, endpointName, onOpen, onPause, onCo
           type="button"
           className={css.linkButton}
           onClick={() => { onOpen(execution.sessionId as string) }}
-          title={execution.sessionId}
+          title={waitingAnswer && waitingHint !== undefined && waitingHint !== ''
+            ? `${t('detail.result.waitingAnswer')}: ${waitingHint}`
+            : execution.sessionId}
         >
           {t('detail.viewSession')} ⌁
         </button>
@@ -401,6 +409,8 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
   const endpointName = (id: string): string => {
     return snapshot.executionOptions.endpoints.find(option => option.id === id)?.name ?? id
   }
+  /** Live open-question overlay from the Host (absent = no run waits). */
+  const sessionQuestions = snapshot.sessionQuestions ?? {}
 
   return (
     <div className={css.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) controller.closeTask() }}>
@@ -481,6 +491,9 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
               <ul className={css.executionList}>
                 {[...current.executions].reverse().map(execution => {
                   const isOpen = execution.endedAt === undefined
+                  const openQuestion = !isOpen || execution.sessionId === undefined
+                    ? undefined
+                    : sessionQuestions[execution.sessionId]
                   return (
                     <ExecutionRow
                       key={execution.id}
@@ -490,6 +503,8 @@ export function TaskDetail({ controller, task }: { controller: BoardController; 
                       onOpen={sessionId => { controller.openSession(sessionId) }}
                       onPause={isOpen && !archived ? () => { void controller.pauseTask(current.id) } : undefined}
                       onContinue={isOpen && !archived ? () => { void controller.continueTask(current.id) } : undefined}
+                      waitingAnswer={openQuestion !== undefined}
+                      waitingHint={openQuestion?.summary}
                     />
                   )
                 })}

@@ -51,7 +51,7 @@ export function formatTime(ms: number, timeZone?: string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpinner, finalStep, finalStepWaiting }: {
+function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpinner, finalStep, finalStepWaiting, waiting, waitingHint, answerSessionId, onAnswer }: {
   task: TaskRecord
   pending: boolean
   timeZone?: string
@@ -65,11 +65,22 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
   finalStep?: boolean
   /** The final step is gated: other group members are still unfinished. */
   finalStepWaiting?: boolean
+  /** The open execution's session is waiting on an answer to an
+   *  `ask_user_question` — clicking the card opens that session. */
+  waiting?: boolean
+  /** The question text, for the card's tooltip. */
+  waitingHint?: string
+  /** The session to open when the card is clicked while waiting. */
+  answerSessionId?: string
+  /** Opens a session's conversation (answering an open question there). */
+  onAnswer?: (sessionId: string) => void
 }) {
   const latest = task.executions[task.executions.length - 1]
   const runs = task.executions.length
   const archived = task.archivedAt !== undefined
   const paused = !archived && task.status === 'running' && latest?.pausedAt !== undefined
+  const waitingAnswer = !archived && !paused && task.status === 'running' && waiting === true
+    && answerSessionId !== undefined && onAnswer !== undefined
   const isDraggable = !archived && task.status !== 'running' && !pending
 
   return (
@@ -78,6 +89,7 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
       className={css.card}
       data-status={archived ? 'archived' : task.status}
       data-paused={paused || undefined}
+      data-waiting={waitingAnswer || undefined}
       data-dsh-part="card"
       data-task-id={task.id}
       data-pending={pending || undefined}
@@ -97,8 +109,17 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
           height: rect.height,
         }, event.currentTarget.outerHTML, { x: event.clientX, y: event.clientY })
       } : undefined}
-      onClick={onClick}
-      title={task.description !== '' ? task.description : task.title}
+      onClick={() => {
+        // A run waiting on your answer takes you straight to the session to
+        // answer it; every other card keeps opening the task detail.
+        if (waitingAnswer && onAnswer !== undefined) onAnswer(answerSessionId as string)
+        else onClick()
+      }}
+      title={waitingAnswer
+        ? waitingHint !== undefined && waitingHint !== ''
+          ? `${t('card.waitingAnswer')}: ${waitingHint}`
+          : t('card.waitingAnswerHint')
+        : task.description !== '' ? task.description : task.title}
     >
       <span className={css.cardTitle}>{task.title}</span>
       {task.description !== '' && <span className={css.cardExcerpt}>{task.description}</span>}
@@ -162,13 +183,15 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
       {!archived && latest !== undefined && executionLabel(latest) === 'running' && (
         latest.pausedAt !== undefined
           ? <span className={css.cardRunningLabel} data-paused="">{t('detail.result.paused')}</span>
-          : latest.queuedAt !== undefined && latest.sessionId === undefined
-            ? <span className={css.cardRunningLabel}>{t(latest.queuedReason === 'group'
-              ? 'detail.result.waitingGroup'
-              : latest.queuedReason === 'window' ? 'detail.result.waitingWindow'
-                : latest.queuedReason === 'workspace' ? 'detail.result.waitingWorkspace'
-                  : 'detail.result.waiting')}</span>
-            : <span className={css.cardRunningLabel}>{t('detail.result.running')}…</span>
+          : waitingAnswer
+            ? <span className={css.cardWaitingAnswer}>{t('card.waitingAnswer')}</span>
+            : latest.queuedAt !== undefined && latest.sessionId === undefined
+              ? <span className={css.cardRunningLabel}>{t(latest.queuedReason === 'group'
+                ? 'detail.result.waitingGroup'
+                : latest.queuedReason === 'window' ? 'detail.result.waitingWindow'
+                  : latest.queuedReason === 'workspace' ? 'detail.result.waitingWorkspace'
+                    : 'detail.result.waiting')}</span>
+              : <span className={css.cardRunningLabel}>{t('detail.result.running')}…</span>
       )}
     </button>
   )
