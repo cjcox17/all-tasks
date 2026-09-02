@@ -1146,7 +1146,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
    scrolls horizontally only if a very narrow view forces it to. */
 .directory {
   --dir-card-pad-x: 14px;
-  --dir-columns: 26px minmax(0, 1fr) repeat(6, 64px) 56px 88px 60px;
+  --dir-columns: 30px minmax(0, 1fr) repeat(6, 64px) 56px 88px 70px;
   box-sizing: border-box;
   max-width: 1080px;
   margin-inline: auto;
@@ -1188,7 +1188,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
 
 /* Empty leading cell in the header that mirrors the row chevron column. */
 .headChevron {
-  width: 26px;
+  width: 30px;
 }
 
 /* One workspace (or the All-tasks row): its own card — a surface with a border
@@ -1343,11 +1343,24 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   gap: 2px;
 }
 
+/* The run / stop / pause / continue / settings icons on a workspace row are
+   the row's primary controls — bigger glyphs and hit areas than the base
+   icon button so they read as actions, not decoration. */
+.directoryControls .iconButton,
+.directoryActions .iconButton {
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
+}
+
 /* The leading chevron toggles the inline directory; rotates to point down when
-   open. */
+   open. Bigger than the base icon button so the row collapse control reads as
+   the row's primary toggle and is easy to hit. */
 .listChevron {
   align-self: center;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
   transition: transform 120ms ease;
 }
 
@@ -1392,16 +1405,16 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 14px;
   transition: transform 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
@@ -1887,7 +1900,7 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   }
 
   .directory {
-    --dir-columns: 26px minmax(0, 1fr) repeat(6, 48px) 48px 76px 52px;
+    --dir-columns: 30px minmax(0, 1fr) repeat(6, 48px) 48px 76px 70px;
     --dir-card-pad-x: 10px;
     padding: 4px 0 12px;
   }
