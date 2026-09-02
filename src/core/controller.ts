@@ -849,8 +849,14 @@ export class BoardController {
     // Same-column drop: nothing changes, so do not bump every member's
     // updatedAt (their "edited" stamp) for a no-op move.
     if (members.length === 0 || members.every(member => member.status === status)) return true
+    // A whole-group manual move is a reset, never an auto-start: hold every
+    // moved member (deferAutoStart) so the group sits idle until an explicit
+    // start (run-group / group cron / a member Run) clears the hold — the
+    // legacy mirror of the Host ledger's move-group behavior.
     this.tasks = this.tasks.map(task =>
-      task.groupId === groupId && task.archivedAt === undefined ? withStatus(task, status, this.now()) : task)
+      task.groupId === groupId && task.archivedAt === undefined
+        ? withStatus({ ...task, deferAutoStart: true }, status, this.now())
+        : task)
     this.persistAndNotify()
     return true
   }

@@ -124,11 +124,6 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
             {task.source === 'agent' ? t('card.source.agent') : task.source === 'event' ? t('card.source.event') : t('card.source.api')}
           </span>
         )}
-        {!archived && task.deferAutoStart === true && (
-          <span className={css.cardHeld} title={t('card.heldHint')}>
-            {t('card.held')}
-          </span>
-        )}
         {!archived && finalStep === true && (
           <span
             className={finalStepWaiting ? css.cardFinalStepWaiting : css.cardFinalStep}

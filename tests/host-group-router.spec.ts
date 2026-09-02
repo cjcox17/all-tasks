@@ -650,8 +650,94 @@ describe('AllTasksHostService group routing', () => {
     h.service.dispose()
   })
 
-  it('auto-advance and the group cron skip unapproved members until they are approved', async () => {
+  it('moving a completed group back to a manual column never auto-starts it; an explicit Start-group does', async () => {
     const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'Rerun', ['a', 'b'])
+
+    // Complete one full sequential cycle: a runs, settles, then b runs and settles.
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    const a1 = h.ledger.state().tasks.find(task => task.id === 'a')!
+    h.ledger.settle('a', a1.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.status).toBe('running')
+    const b1 = h.ledger.state().tasks.find(task => task.id === 'b')!
+    h.ledger.settle('b', b1.executions[0]!.id, 'succeeded')
+    h.advanceGroups()
+    await flush()
+    const launchesBefore = h.create.mock.calls.length
+    expect(launchesBefore).toBe(2)
+
+    // Drag the completed group back to To Do: every member lands in To Do held
+    // (deferAutoStart), so the move itself — and any advance pass afterwards —
+    // starts nothing.
+    h.service.apply('move-group', { kind: 'move-group', groupId: 'g1', status: 'todo' })
+    await flush()
+    let state = h.ledger.state()
+    expect(state.tasks.find(task => task.id === 'a')!.status).toBe('todo')
+    expect(state.tasks.find(task => task.id === 'b')!.status).toBe('todo')
+    expect(state.tasks.find(task => task.id === 'a')!.deferAutoStart).toBe(true)
+    expect(state.tasks.find(task => task.id === 'b')!.deferAutoStart).toBe(true)
+    expect(h.create.mock.calls.length).toBe(launchesBefore)
+    h.advanceGroups()
+    await flush()
+    expect(h.create.mock.calls.length).toBe(launchesBefore)
+    expect(h.ledger.state().tasks.find(task => task.id === 'a')!.executions).toHaveLength(1)
+
+    // The banner's ▶ (Start group) is the explicit start: holds clear and the
+    // new cycle opens from the top of the group order.
+    h.service.apply('run-group', { kind: 'run-group', groupId: 'g1' })
+    await flush()
+    state = h.ledger.state()
+    expect(state.tasks.find(task => task.id === 'a')!.status).toBe('running')
+    expect(state.tasks.find(task => task.id === 'a')!.deferAutoStart).toBeUndefined()
+    expect(state.tasks.find(task => task.id === 'b')!.deferAutoStart).toBeUndefined()
+    expect(h.create.mock.calls.length).toBe(launchesBefore + 1)
+    h.service.dispose()
+  })
+
+  it('resuming a stopped group releases held members so one ▶ press restarts the whole group', async () => {
+    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
+    const dir = root()
+    const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
+    seedGroup(h, 'g1', 'StopResume', ['a'])
+    h.service.apply('run-a', { kind: 'run', taskId: 'a' })
+    await flush()
+    expect(h.create).toHaveBeenCalledOnce()
+
+    // b joins while the group is running: held, waiting in To Do.
+    h.ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+    expect(h.ledger.state().tasks.find(task => task.id === 'b')!.deferAutoStart).toBe(true)
+
+    // Stop the group: a is cancelled (failed), the group is stopped, b stays
+    // in To Do held.
+    h.service.apply('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    await flush()
+    expect(h.ledger.state().groups[0]!.stopped).toBe(true)
+
+    // The re-run flow: drag the group back to To Do (all members held).
+    h.service.apply('move-group', { kind: 'move-group', groupId: 'g1', status: 'todo' })
+    await flush()
+    expect(h.create.mock.calls.length).toBe(1)
+
+    // One press on the banner ▶ (Resume): the stopped flag AND every hold
+    // clear in the same commit, and the settle-triggered chain that fires on
+    // it restarts the sequence — no second press is needed.
+    h.service.apply('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    await flush()
+    const state = h.ledger.state()
+    expect(state.groups[0]!.stopped).toBeUndefined()
+    expect(state.tasks.find(task => task.id === 'a')!.deferAutoStart).toBeUndefined()
+    expect(state.tasks.find(task => task.id === 'b')!.deferAutoStart).toBeUndefined()
+    expect(state.tasks.find(task => task.id === 'a')!.status).toBe('running')
+    expect(h.create.mock.calls.length).toBe(2)
+    h.service.dispose()
+  })
+
+  it('auto-advance and the group cron skip unapproved members until they are approved', async () => {    const now = new Date(2026, 7, 16, 10, 0, 0).getTime()
     const dir = root()
     const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
     h.ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Approval', mode: 'sequential' } })

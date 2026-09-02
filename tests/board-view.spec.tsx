@@ -511,6 +511,44 @@ describe('AllTasks group sections', () => {
     })
     expect(moveCalls).toEqual([{ id: 'g1', status: 'backlog' }])
   })
+
+  it('refuses dropping a group banner onto the In Progress (running) column', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const runningColumn = container.querySelector('section[data-status="running"]')
+    const runningCards = runningColumn!.querySelector('[data-dsh-part="cards"]') as HTMLElement
+    const dataTransfer = {
+      data: { 'text/plain': 'group:g1' } as Record<string, string>,
+      setData(type: string, val: string) { this.data[type] = val },
+      getData(type: string) { return this.data[type] ?? '' },
+      dropEffect: 'none',
+    }
+    await act(async () => {
+      runningCards!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
+      )
+    })
+    // A group can only ever be moved to a manual column — dropping it on the
+    // running column must never start it (or move it) by accident.
+    expect(moveCalls).toEqual([])
+  })
+
+  it('does not surface the internal auto-advance hold as a badge on member cards', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member One', status: 'todo', groupId: 'g1', deferAutoStart: true })],
+      groups: [GROUP],
+    })
+    const section = container.querySelector('[data-group="g1"]') as HTMLElement
+    expect(section).not.toBeNull()
+    // The card renders normally; the hold is internal bookkeeping only.
+    expect(section.textContent).toContain('Member One')
+    expect(section.textContent).not.toContain('Held')
+  })
 })
 
 describe('AllTasks start buttons', () => {

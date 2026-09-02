@@ -634,21 +634,40 @@ describe('HostTaskLedger', () => {
     expect(ledger.applyRequest('run-a-3', { kind: 'run', taskId: 'a' }).state.tasks.find(value => value.id === 'a')!.status).toBe('running')
   })
 
-  it('moves a whole group to a manual column and refuses while a member runs', () => {
+  it('moves a whole group to a manual column, holds every moved member, and refuses while a member runs', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
     ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
 
-    const moved = ledger.applyRequest('move-group', { kind: 'move-group', groupId: 'g1', status: 'todo' })
-    const tasks = moved.state.tasks
+    // A manual whole-group move is a reset, never an auto-start: every moved
+    // member is held (deferAutoStart) so the auto-advance chain leaves the
+    // group idle until an explicit start (run-group / cron / resume / a
+    // member Run) clears the hold.
+    const moved = ledger.applyRequest('move-group', { kind: 'move-group', groupId: 'g1', status: 'backlog' })
+    let tasks = moved.state.tasks
+    expect(tasks.find(value => value.id === 'a')!.status).toBe('backlog')
+    expect(tasks.find(value => value.id === 'b')!.status).toBe('backlog')
+    expect(tasks.find(value => value.id === 'a')!.deferAutoStart).toBe(true)
+    expect(tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+
+    // Dropping the group back onto its own column is a no-op: members keep
+    // their column and their hold (no status rewrite, no updatedAt churn).
+    ledger.applyRequest('move-group-noop', { kind: 'move-group', groupId: 'g1', status: 'backlog' })
+    tasks = ledger.state().tasks
+    expect(tasks.find(value => value.id === 'a')!.status).toBe('backlog')
+    expect(tasks.find(value => value.id === 'a')!.deferAutoStart).toBe(true)
+
+    // Moving between manual columns keeps every member held.
+    ledger.applyRequest('move-group-2', { kind: 'move-group', groupId: 'g1', status: 'todo' })
+    tasks = ledger.state().tasks
     expect(tasks.find(value => value.id === 'a')!.status).toBe('todo')
-    expect(tasks.find(value => value.id === 'b')!.status).toBe('todo')
+    expect(tasks.find(value => value.id === 'a')!.deferAutoStart).toBe(true)
     expect(() => ledger.applyRequest('move-group-bad', { kind: 'move-group', groupId: 'g1', status: 'done' })).toThrow('invalid manual status')
 
     // A running member blocks the whole move.
     ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
-    expect(() => ledger.applyRequest('move-group-2', { kind: 'move-group', groupId: 'g1', status: 'backlog' })).toThrow('group has running tasks')
+    expect(() => ledger.applyRequest('move-group-3', { kind: 'move-group', groupId: 'g1', status: 'backlog' })).toThrow('group has running tasks')
   })
 
   it('starts a whole group: opens runs for every runnable member in group order, skipping running and unapproved ones', () => {
@@ -806,6 +825,48 @@ describe('HostTaskLedger', () => {
     expect(ledger.state().tasks.find(value => value.id === 'g')!.deferAutoStart).toBe(true)
     ledger.rollGroupSchedule('g3', NOW + 86_400_000, NOW)
     expect(ledger.state().tasks.find(value => value.id === 'g')!.deferAutoStart).toBeUndefined()
+  })
+
+  it('resuming a stopped group or continuing a paused group clears every auto-advance hold (one ▶ press)', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    // g1: a ran and settled; b joins afterwards and is held; then the group is stopped.
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Stopped', mode: 'sequential' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
+    ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+    ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    expect(ledger.state().groups[0]!.stopped).toBe(true)
+
+    // Resume (update-group stopped: false) is the banner ▶ on a stopped
+    // group: an explicit start that also releases the holds, so the settle
+    // trigger that fires on the same commit starts held members too.
+    ledger.applyRequest('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    expect(ledger.state().groups[0]!.stopped).toBeUndefined()
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBeUndefined()
+    // Editing other group fields never touches the holds.
+    ledger.applyRequest('re-stop', { kind: 'stop-group', groupId: 'g1' })
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'c')!.deferAutoStart).toBe(true)
+    ledger.applyRequest('rename', { kind: 'update-group', groupId: 'g1', patch: { name: 'Renamed' } })
+    expect(ledger.state().tasks.find(value => value.id === 'c')!.deferAutoStart).toBe(true)
+
+    // g2: a ran and settled; b joins afterwards and is held; then the group is paused.
+    ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Paused', mode: 'sequential' } })
+    ledger.applyRequest('create-a2', { kind: 'create', id: 'a2', input: { title: 'A2', description: '', prompt: '', groupId: 'g2' } })
+    ledger.applyRequest('run-a2', { kind: 'run', taskId: 'a2' })
+    ledger.settle('a2', ledger.state().tasks.find(value => value.id === 'a2')!.executions[0]!.id, 'succeeded')
+    ledger.applyRequest('create-b2', { kind: 'create', id: 'b2', input: { title: 'B2', description: '', prompt: '', groupId: 'g2' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b2')!.deferAutoStart).toBe(true)
+    ledger.applyRequest('pause-group', { kind: 'pause-group', groupId: 'g2' })
+    expect(ledger.state().groups.find(value => value.id === 'g2')!.paused).toBe(true)
+
+    // Continue (the banner ▶ on a paused group) re-prompts paused sessions and
+    // releases the holds in the same action — one press covers the whole group.
+    ledger.applyRequest('continue', { kind: 'continue-group', groupId: 'g2' })
+    expect(ledger.state().groups.find(value => value.id === 'g2')!.paused).toBeUndefined()
+    expect(ledger.state().tasks.find(value => value.id === 'b2')!.deferAutoStart).toBeUndefined()
   })
 
   it('excludes held members from the group runtime runnable set and the openExecution seam', () => {
