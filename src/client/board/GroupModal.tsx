@@ -2,7 +2,11 @@
  * Group modal: create or edit a task group — name, execution mode
  * (sequential/parallel with a parallel cap), endpoint list, allowed-hours
  * window, off-peak-only flag, and the group cron — plus, when editing, the
- * member order (up/down) with per-member removal and group deletion.
+ * final-step (merge-step) designation and group deletion.
+ *
+ * Member order and membership are managed on the board (drag to reorder
+ * inside a group, drag a member out to ungroup), so the settings dialog only
+ * edits policy, never the member list itself.
  *
  * Groups are ledger entities (not plugin settings), so every change goes
  * through the Host actions; the modal closes only after the Host confirms.
@@ -61,8 +65,8 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
   const scopeLabel = scope === undefined
     ? t('group.workspaceNone')
     : snapshot.executionOptions.workspaces.find(workspace => workspace.workspaceId === scope)?.title ?? scope
-  // Archived members cannot be ungrouped or reordered through update-task
-  // (archived tasks are read-only), so keep them out of the order editor.
+  // Archived members are read-only (update-group cannot designate them), so
+  // keep them out of the member-derived final-step picker.
   const members = editing ? controller.groupMembers(group.id).filter(member => member.archivedAt === undefined) : []
   // The final step must be a current member: a designation that outlived its
   // member (removed mid-edit) collapses to "none" instead of failing the save.
@@ -129,15 +133,6 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
       return
     }
     onClose()
-  }
-
-  const reorder = (index: number, delta: number): void => {
-    if (!editing) return
-    const ids = members.map(member => member.id)
-    const target = index + delta
-    if (target < 0 || target >= ids.length) return
-    ;[ids[index], ids[target]] = [ids[target]!, ids[index]!]
-    void controller.setGroupOrder(group!.id, ids)
   }
 
   return (
@@ -311,51 +306,6 @@ export function GroupModal({ controller, group, workspaceId, onClose }: {
           </>
         )}
       </section>
-
-      {editing && members.length > 0 && (
-        <section className={css.detailSection}>
-          <h4>{t('group.members')}</h4>
-          <p className={css.detailText}>{t('group.membersHint')}</p>
-          <ol className={css.endpointOrderList}>
-            {members.map((member, index) => (
-              <li key={member.id} className={css.endpointOrderRow}>
-                <span className={css.endpointOrderName}>{member.title}</span>
-                <span className={css.endpointOrderActions}>
-                  <button
-                    type="button"
-                    className={css.ghostButton}
-                    disabled={index === 0}
-                    aria-label={t('group.memberMoveUp')}
-                    onClick={() => { reorder(index, -1) }}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className={css.ghostButton}
-                    disabled={index === members.length - 1}
-                    aria-label={t('group.memberMoveDown')}
-                    onClick={() => { reorder(index, 1) }}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    className={css.ghostButton}
-                    aria-label={t('group.memberRemove')}
-                    onClick={() => { void controller.updateTask(member.id, { groupId: null }) }}
-                  >
-                    ×
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-      {editing && members.length === 0 && (
-        <p className={css.detailText}>{t('group.emptyMembers')}</p>
-      )}
 
       {editing && members.length > 0 && (
         <section className={css.detailSection}>
