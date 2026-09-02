@@ -1015,6 +1015,7 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 .cardAction[data-action='stop'] { color: var(--dsw-alias-state-danger-primary); }
 .cardAction[data-action='approve'] { color: var(--dsw-alias-state-success-primary); }
 .cardAction[data-action='run'] { color: var(--dsw-alias-state-business-primary); }
+.cardAction[data-action='hide'] { color: var(--dsw-alias-label-secondary); }
 
 .cardAction:hover {
   background: var(--dsw-specific-input-major);
@@ -1191,6 +1192,25 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 }
 
 .runButton:hover {
+  background: var(--dsw-specific-input-major);
+}
+
+/* The per-card hide button (a settled done/failed card's archive affordance). */
+.hidePill {
+  flex: none;
+  align-self: center;
+  margin: 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.hidePill:hover {
   background: var(--dsw-specific-input-major);
 }
 

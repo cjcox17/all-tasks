@@ -1,8 +1,9 @@
 /**
- * Hide-settled-tasks dialog: the confirm step of the Done/Failed column
- * clean-up. Lists every task the hide will archive (they leave the column for
- * the Archive view, restorable later) and offers to also archive their DSH
- * execution sessions — checked by default, because this is the "clear old
+ * Hide-settled-tasks dialog: the confirm step of hiding settled tasks — from
+ * a Done/Failed column, one group's settled members in a column, or a single
+ * task card. Lists every task the hide will archive (they leave the column
+ * for the Archive view, restorable later) and offers to also archive their
+ * DSH execution sessions — checked by default, because this is the "clear old
  * tasks and their sessions in one go" flow. The candidate list is derived
  * from the live snapshot on every render, so after a slice of a very long
  * column is hidden (or another tab hides some) the dialog shows exactly what
@@ -21,8 +22,14 @@ const HIDE_PREVIEW_LIMIT = 40
 
 /** Confirm step props. */
 export interface HideTasksDialogProps {
-  /** The column being hidden (`done` or `failed`). */
+  /** The column the hidden tasks sit in (`done` or `failed`), for the message. */
   status: TaskStatus
+  /**
+   * The task ids the hide was opened for (a whole column, one group's members
+   * in that column, or a single card). The dialog re-derives what still needs
+   * hiding from the live snapshot, so already-hidden or moved tasks drop out.
+   */
+  ids: readonly string[]
   /** Board-visible tasks (vanished-workspace tasks already filtered out). */
   tasks: readonly TaskRecord[]
   /** The active workspace scope (undefined = the All-tasks overview). */
@@ -38,13 +45,17 @@ export interface HideTasksDialogProps {
   onCancel: () => void
 }
 
-/** Confirm overlay for hiding one settled column. */
-export function HideTasksDialog({ status, tasks, workspaceId, transportError, onHide, onCancel }: HideTasksDialogProps) {
-  // Candidates are recomputed from the live snapshot every render: a column
-  // hide that ran (or another tab) shrinks the list, so the dialog always
-  // shows exactly what still needs hiding.
+/** Confirm overlay for hiding settled tasks. */
+export function HideTasksDialog({ status, ids, tasks, workspaceId, transportError, onHide, onCancel }: HideTasksDialogProps) {
+  // Candidates are recomputed from the live snapshot every render: a hide
+  // that ran (or another tab) shrinks the list, so the dialog always shows
+  // exactly what still needs hiding.
+  const wanted = new Set(ids)
   const candidates = tasks.filter(task =>
-    task.archivedAt === undefined && task.status === status && matchesWorkspace(task, workspaceId))
+    task.archivedAt === undefined
+    && task.status === status
+    && wanted.has(task.id)
+    && matchesWorkspace(task, workspaceId))
   const taskIds = candidates.map(task => task.id)
   const sessionIds = collectExecutionSessionIds(tasks, taskIds)
   const columnLabel = t(STATUS_KEY[status])
