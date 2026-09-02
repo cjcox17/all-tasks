@@ -23,6 +23,8 @@ export interface AllTasksSettings {
   preventIdleSleep?: boolean
   /** Show message/tool times and per-turn token counts in the session view. */
   sessionTimestamps?: boolean
+  /** One-click archive buttons next to the "…" menu on DSH sidebar session rows. */
+  sessionArchiveButtons?: boolean
   /** Auto-generate a task title from the run prompt in the new-task dialog. */
   autoTitle?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
@@ -55,6 +57,8 @@ export interface AllTasksSettingsCardState extends CardShell {
   usageRetentionHours: CardFieldState
   /** Session-view timestamp/token flag. */
   sessionTimestamps: CardFieldState
+  /** Session-row one-click archive flag. */
+  sessionArchiveButtons: CardFieldState
   /** Auto-generated-title flag. */
   autoTitle: CardFieldState
 }
@@ -80,6 +84,7 @@ export class AllTasksSettingsCardController {
       booleanField('preventIdleSleep'),
       numberField('usageRetentionHours', { min: 0 }),
       booleanField('sessionTimestamps'),
+      booleanField('sessionArchiveButtons'),
       booleanField('autoTitle'),
     ])
     this.store = this.form.bind(() => this.projection())
@@ -93,6 +98,7 @@ export class AllTasksSettingsCardController {
       preventIdleSleep: this.form.field('preventIdleSleep'),
       usageRetentionHours: this.form.field('usageRetentionHours'),
       sessionTimestamps: this.form.field('sessionTimestamps'),
+      sessionArchiveButtons: this.form.field('sessionArchiveButtons'),
       autoTitle: this.form.field('autoTitle'),
     }
   }
@@ -220,6 +226,18 @@ export function AllTasksSettingsCard(props: AllTasksSettingsCardProps) {
         {...state.sessionTimestamps}
         onEdit={(text) => { props.edit('sessionTimestamps', text) }}
         onReset={() => { props.resetField('sessionTimestamps') }}
+      />
+      <BooleanField
+        id="settings-all-tasks-session-archive-buttons"
+        label={t('settings.sessionArchiveButtons')}
+        hint={t('settings.sessionArchiveButtonsHint')}
+        inheritLabel={t('settings.inherit')}
+        onLabel={t('settings.on')}
+        offLabel={t('settings.off')}
+        {...fieldProps}
+        {...state.sessionArchiveButtons}
+        onEdit={(text) => { props.edit('sessionArchiveButtons', text) }}
+        onReset={() => { props.resetField('sessionArchiveButtons') }}
       />
       <BooleanField
         id="settings-all-tasks-auto-title"
