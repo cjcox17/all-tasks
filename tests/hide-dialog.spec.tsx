@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AllTasks } from '../src/client/board/AllTasks.tsx'
 import { t } from '../src/client/locales.ts'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
+import type { TaskGroupRecord } from '../src/core/groups.ts'
 import type { TaskRecord } from '../src/core/tasks.ts'
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -41,6 +42,19 @@ function task(id: string, status: TaskRecord['status'], sessionIds: string[] = [
       result: 'succeeded' as const,
       error: undefined,
     })),
+  }
+}
+
+function group(overrides: Partial<TaskGroupRecord> = {}): TaskGroupRecord {
+  return {
+    id: 'g1',
+    name: 'Group A',
+    mode: 'sequential',
+    offPeakOnly: false,
+    order: [],
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
   }
 }
 
@@ -139,7 +153,13 @@ describe('AllTasks hide-old-tasks', () => {
 
     const confirm = Array.from(modal!.querySelectorAll('button'))
       .find(button => button.textContent === t('hide.confirm', { count: '1' }))!
-    await act(async () => { confirm.click() })
+    // A successful hide closes the dialog only after the async confirm
+    // settles; keep the act() open so the post-await state updates (busy off,
+    // dialog closed) flush inside it.
+    await act(async () => {
+      confirm.click()
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+    })
     expect(hide).toHaveBeenCalledWith(['done-1'], true)
     // A successful hide closes the dialog.
     expect(container.querySelector('[role="alertdialog"]')).toBeNull()
@@ -178,7 +198,129 @@ describe('AllTasks hide-old-tasks', () => {
     await act(async () => { unchecked.click() })
     const confirm = Array.from(container.querySelector('[role="alertdialog"]')!.querySelectorAll('button'))
       .find(button => button.textContent === t('hide.confirm', { count: '1' }))!
-    await act(async () => { confirm.click() })
+    // Keep act() open until the async confirm settles (busy off, dialog closed
+    // if accepted) so no state update lands outside the act scope.
+    await act(async () => {
+      confirm.click()
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+    })
     expect(hide).toHaveBeenCalledWith(['done-1'], false)
+  })
+})
+
+describe('AllTasks hide from a group banner', () => {
+  it("hides only that group's settled members in the column", async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const hide = vi.fn(async () => true)
+    const member = { ...task('done-1', 'done', ['session-1']), groupId: 'g1' }
+    const other = task('done-2', 'done', ['session-2'])
+    const g1 = group({ order: ['done-1'] })
+    const controller = fakeController(
+      { tasks: [member, other], groups: [g1] },
+      { hideSettledTasks: hide },
+    )
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
+    await openAllTasks(container)
+
+    const groupSection = container.querySelector('section[data-status="done"] [data-group="g1"]')
+    expect(groupSection).not.toBeNull()
+    const groupHide = Array.from(groupSection!.querySelectorAll('button'))
+      .find(button => button.textContent === t('hide.button'))!
+    expect(groupHide.getAttribute('aria-label')).toBe(t('hide.groupLabel', { count: '1' }))
+    await act(async () => { groupHide.click() })
+
+    const modal = container.querySelector('[role="alertdialog"]')
+    expect(modal).not.toBeNull()
+    // Only the group's member is offered — the column's ungrouped done task
+    // stays out of this dialog.
+    expect(modal!.textContent).toContain('Task done-1')
+    expect(modal!.textContent).not.toContain('Task done-2')
+
+    const confirm = Array.from(modal!.querySelectorAll('button'))
+      .find(button => button.textContent === t('hide.confirm', { count: '1' }))!
+    // Keep act() open until the async confirm settles (busy off, dialog closed
+    // if accepted) so no state update lands outside the act scope.
+    await act(async () => {
+      confirm.click()
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+    })
+    expect(hide).toHaveBeenCalledWith(['done-1'], true)
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('shows no hide control on a group whose members in the column are not settled', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const backlogMember = { ...task('b1', 'todo'), groupId: 'g1' }
+    const g1 = group({ order: ['b1'] })
+    const controller = fakeController({
+      tasks: [backlogMember],
+      groups: [g1],
+    })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
+    await openAllTasks(container)
+
+    const todoColumn = container.querySelector('section[data-status="todo"]')
+    const todoGroupSection = todoColumn!.querySelector('[data-group="g1"]')
+    expect(todoGroupSection).not.toBeNull()
+    expect(Array.from(todoGroupSection!.querySelectorAll('button'))
+      .some(button => button.textContent === t('hide.button'))).toBe(false)
+  })
+})
+
+describe('AllTasks hide from a task card', () => {
+  it('hides a single settled card through its own dialog', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const hide = vi.fn(async () => true)
+    const doneA = task('done-a', 'done', ['session-a'])
+    const doneB = task('done-b', 'done', ['session-b'])
+    const controller = fakeController({ tasks: [doneA, doneB] }, { hideSettledTasks: hide })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
+    await openAllTasks(container)
+
+    const doneColumn = container.querySelector('section[data-status="done"]')!
+    const cardA = doneColumn.querySelector('[data-task-id="done-a"]') as HTMLElement
+    const hidePills = Array.from(cardA.parentElement!.querySelectorAll('button'))
+      .filter(button => button.getAttribute('aria-label') === t('hide.taskTitle'))
+    expect(hidePills).toHaveLength(1)
+    await act(async () => { hidePills[0].click() })
+
+    const modal = container.querySelector('[role="alertdialog"]')
+    expect(modal).not.toBeNull()
+    expect(modal!.textContent).toContain('Task done-a')
+    expect(modal!.textContent).not.toContain('Task done-b')
+
+    const confirm = Array.from(modal!.querySelectorAll('button'))
+      .find(button => button.textContent === t('hide.confirm', { count: '1' }))!
+    // Keep act() open until the async confirm settles (busy off, dialog closed
+    // if accepted) so no state update lands outside the act scope.
+    await act(async () => {
+      confirm.click()
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+    })
+    expect(hide).toHaveBeenCalledWith(['done-a'], true)
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('keeps cards of unsettled tasks without a hide control', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const controller = fakeController({
+      tasks: [task('todo-1', 'todo'), task('running-1', 'running')],
+    })
+    await act(async () => { root.render(<AllTasks controller={controller} />) })
+    await openAllTasks(container)
+
+    expect(container.querySelector('[aria-label="' + t('hide.taskTitle') + '"]')).toBeNull()
   })
 })
