@@ -7,7 +7,8 @@
  * ultimate reset.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mountSidebarEntry } from '../src/client/sidebar-entry.ts'
+import { PanelController } from '../src/core/panel-controller.ts'
+import { mountActionsSidebarEntry, mountEventsSidebarEntry, mountSidebarEntry } from '../src/client/sidebar-entry.ts'
 
 describe('mountSidebarEntry DOM idempotency', () => {
   beforeEach(() => {
@@ -89,6 +90,77 @@ describe('mountSidebarEntry DOM idempotency', () => {
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-all-tasks-entry', '')
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-plugin', 'all-tasks')
     expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-part', 'sidebar-entry')
+    dispose()
+  })
+})
+
+describe('Events/Actions sidebar entries', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** A document stub that reports whether the given entry row already exists. */
+  function stubDocument(existingSelector: string): { entryEl: { dataset: Record<string, string>; setAttribute: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> }; createElement: ReturnType<typeof vi.fn> } {
+    const entryEl = {
+      dataset: {},
+      setAttribute: vi.fn(),
+      addEventListener: vi.fn(),
+      remove: vi.fn(),
+    }
+    const createElement = vi.fn(() => entryEl)
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) => (selector === existingSelector ? {} : null),
+      createElement,
+      body: {},
+      documentElement: { lang: 'zh-CN' },
+    })
+    class FakeMutationObserver {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('MutationObserver', FakeMutationObserver)
+    return { entryEl, createElement }
+  }
+
+  it('skips mounting when the events row already exists', () => {
+    const { createElement } = stubDocument('[data-dsh-events-entry]')
+    const panel = new PanelController()
+
+    const dispose = mountEventsSidebarEntry(panel)
+
+    expect(createElement).not.toHaveBeenCalled()
+    expect(dispose()).toBeUndefined()
+  })
+
+  it('creates the events row with its own attribute and the panel toggle semantics', () => {
+    const { entryEl, createElement } = stubDocument('[data-dsh-actions-entry]')
+    const panel = new PanelController()
+    let clickHandler: (() => void) | undefined
+    entryEl.addEventListener.mockImplementation((_type: string, handler: () => void) => { clickHandler = handler })
+
+    const dispose = mountEventsSidebarEntry(panel)
+
+    expect(createElement).toHaveBeenCalledTimes(1)
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-events-entry', '')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-plugin', 'all-tasks')
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-part', 'sidebar-entry')
+    expect(panel.getSnapshot().open).toBe(false)
+    clickHandler?.()
+    expect(panel.getSnapshot().open).toBe(true)
+    clickHandler?.()
+    expect(panel.getSnapshot().open).toBe(false)
+    dispose()
+    expect(entryEl.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates the actions row below the family block', () => {
+    const { entryEl, createElement } = stubDocument('[data-dsh-events-entry]')
+    const panel = new PanelController()
+
+    const dispose = mountActionsSidebarEntry(panel)
+
+    expect(createElement).toHaveBeenCalledTimes(1)
+    expect(entryEl.setAttribute).toHaveBeenCalledWith('data-dsh-actions-entry', '')
     dispose()
   })
 })

@@ -27,10 +27,26 @@
   background: var(--dsw-alias-bg-base);
 }
 
-/* The center column is single-occupant; the :not() guards keep the two
-   sibling panels (task board / ssh) from fighting over visibility if both
-   activation attributes ever coexist. */
-html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-dsh-all-tasks-view] {
+/* The Events/Actions panel containers share the board's takeover geometry:
+   an absolute fill over the conversation, hidden unless the panel is active,
+   with the same opaque backdrop. */
+[data-dsh-events-view],
+[data-dsh-actions-view] {
+  position: absolute;
+  inset: 0;
+  display: none;
+  z-index: 60;
+  container-name: all-tasks-view;
+  container-type: inline-size;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* The center column is single-occupant; the :not() guards keep the sibling
+   panels (task board / Events / Actions / ssh) from fighting over visibility
+   if two activation attributes ever coexist. */
+html[data-dsh-all-tasks-active]:not([data-dsh-events-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-all-tasks-view],
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-dsh-events-view],
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-dsh-actions-view] {
   display: block;
 }
 
@@ -45,6 +61,15 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-dsh-all-tasks-v
    whichever host container carries it. */
 html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-all-tasks-view]),
 html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-all-tasks-view]) {
+  display: none !important;
+}
+
+/* The Events/Actions panels hide the conversation the same way; each guard is
+   fully qualified so only the active panel's rule applies. */
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-events-view]),
+html[data-dsh-events-active]:not([data-dsh-all-tasks-active]):not([data-dsh-actions-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-events-view]),
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [data-pane='conversation'] > :not([data-dsh-actions-view]),
+html[data-dsh-actions-active]:not([data-dsh-all-tasks-active]):not([data-dsh-events-active]):not([data-dsh-ssh-active]) [class*='centerCol'] > :not([data-dsh-actions-view]) {
   display: none !important;
 }
 
@@ -2184,4 +2209,123 @@ html[data-dsh-all-tasks-active]:not([data-dsh-ssh-active]) [class*='centerCol'] 
   .cardAction[data-active]::before {
     animation: none;
   }
+}
+
+/* --- Events & Actions panels -------------------------------------------------- */
+
+/* Panel root: same full-height flex column as the board, with a scrollable
+   card list so a long integrations list never overflows the column. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  gap: 12px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+}
+
+.panelIntro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.panelList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.panelError {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-state-danger, #d64545);
+}
+
+.panelEmpty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* One event source / action card. */
+.integrationCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-subtle, transparent);
+}
+
+.integrationHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.integrationName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The method/path route chip (events) and the trigger chip (actions). */
+.integrationChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-active, rgba(127, 127, 127, 0.15));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  white-space: nowrap;
+}
+
+.integrationDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.integrationConfig {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border, rgba(127, 127, 127, 0.2));
+  font-size: 13px;
+}
+
+.integrationConfigLabel {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.integrationConfigValue {
+  overflow-wrap: anywhere;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.integrationConfigValue[data-unset] {
+  color: var(--dsw-alias-label-tertiary, rgba(127, 127, 127, 0.6));
+  font-style: italic;
+}
+
+.panelConfigureHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, rgba(127, 127, 127, 0.7));
 }
