@@ -32,6 +32,21 @@ describe('tokenTotalsOf', () => {
   it('reports unavailable when no execution carried usage', () => {
     expect(tokenTotalsOf([task({ executions: [] })]).available).toBe(false)
   })
+
+  it('drops executions settled before `since` and keeps newer and open ones', () => {
+    const tasks = [
+      task({
+        executions: [
+          { id: 'old', sessionId: 's', startedAt: 0, endedAt: 1_000, result: 'succeeded', error: undefined, usage: { inputTokens: 10, outputTokens: 5 } },
+          { id: 'boundary', sessionId: 's', startedAt: 0, endedAt: 2_000, result: 'succeeded', error: undefined, usage: { inputTokens: 20, outputTokens: 10 } },
+          { id: 'new', sessionId: 's', startedAt: 0, endedAt: 5_000, result: 'succeeded', error: undefined, usage: { inputTokens: 30, outputTokens: 15 } },
+          { id: 'open', sessionId: 's', startedAt: 0, endedAt: undefined, result: undefined, error: undefined, usage: { inputTokens: 40, outputTokens: 20 } },
+        ],
+      }),
+    ]
+    // The window boundary is inclusive: the run settled exactly at `since` counts.
+    expect(tokenTotalsOf(tasks, 2_000)).toEqual({ input: 90, output: 45, reasoning: 0, available: true })
+  })
 })
 
 describe('computeDashboard', () => {
@@ -65,5 +80,29 @@ describe('computeDashboard', () => {
     expect(computeDashboard([withUsage], [], { inputPerMillion: 0.27, outputPerMillion: 1.10 })?.cost).toBeCloseTo(0.27 + 0.55)
     expect(computeDashboard([withUsage], [])?.cost).toBeUndefined()
     expect(computeDashboard([task()], [], { inputPerMillion: 0.27, outputPerMillion: 1.10 })?.cost).toBeUndefined()
+  })
+
+  it('narrows token totals and the cost estimate to the retention window', () => {
+    const now = 10_000_000
+    const hour = 3_600_000
+    const withUsage = task({
+      executions: [
+        { id: 'old', sessionId: 's', startedAt: 0, endedAt: now - 48 * hour, result: 'succeeded', error: undefined, usage: { inputTokens: 1_000_000, outputTokens: 500_000 } },
+        { id: 'new', sessionId: 's', startedAt: 0, endedAt: now - 2 * hour, result: 'succeeded', error: undefined, usage: { inputTokens: 2_000_000, outputTokens: 1_000_000 } },
+      ],
+    })
+    const metrics = computeDashboard([withUsage], [], { inputPerMillion: 1, outputPerMillion: 1 }, 24, now)
+    expect(metrics.tokens).toEqual({ input: 2_000_000, output: 1_000_000, reasoning: 0, available: true })
+    expect(metrics.cost).toBeCloseTo(3)
+  })
+
+  it('treats absent or zero retention hours as all time', () => {
+    const withUsage = task({
+      executions: [{ id: 'e', sessionId: 's', startedAt: 0, endedAt: 1, result: 'succeeded', error: undefined, usage: { inputTokens: 100, outputTokens: 50 } }],
+    })
+    expect(computeDashboard([withUsage], [], undefined, undefined, 10_000).tokens)
+      .toEqual({ input: 100, output: 50, reasoning: 0, available: true })
+    expect(computeDashboard([withUsage], [], undefined, 0, 10_000).tokens)
+      .toEqual({ input: 100, output: 50, reasoning: 0, available: true })
   })
 })

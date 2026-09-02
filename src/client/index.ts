@@ -232,6 +232,15 @@ export function apply(ctx: ClientContext): void {
     }
     pushPricing()
     disposers.push(settingsScope.subscribe(pushPricing))
+    // Dashboard usage window in hours (0 = all time): narrows the token totals
+    // and the cost estimate to executions settled within the last N hours.
+    const pushUsageRetention = (): void => {
+      const settings = settingsScope.getSnapshot()
+      const hours = settings.status === 'ready' ? settings.value?.usageRetentionHours : undefined
+      controller.setUsageRetentionHours(typeof hours === 'number' && hours > 0 ? hours : undefined)
+    }
+    pushUsageRetention()
+    disposers.push(settingsScope.subscribe(pushUsageRetention))
     // Auto-title generation for the new-task dialog (default on): a blank
     // title is generated from the run prompt through a backend session; the
     // prompt-line fallback still applies at submit when the setting is off.

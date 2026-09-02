@@ -76,6 +76,12 @@ export interface Config {
   costPerMillionInputTokens?: number
   /** Cost estimate: USD per 1M output tokens (0 = not configured). */
   costPerMillionOutputTokens?: number
+  /**
+   * Dashboard usage window in hours (0 = all time): the token totals and the
+   * cost estimate only count executions settled within the last N hours. A
+   * display window — the ledger keeps every execution, nothing is pruned.
+   */
+  usageRetentionHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
@@ -151,6 +157,7 @@ export const Config: z<Config> = z.object({
   endpointMaxWaitHours: z.number().min(0).default(24),
   costPerMillionInputTokens: z.number().min(0).default(0),
   costPerMillionOutputTokens: z.number().min(0).default(0),
+  usageRetentionHours: z.number().min(0).default(0),
   defaultEndpoints: z.array(z.string()).default([]),
   endpoints: z.array(endpointSettings).default([]),
   events: z.object({ http: httpEventSettings, github: githubEventSettings, slack: slackEventSettings }).default({ http: { tokenEnv: '', workspaceId: '', autoRun: false }, github: { secretEnv: '', repoWorkspaces: {}, defaultWorkspaceId: '', autoRun: false }, slack: { signingSecretEnv: '', workspaceId: '', autoRun: false } }),
