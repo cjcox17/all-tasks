@@ -8,7 +8,7 @@
  * and tasks from the board controller (Host-authoritative) and the event/action
  * node palette from the integrations endpoint.
  */
-import { useCallback, useEffect, useSyncExternalStore, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { BoardController } from '../../core/controller.ts'
 import type { PanelController } from '../../core/panel-controller.ts'
 import type { TaskRecord } from '../../core/tasks.ts'
@@ -46,13 +46,13 @@ export interface WorkflowsPanelProps {
 }
 
 export function WorkflowsPanel({ panel, controller }: WorkflowsPanelProps): ReactElement {
-  const snapshot = useSyncExternalStore(
-    useCallback(listener => controller.subscribe(listener), [controller]),
-    () => controller.getSnapshot(),
-  )
-  const open = useSyncExternalStore(
-    useCallback(listener => panel.subscribe(listener), [panel]),
-    () => panel.getSnapshot().open,
+  // The board controller's getSnapshot() returns a fresh object each call, so
+  // it cannot feed useSyncExternalStore (which requires a cached value). Use
+  // the same useState + subscribe pattern the board view uses.
+  const [snapshot, setSnapshot] = useState(controller.getSnapshot())
+  useEffect(
+    () => controller.subscribe(() => { setSnapshot(controller.getSnapshot()) }),
+    [controller],
   )
 
   const [integrations, setIntegrations] = useState<AllTasksIntegrationsSnapshot | undefined>()

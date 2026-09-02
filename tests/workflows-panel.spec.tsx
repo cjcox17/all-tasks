@@ -47,10 +47,12 @@ async function flush(): Promise<void> {
 }
 
 function fakeController(snapshot: { workflows: unknown[]; tasks: unknown[] }) {
-  const stable = snapshot
+  // The real BoardController returns a fresh object from getSnapshot() each
+  // call, so mirror that here — this regression guards against the panel using
+  // useSyncExternalStore (which requires a cached snapshot and crashes).
   return {
     subscribe: vi.fn(() => () => {}),
-    getSnapshot: () => stable,
+    getSnapshot: () => ({ workflows: [...snapshot.workflows], tasks: [...snapshot.tasks] }),
     createWorkflow: vi.fn(async () => undefined),
     updateWorkflow: vi.fn(async () => true),
     deleteWorkflow: vi.fn(async () => true),
