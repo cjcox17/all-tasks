@@ -783,7 +783,13 @@ export class HostTaskLedger {
     })
   }
 
-  /** Clear the auto-advance hold on every member of one group (a new sequence cycle). */
+  /**
+   * Clear the auto-advance hold on every member of one group. Called whenever
+   * the user explicitly starts a (new) sequence cycle — Start group
+   * (run-group), a group-cron fire (rollGroupSchedule), and now Resume /
+   * Continue (a stopped group resumed or a paused group continued through the
+   * banner's ▶), whose settle-triggered chain must cover held members too.
+   */
   private clearGroupAutoStartHolds(groupId: string): void {
     this.document.tasks = this.document.tasks.map(task =>
       task.groupId === groupId && task.deferAutoStart === true
@@ -1276,6 +1282,11 @@ export class HostTaskLedger {
           const { paused: _paused, ...rest } = candidate
           return { ...rest, updatedAt: now }
         })
+        // Continue is the user's explicit "keep this group going" press (the
+        // banner's ▶): release every auto-advance hold so the resumed sequence
+        // covers members that joined while it ran — a group paused and then
+        // continued must not need a second press to finish its work.
+        this.clearGroupAutoStartHolds(action.groupId)
         break
       }
       case 'pause-workspace': {
@@ -1395,10 +1406,19 @@ export class HostTaskLedger {
         // the status rewrite so no member's updatedAt (its "edited" stamp)
         // gets bumped for a no-op move.
         if (members.length > 0 && members.every(member => member.status === action.status)) break
-        this.document.tasks = this.document.tasks.map(task =>
-          task.groupId === action.groupId && task.archivedAt === undefined
-            ? withStatus(task, action.status, now)
-            : task)
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId !== action.groupId || task.archivedAt !== undefined) return task
+          // A whole-group manual move is a reset, never an auto-start: every
+          // moved member is held from the auto-advance chain (deferAutoStart)
+          // so the group sits idle after the move. Only an explicit start —
+          // the banner's Start group (run-group), a group-cron fire, Resume /
+          // Continue, or a member's own Run button — clears the hold and
+          // launches the new cycle. Without the hold, the chain's "a member
+          // settled, advance" trigger would see the settled history of a group
+          // dragged back from Done/Failed and auto-start it the moment the
+          // move commits.
+          return withStatus({ ...task, deferAutoStart: true }, action.status, now)
+        })
         break
       }
       case 'create-group': {
@@ -1409,9 +1429,18 @@ export class HostTaskLedger {
         break
       }
       case 'update-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
         const result = applyUpdateGroup(this.document.groups, action.groupId, action.patch as GroupUpdatePatch, now)
         if (!result.applied) throw new Error('group not found or invalid patch')
         this.document.groups = [...result.groups]
+        // Resuming a stopped group (the banner's ▶ on a stopped group) is the
+        // user's explicit "run it again" press: release every auto-advance
+        // hold in the same commit, so the settle-triggered chain that fires on
+        // this mutation starts the whole group — held members included —
+        // instead of skipping them and forcing a second press.
+        if (group?.stopped === true && (action.patch as GroupUpdatePatch).stopped === false) {
+          this.clearGroupAutoStartHolds(action.groupId)
+        }
         break
       }
       case 'delete-group': {
