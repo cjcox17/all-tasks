@@ -152,6 +152,36 @@ describe('AllTasks group banner status badges', () => {
     expect((banner.querySelector('button[aria-label="Stop group (cancel all running members)"]') as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('keeps a stopped group with settled members draggable (move back for a re-run)', async () => {
+    const controller = fakeController({
+      groups: [group({ stopped: true })],
+      tasks: [
+        task({ id: 't1', groupId: 'g1', status: 'failed' }),
+        task({ id: 't2', groupId: 'g1', status: 'failed' }),
+      ],
+    })
+    const container = await mountKanban(controller)
+    const banner = bannerOf(container, 'g1')
+    // The stopped flag only blocks launches until Resume; a settled group can
+    // still be dragged back to a manual column.
+    expect(banner.getAttribute('draggable')).toBe('true')
+    expect(banner.querySelector('[data-kind="running"]')).toBeNull()
+    expect(banner.querySelector('[data-kind="pending"]')).toBeNull()
+  })
+
+  it('keeps a paused group with settled members draggable (move back for a re-run)', async () => {
+    const controller = fakeController({
+      groups: [group({ paused: true })],
+      tasks: [
+        task({ id: 't1', groupId: 'g1', status: 'failed' }),
+        task({ id: 't2', groupId: 'g1', status: 'failed' }),
+      ],
+    })
+    const container = await mountKanban(controller)
+    const banner = bannerOf(container, 'g1')
+    expect(banner.getAttribute('draggable')).toBe('true')
+  })
+
   it('shows a Running pill with a spinner while a member executes', async () => {
     const controller = fakeController({
       groups: [group()],

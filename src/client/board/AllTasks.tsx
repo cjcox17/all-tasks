@@ -170,10 +170,13 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
   const stopped = group.stopped === true
   // Any open execution — running or queued — holds the group's attention: the
   // banner is not draggable and the stop button is live (a queued member is
-  // stopped just like a launched one).
+  // stopped just like a launched one). A settled group moves freely even when
+  // it is stopped or paused: those flags only block launches until resumed,
+  // they never block a whole-group move back to a manual column (the natural
+  // way to send a failed group back for a re-run).
   const paused = group.paused === true
   const hasOpen = status.running > 0 || status.pending > 0
-  const draggable = !hasOpen && !stopped && !paused
+  const draggable = !hasOpen
   // A drag gesture may start on one of the header's action buttons (▶ ⏹ ⚙);
   // once a real drag begins, the browser must not also fire that button's
   // click when the pointer is released. Record the release instant at
@@ -209,6 +212,9 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
       } : undefined}
       title={draggable ? t('group.dragHint') : undefined}
     >
+      {draggable && (
+        <span className={css.groupGrip} title={t('group.dragHint')} aria-hidden="true">⠿</span>
+      )}
       <span className={css.groupName} title={group.name}>{group.name}</span>
       <span className={css.groupBadge} data-mode={group.mode}>
         {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
@@ -605,9 +611,11 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (raw.startsWith('group:')) {
       if (column !== 'backlog' && column !== 'todo') return
       const groupId = raw.slice('group:'.length)
-      const droppedGroup = snapshot.groups.find(group => group.id === groupId)
-      if (droppedGroup !== undefined && droppedGroup.stopped !== true) {
+      if (snapshot.groups.some(group => group.id === groupId)) {
         const members = snapshot.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+        // A settled group — even one marked stopped or paused — moves freely:
+        // those flags only block launches until resumed. Only an open member
+        // execution blocks a move (and the Host ledger enforces that too).
         if (members.every(member => member.status !== 'running')) {
           // Dropping the group back onto its own column is a no-op: a status
           // rewrite would bump every member's updatedAt and make the cards
