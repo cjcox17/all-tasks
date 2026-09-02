@@ -167,6 +167,11 @@ export interface ControllerSnapshot {
   /** Per-token pricing for the dashboard cost estimate (absent = not configured). */
   pricing?: CostPricing
   /**
+   * Dashboard usage window in hours (absent/0 = all time): narrows the token
+   * totals and the cost estimate to executions settled within the window.
+   */
+  usageRetentionHours?: number
+  /**
    * Whether the new-task dialog auto-generates a title from the run prompt
    * (the `autoTitle` setting pushed from the client wiring; absent on legacy
    * snapshots means enabled).
@@ -222,6 +227,7 @@ export class BoardController {
   private readonly pendingTaskIds = new Set<string>()
   private readonly taskQueues = new Map<string, Promise<void>>()
   private pricing: CostPricing | undefined
+  private usageRetentionHours: number | undefined
   private autoTitle = true
   private transportError: string | undefined
   private hostState: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
@@ -275,6 +281,7 @@ export class BoardController {
       executionOptions: this.executionOptions,
       pendingTaskIds: [...this.pendingTaskIds],
       ...(this.pricing === undefined ? {} : { pricing: this.pricing }),
+      ...(this.usageRetentionHours === undefined ? {} : { usageRetentionHours: this.usageRetentionHours }),
       autoTitle: this.autoTitle,
       ...(this.transportError === undefined ? {} : { transportError: this.transportError }),
       ...(this.hostState === undefined ? {} : { host: this.hostState }),
@@ -441,6 +448,16 @@ export class BoardController {
   /** Set the per-token pricing the dashboard's cost estimate uses (from settings). */
   setPricing(pricing: CostPricing | undefined): void {
     this.pricing = pricing
+    this.notify()
+  }
+
+  /**
+   * Set the dashboard usage window in hours (undefined/0 = all time), pushed
+   * from the `usageRetentionHours` setting. The dashboard's token totals and
+   * cost estimate then only count executions settled within the window.
+   */
+  setUsageRetentionHours(hours: number | undefined): void {
+    this.usageRetentionHours = hours
     this.notify()
   }
 
