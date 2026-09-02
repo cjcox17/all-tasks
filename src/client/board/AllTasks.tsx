@@ -702,10 +702,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         <h2 className={css.boardTitle} title={workspaceTitle}>{workspaceTitle}</h2>
         {snapshot.host !== undefined && (
           <span className={css.detailMeta}>
-            {t('board.hostMeta', {
-              revision: String(snapshot.host.revision),
-              timeZone: snapshot.host.scheduler.timeZone,
-            })}
+            {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
           </span>
         )}
         <input
@@ -1054,10 +1051,7 @@ export function AllTasks({ controller }: { controller: BoardController }) {
           <h2 className={css.boardTitle}>{t('board.title')}</h2>
           {snapshot.host !== undefined && (
             <span className={css.detailMeta}>
-              {t('board.hostMeta', {
-                revision: String(snapshot.host.revision),
-                timeZone: snapshot.host.scheduler.timeZone,
-              })}
+              {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
             </span>
           )}
           <button
