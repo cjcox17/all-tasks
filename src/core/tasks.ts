@@ -246,6 +246,25 @@ export interface TaskRecord {
    * explicit `true` is persisted, mirroring `approved`).
    */
   deferAutoStart?: boolean
+  /**
+   * Origin of the task: `user` means it was created through the board's
+   * new-task dialog; `api` means it was minted programmatically through the
+   * protocol `create` action without a more specific origin (a script or an
+   * external tool); `event` means an inbound event source (the webhook)
+   * created it; `agent` means a DSH agent session created it through the
+   * task tools. Absent on legacy records behaves as `user`. The origin is
+   * display-only on the board (a small badge) — it never changes the task's
+   * approval state and never gates execution.
+   */
+  source?: TaskSource
+}
+
+/** Who created a task (see `TaskRecord.source`); absent behaves as `user`. */
+export type TaskSource = 'user' | 'api' | 'event' | 'agent'
+
+/** Whether an unknown value is a known task origin. */
+export function isTaskSource(value: unknown): value is TaskSource {
+  return value === 'user' || value === 'api' || value === 'event' || value === 'agent'
 }
 
 /**
@@ -366,10 +385,18 @@ export interface NewTaskInput {
   /**
    * Approval state at creation: `false` mints the task unapproved (it cannot
    * run until approved). Absent or `true` (the manual/new-task default) mints
-   * it approved. Programmatic creators (the protocol `create` action) may set
-   * this; the board's manual dialog never does.
+   * it approved. Programmatic creators (the protocol `create` action, the
+   * task tools) may set this; the board's manual dialog never does.
    */
   approved?: boolean
+  /**
+   * Origin of the task being created. The board's new-task dialog always
+   * passes `user`; the event webhook passes `event`; the task tools pass
+   * `agent`; any other protocol `create` caller may omit it, in which case
+   * the wire sanitizer defaults it to `api` (programmatic). The origin is
+   * informational only and never changes the task's approval state.
+   */
+  source?: TaskSource
 }
 
 /** The five kanban columns, in display order. */
@@ -426,6 +453,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     groupId: normalizeTargetId(input.groupId),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
     ...(input.approved === false ? { approved: false } : {}),
+    ...(input.source === undefined ? {} : { source: input.source }),
   }
 }
 

@@ -868,6 +868,23 @@ describe('AllTasks approval', () => {
     expect(card!.textContent).toContain(t('card.approved'))
   })
 
+  it('shows an origin badge on non-user tasks and none on dialog-created ones', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Agent-made', status: 'todo', source: 'agent' }),
+        task({ id: 't2', title: 'Webhook-made', status: 'todo', source: 'event' }),
+        task({ id: 't3', title: 'User-made', status: 'todo' }),
+      ],
+    })
+    const byTitle = (title: string) => Array.from(container.querySelectorAll('button[data-dsh-part="card"]'))
+      .find(candidate => candidate.textContent?.includes(title))
+    expect(byTitle('Agent-made')!.textContent).toContain(t('card.source.agent'))
+    expect(byTitle('Webhook-made')!.textContent).toContain(t('card.source.event'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.agent'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.event'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.api'))
+  })
+
   it('filters the board to unapproved tasks only', async () => {
     const { container } = await renderBoard({
       tasks: [

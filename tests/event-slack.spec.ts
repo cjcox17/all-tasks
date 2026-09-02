@@ -35,5 +35,6 @@ describe('event-slack', () => {
     expect(mapping.input.workspaceId).toBe('ws-1')
     expect(mapping.input.prompt).toBe('fix the build')
     expect(mapping.input.title).toContain('C1')
+    expect(mapping.input.source).toBe('event')
   })
 })
