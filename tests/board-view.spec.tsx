@@ -377,8 +377,10 @@ describe('AllTasks group sections', () => {
     const manage = container.querySelector(`button[aria-label="${t('group.manage')}"]`) as HTMLButtonElement
     expect(manage).not.toBeNull()
     await act(async () => { manage.click() })
+    // The editor opens to the group's settings — including the member-aware
+    // final-step picker — without mirroring the board's member list/order.
     expect(container.textContent).toContain(t('group.edit'))
-    expect(container.textContent).toContain(t('group.members'))
+    expect(container.textContent).toContain(t('group.finalStep'))
   })
 
   it('shows a new-group button in the header', async () => {
