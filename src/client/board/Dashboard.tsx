@@ -3,7 +3,9 @@
  * the pure {@link computeDashboard} metrics as compact stat cards — tasks,
  * running/queued, completed/failed with success rate, scheduled/groups, token
  * totals, and an estimated cost. Token and cost cards show "—" until the
- * adapter reports usage (and pricing is configured, for cost).
+ * adapter reports usage (and pricing is configured, for cost). When a usage
+ * retention window is active, `usageWindowLabel` (e.g. "last 24 h") prefixes
+ * the token and cost card subtitles so the narrowed totals read clearly.
  */
 import type { DashboardMetrics } from '../../core/dashboard.ts'
 import { t } from '../locales.ts'
@@ -22,12 +24,13 @@ function Card({ label, value, sub, tone }: { label: string; value: string; sub: 
   )
 }
 
-export function Dashboard({ metrics }: { metrics: DashboardMetrics }) {
+export function Dashboard({ metrics, usageWindowLabel }: { metrics: DashboardMetrics; usageWindowLabel?: string }) {
   const rate = metrics.successRate === undefined ? '—' : String(Math.round(metrics.successRate * 100))
   const tokens = metrics.tokens.available
     ? `${compactFormat.format(metrics.tokens.input)} / ${compactFormat.format(metrics.tokens.output)}`
     : '—'
   const cost = metrics.cost === undefined ? '—' : `$${metrics.cost.toFixed(2)}`
+  const windowed = (sub: string): string => usageWindowLabel === undefined ? sub : `${usageWindowLabel} · ${sub}`
   return (
     <div className={css.dashboard} data-dsh-part="dashboard">
       <Card
@@ -63,13 +66,13 @@ export function Dashboard({ metrics }: { metrics: DashboardMetrics }) {
       <Card
         label={t('dash.tokens')}
         value={tokens}
-        sub={t('dash.tokensSub', { reasoning: compactFormat.format(metrics.tokens.reasoning) })}
+        sub={windowed(t('dash.tokensSub', { reasoning: compactFormat.format(metrics.tokens.reasoning) }))}
         tone="tokens"
       />
       <Card
         label={t('dash.cost')}
         value={cost}
-        sub={t('dash.costSub')}
+        sub={windowed(t('dash.costSub'))}
         tone="cost"
       />
     </div>

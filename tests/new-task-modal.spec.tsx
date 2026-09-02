@@ -460,15 +460,19 @@ describe('NewTaskModal auto-generated title', () => {
     element.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
-  /** Flush the mocked-fetch microtask chain after the debounce fires. */
+  /** Move focus out of the run prompt field — the auto-title trigger. */
+  function blurPrompt(prompt: HTMLTextAreaElement): void {
+    prompt.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  }
+
+  /** Flush the mocked-fetch microtask chain after the blur-triggered generation fires. */
   async function flush(): Promise<void> {
     for (let i = 0; i < 3; i += 1) {
       await act(async () => { await Promise.resolve() })
     }
   }
 
-  it('shows a generating hint, fills a generated title, and submits it', async () => {
-    vi.useFakeTimers()
+  it('waits for the prompt-field blur before generating, then fills and submits the title', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ title: 'Fix the login bug' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -481,9 +485,13 @@ describe('NewTaskModal auto-generated title', () => {
     const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
     await act(async () => { setTextareaValue(prompt, 'Fix the login bug, users are locked out') })
     expect(titleInput.value).toBe('')
-    expect(container.textContent).toContain(t('new.titleGenerating'))
+    // Typing alone never asks the Host: only the leave-the-field hint shows.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(t('new.titleBlurHint'))
 
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    // Leaving the run prompt field starts the generation.
+    act(() => { blurPrompt(prompt) })
+    expect(container.textContent).toContain(t('new.titleGenerating'))
     await flush()
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(titleInput.value).toBe('Fix the login bug')
@@ -497,7 +505,6 @@ describe('NewTaskModal auto-generated title', () => {
   })
 
   it('never overwrites a manual title with a late generation', async () => {
-    vi.useFakeTimers()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ title: 'Generated' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -511,14 +518,28 @@ describe('NewTaskModal auto-generated title', () => {
     const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
     setTextareaValue(prompt, 'Fix the login bug')
 
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    // Even leaving the prompt field must not ask the Host: a typed title wins.
+    await act(async () => { blurPrompt(prompt) })
     await flush()
     expect(fetchMock).not.toHaveBeenCalled()
     expect(titleInput.value).toBe('My manual title')
   })
 
+  it('does not generate when the prompt field is left empty', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ title: 'Unwanted' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { container } = await renderModal(async input => createTask(input, Date.now(), 't-new'))
+
+    const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
+    await act(async () => { blurPrompt(prompt) })
+    await flush()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('falls back to the prompt first line when generation fails', async () => {
-    vi.useFakeTimers()
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('host offline') }))
     const createTaskConfirmed = vi.fn(async (input: NewTaskInput) => createTask(input, Date.now(), 't-new'))
     const { container } = await renderModal(createTaskConfirmed)
@@ -526,7 +547,7 @@ describe('NewTaskModal auto-generated title', () => {
     const titleInput = container.querySelector('input') as HTMLInputElement
     const prompt = container.querySelectorAll('textarea')[1] as HTMLTextAreaElement
     setTextareaValue(prompt, '- Fix the login bug\n\nMore details')
-    await act(async () => { vi.advanceTimersByTime(10_000) })
+    await act(async () => { blurPrompt(prompt) })
     await flush()
     expect(titleInput.value).toBe('Fix the login bug')
   })

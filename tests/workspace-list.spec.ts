@@ -1,7 +1,8 @@
 /**
  * Workspace overview list: the pure per-workspace count projection, the
- * list-entry builder (runtime workspaces + vanished-workspace fallback), and
- * the expandable per-workspace task directory (groups + ungrouped tasks).
+ * list-entry builder (runtime workspaces only — vanished workspaces are
+ * hidden by the caller's board filter), and the expandable per-workspace
+ * task directory (groups + ungrouped tasks).
  */
 import { describe, expect, it } from 'vitest'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
@@ -60,7 +61,7 @@ describe('countWorkspaceTasks', () => {
 })
 
 describe('workspaceListEntries', () => {
-  it('orders entries by the runtime workspace list and appends vanished pinned workspaces', () => {
+  it('orders entries by the runtime workspace list and never synthesizes vanished workspaces', () => {
     const tasks = [
       task({ workspaceId: 'ws-a' }),
       task({ workspaceId: 'ws-gone' }),
@@ -70,8 +71,9 @@ describe('workspaceListEntries', () => {
       { workspaceId: 'ws-b', title: 'Beta' },
       { workspaceId: 'ws-a', title: 'Alpha' },
     ])
-    expect(entries.map(entry => entry.workspaceId)).toEqual(['ws-b', 'ws-a', 'ws-gone'])
-    expect(entries[2]!.title).toBe('ws-gone')
+    // A workspace pinned by a task but missing from the runtime list (deleted
+    // in the sidebar) gets no row: the caller filters it out via boardTasks.
+    expect(entries.map(entry => entry.workspaceId)).toEqual(['ws-b', 'ws-a'])
   })
 })
 
