@@ -201,6 +201,20 @@ describe('parseLedger', () => {
     const malformed = parseLedger(JSON.stringify([{ ...base, deferAutoStart: 'yes' }]))
     expect(malformed).toEqual([])
   })
+  it('keeps a valid origin source and drops unknown ones', () => {
+    const base = {
+      id: 't1', title: 'a', description: '', prompt: 'a',
+      createdAt: NOW, updatedAt: NOW, executions: [],
+    }
+    const agent = parseLedger(JSON.stringify([{ ...base, source: 'agent' }]))
+    expect(agent[0].source).toBe('agent')
+    const user = parseLedger(JSON.stringify([{ ...base, source: 'user' }]))
+    expect(user[0].source).toBe('user')
+    const legacy = parseLedger(JSON.stringify([{ ...base }]))
+    expect(legacy[0].source).toBeUndefined()
+    const malformed = parseLedger(JSON.stringify([{ ...base, source: 'bot' }]))
+    expect(malformed).toEqual([])
+  })
   it('round-trips execution targets and repairs broken ones', () => {
     const pinned = createTask(
       { title: 'pinned', description: '', prompt: '', workspaceId: 'ws-1', mode: 'anchored', permission: 'read-only' },

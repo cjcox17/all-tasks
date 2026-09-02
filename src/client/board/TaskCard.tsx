@@ -115,9 +115,13 @@ function TaskCardInner({ task, pending, timeZone, onClick, onDragStart, hideSpin
               {t('card.approved')}
             </span>
           ))}
-        {!archived && task.deferAutoStart === true && (
-          <span className={css.cardHeld} title={t('card.heldHint')}>
-            {t('card.held')}
+        {!archived && task.source !== undefined && task.source !== 'user' && (
+          <span
+            className={css.cardSource}
+            data-source={task.source}
+            title={task.source === 'agent' ? t('card.source.agentHint') : task.source === 'event' ? t('card.source.eventHint') : t('card.source.apiHint')}
+          >
+            {task.source === 'agent' ? t('card.source.agent') : task.source === 'event' ? t('card.source.event') : t('card.source.api')}
           </span>
         )}
         {!archived && finalStep === true && (

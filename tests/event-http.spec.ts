@@ -15,6 +15,7 @@ describe('event-http', () => {
     expect(mapping.input.title).toBe('Build failed')
     expect(mapping.input.prompt).toContain('"repo": "wyx"')
     expect(mapping.input.prompt).toContain('"log": "boom"')
+    expect(mapping.input.source).toBe('event')
   })
 
   it('derives a dedupe key from the header and defaults autoRun to false', async () => {

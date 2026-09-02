@@ -511,6 +511,44 @@ describe('AllTasks group sections', () => {
     })
     expect(moveCalls).toEqual([{ id: 'g1', status: 'backlog' }])
   })
+
+  it('refuses dropping a group banner onto the In Progress (running) column', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'todo', groupId: 'g1' })],
+      groups: [GROUP],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const runningColumn = container.querySelector('section[data-status="running"]')
+    const runningCards = runningColumn!.querySelector('[data-dsh-part="cards"]') as HTMLElement
+    const dataTransfer = {
+      data: { 'text/plain': 'group:g1' } as Record<string, string>,
+      setData(type: string, val: string) { this.data[type] = val },
+      getData(type: string) { return this.data[type] ?? '' },
+      dropEffect: 'none',
+    }
+    await act(async () => {
+      runningCards!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
+      )
+    })
+    // A group can only ever be moved to a manual column — dropping it on the
+    // running column must never start it (or move it) by accident.
+    expect(moveCalls).toEqual([])
+  })
+
+  it('does not surface the internal auto-advance hold as a badge on member cards', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member One', status: 'todo', groupId: 'g1', deferAutoStart: true })],
+      groups: [GROUP],
+    })
+    const section = container.querySelector('[data-group="g1"]') as HTMLElement
+    expect(section).not.toBeNull()
+    // The card renders normally; the hold is internal bookkeeping only.
+    expect(section.textContent).toContain('Member One')
+    expect(section.textContent).not.toContain('Held')
+  })
 })
 
 describe('AllTasks start buttons', () => {
@@ -745,15 +783,28 @@ describe('AllTasks workspace landing list', () => {
     expect(unassignedGroup!.textContent).toContain('Member U')
   })
 
-  it('keeps workspaces pinned by tasks but missing from the runtime list visible in the grid', async () => {
+  it('hides workspaces deleted from the runtime list together with their tasks once the baseline is ready', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't-g', title: 'Ghost pinned', status: 'todo', workspaceId: 'ws-gone' })],
+      executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [], workspacesReady: true },
+    })
+    // No row for the vanished workspace (rows always come from the runtime list).
+    expect(listRows(container).map(row => row.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
+    // The pinned task is hidden from the All overview as well.
+    await openAllTasks(container)
+    expect(hasCard(container, 'Ghost pinned')).toBe(false)
+  })
+
+  it('keeps vanished-pinned tasks visible until the workspace baseline is ready', async () => {
     const { container } = await renderBoard({
       tasks: [task({ id: 't-g', title: 'Ghost pinned', status: 'todo', workspaceId: 'ws-gone' })],
       executionOptions: { workspaces: WORKSPACES, presets: [], models: [], endpoints: [] },
     })
-    const ghost = listRow(container, 'ws-gone')
-    expect(ghost.textContent).toContain('ws-gone')
-    expect(cellOf(ghost, 'todo')).toBe('1')
-    await openWorkspace(container, 'ws-gone')
+    // Rows are never synthesized for missing workspaces…
+    expect(listRows(container).map(row => row.getAttribute('data-workspace'))).toEqual(['', 'ws-a', 'ws-b'])
+    // …but without a loaded baseline the runtime list is not authoritative, so
+    // the pinned task is not treated as deleted and stays in the All overview.
+    await openAllTasks(container)
     expect(hasCard(container, 'Ghost pinned')).toBe(true)
   })
 
@@ -855,6 +906,23 @@ describe('AllTasks approval', () => {
     expect(card!.textContent).toContain(t('card.approved'))
   })
 
+  it('shows an origin badge on non-user tasks and none on dialog-created ones', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Agent-made', status: 'todo', source: 'agent' }),
+        task({ id: 't2', title: 'Webhook-made', status: 'todo', source: 'event' }),
+        task({ id: 't3', title: 'User-made', status: 'todo' }),
+      ],
+    })
+    const byTitle = (title: string) => Array.from(container.querySelectorAll('button[data-dsh-part="card"]'))
+      .find(candidate => candidate.textContent?.includes(title))
+    expect(byTitle('Agent-made')!.textContent).toContain(t('card.source.agent'))
+    expect(byTitle('Webhook-made')!.textContent).toContain(t('card.source.event'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.agent'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.event'))
+    expect(byTitle('User-made')!.textContent).not.toContain(t('card.source.api'))
+  })
+
   it('filters the board to unapproved tasks only', async () => {
     const { container } = await renderBoard({
       tasks: [
@@ -902,6 +970,27 @@ describe('AllTasks drag reorder, group join/leave (#drag)', () => {
     })
   }
 
+  /** A DataTransfer stub for dragstart / dragover / drop dispatch. */
+  function makeDataTransfer(payload?: string): {
+    data: Record<string, string>
+    setData: (type: string, val: string) => void
+    getData: (type: string) => string
+    setDragImage: () => void
+    dropEffect: string
+    effectAllowed: string
+  } {
+    const data: Record<string, string> = {}
+    if (payload !== undefined) data['text/plain'] = payload
+    return {
+      data,
+      setData(type: string, val: string) { data[type] = val },
+      getData(type: string) { return data[type] ?? '' },
+      setDragImage() {},
+      dropEffect: 'none',
+      effectAllowed: 'uninitialized',
+    }
+  }
+
   /** Force a card's vertical midpoint so the insertion math is deterministic. */
   function stubCardRect(container: HTMLElement, taskId: string, top: number, height: number): void {
     const card = container.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement
@@ -923,6 +1012,64 @@ describe('AllTasks drag reorder, group join/leave (#drag)', () => {
     expect(section).not.toBeNull()
     dropOn(section, 'task:t-joiner')
     expect(updates).toEqual([{ id: 't-joiner', patch: { groupId: 'g1' } }])
+  })
+
+  it('moves a settled member back to its own group when dropped onto its section in another column', async () => {
+    // A group whose sequence ran can hold members in several columns at once
+    // (a settled member next to one still waiting): the group's section then
+    // renders in each of those columns. Dragging the failed member onto the
+    // group's todo section must move it back to todo inside the group — the
+    // same result as the two-step workaround (ungroup on the column first,
+    // then drag it back into the group), in a single drop.
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const moves: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-failed', title: 'Failed member', status: 'failed', groupId: 'g1' }),
+        task({ id: 't-waiting', title: 'Waiting member', status: 'todo', groupId: 'g1' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t-failed', 't-waiting'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+      moveTask: (id: string, status: string) => { moves.push({ id, status }) },
+    })
+    const failedSection = container.querySelector('section[data-status="failed"] [data-group="g1"]') as HTMLElement
+    const todoSection = container.querySelector('section[data-status="todo"] [data-group="g1"]') as HTMLElement
+    expect(failedSection).not.toBeNull()
+    expect(todoSection).not.toBeNull()
+    const waitingCard = todoSection.querySelector('button[data-task-id="t-waiting"]') as HTMLElement
+    expect(waitingCard).not.toBeNull()
+    dropOn(waitingCard, 'task:t-failed', 10)
+    // Membership is kept (no join/leave): only the status moves to the column.
+    expect(updates).toEqual([])
+    expect(moves).toEqual([{ id: 't-failed', status: 'todo' }])
+  })
+
+  it('drops a task from another column directly onto a group and moves it into that column', async () => {
+    const updates: Array<{ id: string; patch: { groupId: string | null } }> = []
+    const moves: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-failed', title: 'Failed member', status: 'failed', groupId: 'g-old' }),
+        task({ id: 't-other', title: 'Other failed', status: 'failed', groupId: 'g-old' }),
+      ],
+      groups: [
+        { id: 'g-old', name: 'Old', mode: 'sequential', order: ['t-failed', 't-other'], createdAt: 0, updatedAt: 0, offPeakOnly: false },
+        // An empty group renders in the todo column, so it is a valid drop
+        // target there even though the dragged task sits in the failed column.
+        { id: 'g-new', name: 'New', mode: 'sequential', order: [], createdAt: 0, updatedAt: 0, offPeakOnly: false },
+      ],
+    }, {
+      updateTask: async (id: string, patch: { groupId: string | null }) => { updates.push({ id, patch }); return true },
+      moveTask: (id: string, status: string) => { moves.push({ id, status }) },
+    })
+    const section = container.querySelector('[data-group="g-new"]') as HTMLElement
+    expect(section).not.toBeNull()
+    dropOn(section, 'task:t-failed')
+    // Joining the todo group must also move the card out of the failed column,
+    // exactly like dropping on the column background first would.
+    expect(updates).toEqual([{ id: 't-failed', patch: { groupId: 'g-new' } }])
+    expect(moves).toEqual([{ id: 't-failed', status: 'todo' }])
   })
 
   it('drops a group member onto the column background and ungroups it', async () => {
@@ -994,6 +1141,76 @@ describe('AllTasks drag reorder, group join/leave (#drag)', () => {
     // rewrite every member (which would bump their updatedAt stamps).
     dropOn(todoCards, 'group:g1')
     expect(moveCalls).toEqual([])
+  })
+
+  it('moves a whole failed group back to To Do through the full drag sequence', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't1', title: 'Member A', status: 'failed', groupId: 'g1' }),
+        task({ id: 't2', title: 'Member B', status: 'failed', groupId: 'g1' }),
+      ],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1', 't2'], createdAt: 0, updatedAt: 0, offPeakOnly: false }],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const banner = container.querySelector('[data-group="g1"] [data-dsh-part="group"]') as HTMLElement
+    expect(banner).not.toBeNull()
+    expect(banner.getAttribute('draggable')).toBe('true')
+    // The full browser sequence — dragstart on the banner (starts the group
+    // drag), dragover on the To Do column's cards (allows the drop), then the
+    // drop itself — moves the failed group back to To Do for a re-run.
+    const dataTransfer = makeDataTransfer('group:g1')
+    await act(async () => {
+      banner.dispatchEvent(Object.assign(new Event('dragstart', { bubbles: true, cancelable: true }), {
+        dataTransfer, clientX: 50, clientY: 50,
+      }))
+    })
+    const todoCards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    expect(todoCards).not.toBeNull()
+    await act(async () => {
+      todoCards.dispatchEvent(Object.assign(new Event('dragover', { bubbles: true, cancelable: true }), {
+        dataTransfer, clientX: 200, clientY: 100,
+      }))
+    })
+    await act(async () => {
+      todoCards.dispatchEvent(Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+        dataTransfer, clientX: 200, clientY: 100,
+      }))
+    })
+    expect(moveCalls).toEqual([{ id: 'g1', status: 'todo' }])
+  })
+
+  it('drops a stopped group with settled members onto a manual column and moves it', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'failed', groupId: 'g1' })],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1'], createdAt: 0, updatedAt: 0, offPeakOnly: false, stopped: true }],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const banner = container.querySelector('[data-group="g1"] [data-dsh-part="group"]') as HTMLElement
+    // A settled stopped group is draggable again: the flag only blocks
+    // launches until Resume, it never blocks moving the group back.
+    expect(banner.getAttribute('draggable')).toBe('true')
+    const todoCards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    dropOn(todoCards, 'group:g1')
+    expect(moveCalls).toEqual([{ id: 'g1', status: 'todo' }])
+  })
+
+  it('drops a paused group with settled members onto a manual column and moves it', async () => {
+    const moveCalls: Array<{ id: string; status: string }> = []
+    const { container } = await renderBoard({
+      tasks: [task({ id: 't1', title: 'Member A', status: 'failed', groupId: 'g1' })],
+      groups: [{ id: 'g1', name: 'Nightly', mode: 'sequential', order: ['t1'], createdAt: 0, updatedAt: 0, offPeakOnly: false, paused: true }],
+    }, {
+      moveGroup: (id: string, status: string) => { moveCalls.push({ id, status }); return Promise.resolve(true) },
+    })
+    const banner = container.querySelector('[data-group="g1"] [data-dsh-part="group"]') as HTMLElement
+    expect(banner.getAttribute('draggable')).toBe('true')
+    const todoCards = container.querySelector('section[data-status="todo"] [data-dsh-part="cards"]') as HTMLElement
+    dropOn(todoCards, 'group:g1')
+    expect(moveCalls).toEqual([{ id: 'g1', status: 'todo' }])
   })
 
   it('reorders an unassigned card dropped above a sibling inside the Unassigned section', async () => {

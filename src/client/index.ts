@@ -8,6 +8,7 @@
  * shell fails the whole boot when a plugin apply throws, and an external
  * plugin must not take the GUI down.
  */
+import { createElement } from 'react'
 import type { ClientContext, ISessions, IWorkspaces, SessionId, SettingsScope, SettingsScopeSpec } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
@@ -22,10 +23,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // client entry re-exports the slot contract, loading its SlotMap merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { BoardController } from '../core/controller.ts'
+import { PanelController } from '../core/panel-controller.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
 import { claimAllTasksApply, releaseAllTasksApply } from './apply-guard.ts'
 import { mountBoard } from './board-mount.tsx'
-import { mountSidebarEntry } from './sidebar-entry.ts'
+import { mountPanel } from './panel-mount.tsx'
+import { mountSidebarEntry, mountWorkflowsSidebarEntry } from './sidebar-entry.ts'
+import { WorkflowsPanel } from './workflows/WorkflowsPanel.tsx'
 import { AllTasksSettingsCard, AllTasksSettingsCardController, type AllTasksSettings } from './AllTasksSettingsCard.tsx'
 import { en, zh, type AllTasksKey } from './locales.ts'
 import { HttpAllTasksHostTransport } from './host-api.ts'
@@ -176,6 +180,10 @@ export function apply(ctx: ClientContext): void {
           workspaceId: item.workspaceId,
           title: item.title !== '' ? item.title : item.path,
         })),
+        // Readiness gate for the "hide deleted workspaces" filter: only a
+        // loaded workspace baseline (workspace.list + session.list succeeded)
+        // is authoritative enough to treat a missing id as a deletion.
+        workspacesReady: snapshot.baselinesReady,
       })
     }
     pushWorkspaceOptions()
@@ -223,6 +231,15 @@ export function apply(ctx: ClientContext): void {
     }
     pushEndpointOptions()
     disposers.push(settingsScope.subscribe(pushEndpointOptions))
+    // Dashboard usage window in hours (0 = all time): narrows the token totals
+    // and the cost estimate to executions settled within the last N hours.
+    const pushUsageRetention = (): void => {
+      const settings = settingsScope.getSnapshot()
+      const hours = settings.status === 'ready' ? settings.value?.usageRetentionHours : undefined
+      controller.setUsageRetentionHours(typeof hours === 'number' && hours > 0 ? hours : undefined)
+    }
+    pushUsageRetention()
+    disposers.push(settingsScope.subscribe(pushUsageRetention))
     // Auto-title generation for the new-task dialog (default on): a blank
     // title is generated from the run prompt through a backend session; the
     // prompt-line fallback still applies at submit when the setting is off.
@@ -256,6 +273,17 @@ export function apply(ctx: ClientContext): void {
     try {
       disposers.push(mountSidebarEntry(controller))
       disposers.push(mountBoard(controller))
+      // Workflows panel: one controller + sidebar entry + center-column panel
+      // (the former Events/Actions panels are folded into the workflow DAG).
+      const workflowsController = new PanelController()
+      disposers.push(mountWorkflowsSidebarEntry(workflowsController))
+      disposers.push(mountPanel({
+        name: 'workflows',
+        viewDataAttr: 'dshWorkflowsView',
+        controller: workflowsController,
+        // index.ts is plain TS (no JSX); build the element via createElement.
+        render: () => createElement(WorkflowsPanel, { panel: workflowsController, controller }),
+      }))
     } catch (error) {
       // DOM failures degrade the board, never the GUI.
       console.error('[dsh-all-tasks] mount failed:', error)

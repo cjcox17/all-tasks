@@ -13,6 +13,13 @@ import { clientBundle } from './build/tsdown.client.ts'
 
 export default clientBundle('@cjcox17/all-tasks', ['src/index.ts', 'src/invariant.ts'], {
   libExternal: [
+    // The tools DSL must stay external at runtime: the cordis loader also
+    // roster-loads `@deepseek-ai/dsh-tools` as the `tools` service entry, so a
+    // second copy hoisted into a profile's node_modules would split module
+    // identity (TOOL_RUNTIME_SCHEDULER is a per-module Symbol) and break tool
+    // dispatch in every session. The package is therefore a devDependency
+    // only — never add it back to `dependencies`.
+    '@deepseek-ai/dsh-tools',
     '@deepseek-ai/dsh-client-connection',
     '@deepseek-ai/dsh-client-locale',
     '@deepseek-ai/dsh-client-runtime',

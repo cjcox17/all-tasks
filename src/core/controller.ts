@@ -26,13 +26,22 @@ import {
   type TaskGroupRecord,
 } from './groups.ts'
 import { withStatus, moveTaskBefore, type NewTaskInput, type TaskRecord, type TaskStatus } from './tasks.ts'
-import { applyArchiveTask, applyRestoreTask } from './use-cases/task-archive.ts'
+import { applyArchiveTask, applyArchiveTasks, applyRestoreTask } from './use-cases/task-archive.ts'
 import { applyCreateTask } from './use-cases/task-create.ts'
 import { applyDeleteTask } from './use-cases/task-delete.ts'
 import { applyScheduleNextRun as applyScheduleRollForward, applySetSchedule } from './use-cases/task-schedule.ts'
 import { applyUpdateTask, type TaskUpdatePatch } from './use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './workspace-defaults.ts'
 import { planWorkspaceActions } from './workspace-actions.ts'
+import {
+  applyCreateWorkflow,
+  applyDeleteWorkflow,
+  applyUpdateWorkflow,
+  type WorkflowCreateInput,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './workflows.ts'
+import { HIDE_TASKS_LIMIT } from '../protocol.ts'
 import type { AllTasksAction, AllTasksEventPayload, AllTasksSnapshot } from '../protocol.ts'
 
 export interface AllTasksTransport {
@@ -121,6 +130,13 @@ export interface ExecutionOptionsSnapshot {
   presets: readonly ExecutionPresetOption[]
   models: readonly ExecutionModelOption[]
   endpoints: readonly ExecutionEndpointOption[]
+  /**
+   * True once the runtime workspace baseline has loaded (the client pushes
+   * `baselinesReady`). Until then the `workspaces` list may be empty or stale
+   * (startup / reconnect), so the board must not treat missing workspace ids
+   * as deletions; absent/undefined means "not ready yet".
+   */
+  workspacesReady?: boolean
 }
 
 /**
@@ -148,6 +164,8 @@ export interface ControllerSnapshot {
   tasks: readonly TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: readonly TaskGroupRecord[]
+  /** Workflow DAGs (n8n-style automation graphs; definition only). */
+  workflows?: readonly WorkflowRecord[]
   /**
    * Per-workspace execution defaults for new tasks, keyed by workspace id
    * (Host-authoritative; the legacy seam keeps them in memory).
@@ -166,6 +184,11 @@ export interface ControllerSnapshot {
   /** Picker option sets (workspace list + agent-preset roster). */
   executionOptions: ExecutionOptionsSnapshot
   pendingTaskIds: readonly string[]
+  /**
+   * Dashboard usage window in hours (absent/0 = all time): narrows the token
+   * totals and the cost estimate to executions settled within the window.
+   */
+  usageRetentionHours?: number
   /**
    * Whether the new-task dialog auto-generates a title from the run prompt
    * (the `autoTitle` setting pushed from the client wiring; absent on legacy
@@ -209,6 +232,7 @@ function messageOf(error: unknown): string {
 export class BoardController {
   private tasks: TaskRecord[] = []
   private groups: TaskGroupRecord[] = []
+  private workflows: WorkflowRecord[] = []
   private workspaceDefaults: Record<string, WorkspaceDefaultsRecord> = {}
   private workspacePaused: Record<string, number> = {}
   private boardOpen = false
@@ -221,6 +245,7 @@ export class BoardController {
   private readonly uuid: () => string
   private readonly pendingTaskIds = new Set<string>()
   private readonly taskQueues = new Map<string, Promise<void>>()
+  private usageRetentionHours: number | undefined
   private autoTitle = true
   private transportError: string | undefined
   private hostState: Pick<AllTasksSnapshot, 'revision' | 'scheduler' | 'power'> | undefined
@@ -266,6 +291,7 @@ export class BoardController {
     return {
       tasks: this.tasks,
       groups: this.groups,
+      workflows: this.workflows,
       workspaceDefaults: this.workspaceDefaults,
       workspacePaused: { ...this.workspacePaused },
       boardOpen: this.boardOpen,
@@ -273,6 +299,7 @@ export class BoardController {
       selectedTaskId: this.selectedTaskId,
       executionOptions: this.executionOptions,
       pendingTaskIds: [...this.pendingTaskIds],
+      ...(this.usageRetentionHours === undefined ? {} : { usageRetentionHours: this.usageRetentionHours }),
       autoTitle: this.autoTitle,
       ...(this.transportError === undefined ? {} : { transportError: this.transportError }),
       ...(this.hostState === undefined ? {} : { host: this.hostState }),
@@ -342,8 +369,12 @@ export class BoardController {
   // --- task mutations (use-case transitions in core/use-cases) -----------------
 
   createTask(input: NewTaskInput): TaskRecord | undefined {
+    // The controller is the board's new-task dialog: every task minted here
+    // carries the `user` origin (the wire sanitizer defaults an absent origin
+    // to `api`, which would mislabel dialog-created tasks as programmatic).
+    const userInput: NewTaskInput = { ...input, source: 'user' }
     const id = this.uuid()
-    const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id)
+    const { task, tasks } = applyCreateTask(this.tasks, userInput, this.now(), id)
     if (task === undefined) return undefined
     // Mirror the Host ledger: membership requires the task's workspace pin to
     // equal the group's workspace scope (absent = unassigned).
@@ -364,10 +395,12 @@ export class BoardController {
   /** Create through the Host and expose the task only after confirmation. */
   async createTaskConfirmed(input: NewTaskInput): Promise<TaskRecord | undefined> {
     if (this.deps.transport === undefined) return this.createTask(input)
+    // Same `user` origin as {@link createTask}: the dialog owns this path.
+    const userInput: NewTaskInput = { ...input, source: 'user' }
     const id = this.uuid()
-    const preview = applyCreateTask(this.tasks, input, this.now(), id).task
+    const preview = applyCreateTask(this.tasks, userInput, this.now(), id).task
     if (preview === undefined) return undefined
-    return await this.commitRemote({ kind: 'create', id, input }, id)
+    return await this.commitRemote({ kind: 'create', id, input: userInput }, id)
       ? this.tasks.find(task => task.id === id)
       : undefined
   }
@@ -433,6 +466,16 @@ export class BoardController {
    */
   setExecutionOptions(patch: Partial<ExecutionOptionsSnapshot>): void {
     this.executionOptions = { ...this.executionOptions, ...patch }
+    this.notify()
+  }
+
+  /**
+   * Set the dashboard usage window in hours (undefined/0 = all time), pushed
+   * from the `usageRetentionHours` setting. The dashboard's token totals and
+   * cost estimate then only count executions settled within the window.
+   */
+  setUsageRetentionHours(hours: number | undefined): void {
+    this.usageRetentionHours = hours
     this.notify()
   }
 
@@ -526,6 +569,35 @@ export class BoardController {
     return true
   }
 
+  /**
+   * Hide (archive) a set of settled tasks at once — the Done/Failed column
+   * clean-up. Every id must be on-board and settled (done/failed); the Host
+   * ledger fails the whole action closed otherwise, so a column either hides
+   * entirely or not at all. When `archiveSessions` is true the Host also
+   * archives each hidden task's execution sessions in DSH after the ledger
+   * commit (best-effort: they leave the DSH session list, their logs stay).
+   * The id list is sliced to the protocol cap, so a very long column still
+   * fits each action body.
+   * @returns true when every slice was accepted by the authority (the legacy
+   *   in-memory path mirrors the ledger's all-or-nothing rules).
+   */
+  async hideSettledTasks(taskIds: readonly string[], archiveSessions: boolean): Promise<boolean> {
+    if (taskIds.length === 0) return true
+    if (this.deps.transport === undefined) {
+      const result = applyArchiveTasks(this.tasks, taskIds, this.now())
+      if (!result.allArchived) return false
+      this.tasks = [...result.tasks]
+      this.persistAndNotify()
+      return true
+    }
+    for (let index = 0; index < taskIds.length; index += HIDE_TASKS_LIMIT) {
+      const ids = taskIds.slice(index, index + HIDE_TASKS_LIMIT)
+      const accepted = await this.performRemote({ kind: 'hide-tasks', taskIds: [...ids], archiveSessions })
+      if (!accepted) return false
+    }
+    return true
+  }
+
   // --- group mutations (pure transitions in core/groups) ----------------------
 
   /** Create a group through the Host; exposes it only after confirmation. */
@@ -589,6 +661,50 @@ export class BoardController {
   groupMembers(groupId: string): TaskRecord[] {
     const group = this.groups.find(candidate => candidate.id === groupId)
     return group === undefined ? [] : orderedGroupMembers(group, this.tasks)
+  }
+
+  // --- workflow mutations (pure transitions in core/workflows) -----------------
+
+  /** Create a workflow through the Host; exposes it only after confirmation. */
+  async createWorkflow(input: WorkflowCreateInput): Promise<WorkflowRecord | undefined> {
+    const id = this.uuid()
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'create-workflow', id, input }, id)
+        ? this.workflows.find(workflow => workflow.id === id)
+        : undefined
+    }
+    const result = applyCreateWorkflow(this.workflows, input, this.now(), id)
+    if (result.workflow === undefined) return undefined
+    this.workflows = [...result.workflows]
+    this.notify()
+    return result.workflow
+  }
+
+  /**
+   * Update a workflow (name, description, or the whole node/edge graph).
+   * @returns true when the authority accepted the patch.
+   */
+  async updateWorkflow(workflowId: string, patch: WorkflowUpdatePatch): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'update-workflow', workflowId, patch }, workflowId)
+    }
+    const result = applyUpdateWorkflow(this.workflows, workflowId, patch, this.now())
+    if (!result.applied) return false
+    this.workflows = [...result.workflows]
+    this.notify()
+    return true
+  }
+
+  /** Delete a workflow (referenced tasks are untouched). */
+  async deleteWorkflow(workflowId: string): Promise<boolean> {
+    if (this.deps.transport !== undefined) {
+      return await this.commitRemote({ kind: 'delete-workflow', workflowId }, workflowId)
+    }
+    const result = applyDeleteWorkflow(this.workflows, workflowId)
+    if (!result.applied) return false
+    this.workflows = [...result.workflows]
+    this.notify()
+    return true
   }
 
   // --- scheduling ---------------------------------------------------------------
@@ -811,8 +927,14 @@ export class BoardController {
     // Same-column drop: nothing changes, so do not bump every member's
     // updatedAt (their "edited" stamp) for a no-op move.
     if (members.length === 0 || members.every(member => member.status === status)) return true
+    // A whole-group manual move is a reset, never an auto-start: hold every
+    // moved member (deferAutoStart) so the group sits idle until an explicit
+    // start (run-group / group cron / a member Run) clears the hold — the
+    // legacy mirror of the Host ledger's move-group behavior.
     this.tasks = this.tasks.map(task =>
-      task.groupId === groupId && task.archivedAt === undefined ? withStatus(task, status, this.now()) : task)
+      task.groupId === groupId && task.archivedAt === undefined
+        ? withStatus({ ...task, deferAutoStart: true }, status, this.now())
+        : task)
     this.persistAndNotify()
     return true
   }
@@ -990,6 +1112,7 @@ export class BoardController {
     this.tasks = [...snapshot.tasks]
     this.groups = [...snapshot.groups]
     // Tolerant of pre-feature snapshots (an older Host without the field).
+    this.workflows = snapshot.workflows ?? []
     this.workspaceDefaults = snapshot.workspaceDefaults ?? {}
     this.workspacePaused = snapshot.workspacePaused ?? {}
     this.hostState = { revision: snapshot.revision, scheduler: snapshot.scheduler, power: snapshot.power }

@@ -24,12 +24,21 @@ import {
 } from './core/groups.ts'
 import { parseLedger } from './core/store.ts'
 import { canMoveManually, continueExecution, MANUAL_STATUSES, moveTaskBefore, pauseExecution, retainRecentExecutions, settleExecution, startExecution, withStatus, type ExecutionRecord, type ExecutionUsage, type TaskRecord } from './core/tasks.ts'
-import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
+import { applyArchiveTask, applyArchiveTasks, applyRestoreTask, collectExecutionSessionIds } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleNextRun } from './core/use-cases/task-schedule.ts'
 import { applyUpdateTask, canEditTaskContent, hasContentPatch } from './core/use-cases/task-update.ts'
 import { applyWorkspaceDefaultsPatch, normalizeWorkspaceDefaults, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
+import {
+  applyCreateWorkflow,
+  applyDeleteWorkflow,
+  applyUpdateWorkflow,
+  normalizeWorkflowRows,
+  type WorkflowCreateInput,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './core/workflows.ts'
 import { ALL_TASKS_SCHEMA_VERSION, type AllTasksAction, type AllTasksSchedulerSnapshot } from './protocol.ts'
 
 interface PersistedScheduler extends AllTasksSchedulerSnapshot {
@@ -47,6 +56,8 @@ interface LedgerDocument {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /** Workflow DAGs (definition only; no executor yet). */
+  workflows: WorkflowRecord[]
   /**
    * Per-workspace execution defaults for new tasks, keyed by workspace-list
    * id. Only non-empty records are stored (an all-blank edit removes the
@@ -68,6 +79,7 @@ export interface LedgerState {
   revision: number
   tasks: TaskRecord[]
   groups: TaskGroupRecord[]
+  workflows: WorkflowRecord[]
   workspaceDefaults: Record<string, WorkspaceDefaultsRecord>
   workspacePaused: Record<string, number>
   scheduler: AllTasksSchedulerSnapshot
@@ -105,6 +117,13 @@ export interface LedgerApplyResult {
   stopSessions?: string[]
   /** Sessions to re-prompt with their task (continue actions). */
   resumeRuns?: ResumeRun[]
+  /**
+   * Execution sessions of tasks a hide-tasks action archived, to be hidden
+   * from the DSH session list (the workspace registry's archive set). The
+   * Host derives them from the ledger executions it just archived; best-effort
+   * fire-and-forget like session cancel.
+   */
+  archiveSessions?: string[]
 }
 
 /** Minimal value copy used by the Host session monitor. */
@@ -223,6 +242,10 @@ function cloneTasks(tasks: readonly TaskRecord[]): TaskRecord[] {
 
 function cloneGroups(groups: readonly TaskGroupRecord[]): TaskGroupRecord[] {
   return JSON.parse(JSON.stringify(groups)) as TaskGroupRecord[]
+}
+
+function cloneWorkflows(workflows: readonly WorkflowRecord[]): WorkflowRecord[] {
+  return JSON.parse(JSON.stringify(workflows)) as WorkflowRecord[]
 }
 
 function cloneWorkspaceDefaults(defaults: Record<string, WorkspaceDefaultsRecord>): Record<string, WorkspaceDefaultsRecord> {
@@ -491,6 +514,7 @@ export class HostTaskLedger {
       revision,
       tasks: cloneTasks(this.document.tasks),
       groups: cloneGroups(this.document.groups),
+      workflows: cloneWorkflows(this.document.workflows),
       workspaceDefaults: cloneWorkspaceDefaults(this.document.workspaceDefaults),
       workspacePaused: { ...this.document.workspacePaused },
       scheduler,
@@ -783,7 +807,13 @@ export class HostTaskLedger {
     })
   }
 
-  /** Clear the auto-advance hold on every member of one group (a new sequence cycle). */
+  /**
+   * Clear the auto-advance hold on every member of one group. Called whenever
+   * the user explicitly starts a (new) sequence cycle — Start group
+   * (run-group), a group-cron fire (rollGroupSchedule), and now Resume /
+   * Continue (a stopped group resumed or a paused group continued through the
+   * banner's ▶), whose settle-triggered chain must cover held members too.
+   */
   private clearGroupAutoStartHolds(groupId: string): void {
     this.document.tasks = this.document.tasks.map(task =>
       task.groupId === groupId && task.deferAutoStart === true
@@ -984,6 +1014,7 @@ export class HostTaskLedger {
     let runs: OpenedRun[] | undefined
     const stopSessions: string[] = []
     const resumeRuns: ResumeRun[] = []
+    let archiveSessions: string[] | undefined
     switch (action.kind) {
       case 'import': {
         const sources = new Set(this.document.scheduler.importedSources ?? [])
@@ -1148,6 +1179,24 @@ export class HostTaskLedger {
         this.document.tasks = [...result.tasks]
         break
       }
+      case 'hide-tasks': {
+        // The bulk hide of a Done/Failed column: archive every requested
+        // settled task in one ledger revision. All-or-nothing — an unknown,
+        // still-open, or already-archived id fails the whole action so a
+        // column never half-disappears behind a stray stale id.
+        const before = this.document.tasks
+        const result = applyArchiveTasks(before, action.taskIds, now)
+        if (!result.allArchived) throw new Error('task cannot be archived')
+        this.document.tasks = [...result.tasks]
+        // The session set is derived from the ledger executions of the tasks
+        // being hidden, never accepted from the wire: the browser only says
+        // whether it wants the sessions archived too.
+        if (action.archiveSessions) {
+          const sessions = collectExecutionSessionIds(before, action.taskIds)
+          if (sessions.length > 0) archiveSessions = [...sessions]
+        }
+        break
+      }
       case 'set-schedule': {
         const task = this.document.tasks.find(task => task.id === action.taskId)
         if (task?.archivedAt !== undefined) throw new Error('archived task is read-only')
@@ -1276,6 +1325,11 @@ export class HostTaskLedger {
           const { paused: _paused, ...rest } = candidate
           return { ...rest, updatedAt: now }
         })
+        // Continue is the user's explicit "keep this group going" press (the
+        // banner's ▶): release every auto-advance hold so the resumed sequence
+        // covers members that joined while it ran — a group paused and then
+        // continued must not need a second press to finish its work.
+        this.clearGroupAutoStartHolds(action.groupId)
         break
       }
       case 'pause-workspace': {
@@ -1395,10 +1449,19 @@ export class HostTaskLedger {
         // the status rewrite so no member's updatedAt (its "edited" stamp)
         // gets bumped for a no-op move.
         if (members.length > 0 && members.every(member => member.status === action.status)) break
-        this.document.tasks = this.document.tasks.map(task =>
-          task.groupId === action.groupId && task.archivedAt === undefined
-            ? withStatus(task, action.status, now)
-            : task)
+        this.document.tasks = this.document.tasks.map(task => {
+          if (task.groupId !== action.groupId || task.archivedAt !== undefined) return task
+          // A whole-group manual move is a reset, never an auto-start: every
+          // moved member is held from the auto-advance chain (deferAutoStart)
+          // so the group sits idle after the move. Only an explicit start —
+          // the banner's Start group (run-group), a group-cron fire, Resume /
+          // Continue, or a member's own Run button — clears the hold and
+          // launches the new cycle. Without the hold, the chain's "a member
+          // settled, advance" trigger would see the settled history of a group
+          // dragged back from Done/Failed and auto-start it the moment the
+          // move commits.
+          return withStatus({ ...task, deferAutoStart: true }, action.status, now)
+        })
         break
       }
       case 'create-group': {
@@ -1409,9 +1472,18 @@ export class HostTaskLedger {
         break
       }
       case 'update-group': {
+        const group = this.document.groups.find(candidate => candidate.id === action.groupId)
         const result = applyUpdateGroup(this.document.groups, action.groupId, action.patch as GroupUpdatePatch, now)
         if (!result.applied) throw new Error('group not found or invalid patch')
         this.document.groups = [...result.groups]
+        // Resuming a stopped group (the banner's ▶ on a stopped group) is the
+        // user's explicit "run it again" press: release every auto-advance
+        // hold in the same commit, so the settle-triggered chain that fires on
+        // this mutation starts the whole group — held members included —
+        // instead of skipping them and forcing a second press.
+        if (group?.stopped === true && (action.patch as GroupUpdatePatch).stopped === false) {
+          this.clearGroupAutoStartHolds(action.groupId)
+        }
         break
       }
       case 'delete-group': {
@@ -1456,6 +1528,25 @@ export class HostTaskLedger {
         this.document.groups = withGroupOrder(this.document.groups, action.groupId, action.order, memberIds, now)
         break
       }
+      case 'create-workflow': {
+        if (this.document.workflows.some(workflow => workflow.id === action.id)) throw new Error('workflow id already exists')
+        const result = applyCreateWorkflow(this.document.workflows, action.input, now, action.id)
+        if (result.workflow === undefined) throw new Error('invalid workflow')
+        this.document.workflows = [...result.workflows]
+        break
+      }
+      case 'update-workflow': {
+        const result = applyUpdateWorkflow(this.document.workflows, action.workflowId, action.patch as WorkflowUpdatePatch, now)
+        if (!result.applied) throw new Error('workflow not found or invalid patch')
+        this.document.workflows = [...result.workflows]
+        break
+      }
+      case 'delete-workflow': {
+        const result = applyDeleteWorkflow(this.document.workflows, action.workflowId)
+        if (!result.applied) throw new Error('workflow not found')
+        this.document.workflows = [...result.workflows]
+        break
+      }
     }
     // Invariant: a group's order always covers exactly its current members.
     // Member additions append, removals drop the id; the defensive pass below
@@ -1469,6 +1560,7 @@ export class HostTaskLedger {
       ...(runs === undefined || runs.length === 0 ? {} : { runs }),
       ...(stopSessions.length > 0 ? { stopSessions } : {}),
       ...(resumeRuns.length > 0 ? { resumeRuns } : {}),
+      ...(archiveSessions === undefined || archiveSessions.length === 0 ? {} : { archiveSessions }),
     }
   }
 
@@ -1601,6 +1693,7 @@ export class HostTaskLedger {
         revision: Number.isSafeInteger(parsed.revision) && (parsed.revision as number) >= 0 ? parsed.revision as number : 0,
         tasks,
         groups,
+        workflows: normalizeWorkflowRows(parsed.workflows),
         workspaceDefaults: normalizeWorkspaceDefaultsMap(parsed.workspaceDefaults),
         workspacePaused: normalizeWorkspacePaused(parsed.workspacePaused),
         scheduler: {
@@ -1629,6 +1722,7 @@ export class HostTaskLedger {
         revision: 0,
         tasks: [],
         groups: [],
+        workflows: [],
         workspaceDefaults: {},
         workspacePaused: {},
         scheduler: { timeZone: timeZone(), ledgerId: crypto.randomUUID(), ...(existed ? { error: `corrupt ledger was quarantined: ${error instanceof Error ? error.message : String(error)}` } : {}) },

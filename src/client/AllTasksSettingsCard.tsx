@@ -10,8 +10,8 @@ import type { SettingsScope, SnapshotStore } from '@deepseek-ai/dsh-client-runti
 import { useEffect, useState } from 'react'
 import type { AllTasksPowerSnapshot } from '../protocol.ts'
 import { EndpointsEditor } from './EndpointsEditor.tsx'
-import { PluginSettingsCard, BooleanField } from './PluginSettingsCard.tsx'
-import { CardForm, booleanField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
+import { PluginSettingsCard, BooleanField, ValueField } from './PluginSettingsCard.tsx'
+import { CardForm, booleanField, numberField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
 /** The all-tasks fields this card edits (the namespace's full schema). */
 export interface AllTasksSettings {
@@ -27,6 +27,8 @@ export interface AllTasksSettings {
   autoTitle?: boolean
   /** How long a queued run may wait for an eligible endpoint before failing (hours). */
   endpointMaxWaitHours?: number
+  /** Dashboard usage window in hours (0 = all time): token totals and the cost estimate only count runs settled within the last N hours. */
+  usageRetentionHours?: number
   /** Ordered endpoints used by tasks without explicit endpoint pins. */
   defaultEndpoints?: string[]
   /** Named compute endpoints the router routes tasks through. */
@@ -49,6 +51,8 @@ export interface AllTasksSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
+  /** Dashboard usage window in hours (0 = all time). */
+  usageRetentionHours: CardFieldState
   /** Session-view timestamp/token flag. */
   sessionTimestamps: CardFieldState
   /** Auto-generated-title flag. */
@@ -74,6 +78,7 @@ export class AllTasksSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('preventIdleSleep'),
+      numberField('usageRetentionHours', { min: 0 }),
       booleanField('sessionTimestamps'),
       booleanField('autoTitle'),
     ])
@@ -86,6 +91,7 @@ export class AllTasksSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
+      usageRetentionHours: this.form.field('usageRetentionHours'),
       sessionTimestamps: this.form.field('sessionTimestamps'),
       autoTitle: this.form.field('autoTitle'),
     }
@@ -191,6 +197,17 @@ export function AllTasksSettingsCard(props: AllTasksSettingsCardProps) {
         {...state.preventIdleSleep}
         onEdit={(text) => { props.edit('preventIdleSleep', text) }}
         onReset={() => { props.resetField('preventIdleSleep') }}
+      />
+      <ValueField
+        id="settings-all-tasks-usage-retention"
+        numeric
+        label={t('settings.usageRetention')}
+        hint={t('settings.usageRetentionHint')}
+        placeholder="0"
+        {...fieldProps}
+        {...state.usageRetentionHours}
+        onEdit={(text) => { props.edit('usageRetentionHours', text) }}
+        onReset={() => { props.resetField('usageRetentionHours') }}
       />
       <BooleanField
         id="settings-all-tasks-session-timestamps"

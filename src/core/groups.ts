@@ -677,11 +677,12 @@ export function groupWindowOpen(
 
 /**
  * Whether a group's sequence has started: any current member carries an
- * execution record (open or settled). Members joining a started group are
- * held from auto-advance ({@link TaskRecord.deferAutoStart}) so the chain
- * never picks up work that entered after the sequence began — the sequence
- * advances only through members that were already in the group when it ran.
- * A fresh, never-run group returns false and joins stay unheld.
+ * execution record (open or settled). Members joining a started group — or
+ * arriving through a whole-group move to a manual column — are held from
+ * auto-advance ({@link TaskRecord.deferAutoStart}) so the chain never picks
+ * up work that entered after the sequence began; the sequence advances only
+ * through members that were already in the group when it ran. A fresh,
+ * never-run group returns false and joins stay unheld.
  */
 export function groupSequenceStarted(group: TaskGroupRecord, tasks: readonly TaskRecord[]): boolean {
   return tasks.some(task => task.groupId === group.id && task.executions.length > 0)

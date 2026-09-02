@@ -16,16 +16,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { BoardController } from '../core/controller.ts'
 import { AllTasks } from './board/AllTasks.tsx'
 import css from './board.module.css'
+import { activatePanel, deactivatePanel, ACTIVATE_EVENT, SIDEBAR_ROW_SELECTOR } from './panel-activation.ts'
 
 /** The injected board container (kept in the DOM, hidden when inactive). */
 export const BOARD_VIEW_SELECTOR = '[data-dsh-all-tasks-view]'
 
 const CONVERSATION_COLUMN_SELECTOR = '[data-pane="conversation"], [class*="centerCol"]'
-const ACTIVE_ATTR = 'data-dsh-all-tasks-active'
-/** The sibling panel's activation attribute (ssh), removed when this panel opens. */
-const OTHER_ACTIVE_ATTR = 'data-dsh-ssh-active'
-/** Cross-plugin activation event; detail is the activating panel name. */
-const ACTIVATE_EVENT = 'dsh-panel-activate'
 const PANEL_NAME = 'all-tasks'
 
 /** Find the center column, or undefined while the frame is not mounted. */
@@ -68,19 +64,17 @@ export function mountBoard(controller: BoardController): () => void {
 
   const applyActive = (): void => {
     if (controller.getSnapshot().boardOpen) {
-      // Single-occupant center column: opening this panel must evict the
-      // sibling panel (ssh), both its html attribute and its controller
-      // state, otherwise the two panels' visibility rules fight and the
-      // second click appears dead.
-      document.documentElement.removeAttribute(OTHER_ACTIVE_ATTR)
-      document.documentElement.setAttribute(ACTIVE_ATTR, '')
-      document.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: PANEL_NAME }))
+      // Single-occupant center column: opening the board must evict every
+      // sibling panel (Events/Actions, ssh), both its html attribute and its
+      // controller state, otherwise the panels' visibility rules fight and
+      // the second click appears dead.
+      activatePanel(PANEL_NAME)
     } else {
-      document.documentElement.removeAttribute(ACTIVE_ATTR)
+      deactivatePanel(PANEL_NAME)
     }
   }
   const onOtherActivate = (event: Event): void => {
-    if ((event as CustomEvent).detail === 'ssh' && controller.getSnapshot().boardOpen) {
+    if ((event as CustomEvent).detail !== PANEL_NAME && controller.getSnapshot().boardOpen) {
       controller.closeBoard()
     }
   }
@@ -88,7 +82,6 @@ export function mountBoard(controller: BoardController): () => void {
   // (including the already-current one, which produces no session-change
   // event) hands the center column back to the conversation. Capture phase,
   // so the panel closes before the shell processes the click.
-  const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'
   const onClickSidebarRow = (event: MouseEvent): void => {
     if (!controller.getSnapshot().boardOpen) return
     const target = event.target as HTMLElement | null
@@ -106,7 +99,7 @@ export function mountBoard(controller: BoardController): () => void {
     document.removeEventListener(ACTIVATE_EVENT, onOtherActivate)
     waitObserver.disconnect()
     unsubscribe()
-    document.documentElement.removeAttribute(ACTIVE_ATTR)
+    deactivatePanel(PANEL_NAME)
     root?.unmount()
     root = undefined
     container?.remove()

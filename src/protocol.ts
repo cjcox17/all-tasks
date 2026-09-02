@@ -10,12 +10,30 @@ import {
   type GroupUpdatePatch,
   type TaskGroupRecord,
 } from './core/groups.ts'
-import { isTaskPermission, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskStatus } from './core/tasks.ts'
+import { isTaskPermission, isTaskSource, isTaskStatus, MODEL_FIELD_BOUND, normalizeModelSelection, type NewTaskInput, type TaskModelSelection, type TaskRecord, type TaskSource, type TaskStatus } from './core/tasks.ts'
 import { parseLedger } from './core/store.ts'
 import { normalizeWorkspaceDefaultsPatch, type WorkspaceDefaultsPatch, type WorkspaceDefaultsRecord } from './core/workspace-defaults.ts'
+import {
+  WORKFLOW_DESCRIPTION_BOUND,
+  normalizeWorkflowEdges,
+  normalizeWorkflowName,
+  normalizeWorkflowNodes,
+  type WorkflowCreateInput,
+  type WorkflowEdge,
+  type WorkflowNode,
+  type WorkflowRecord,
+  type WorkflowUpdatePatch,
+} from './core/workflows.ts'
 
 export const ALL_TASKS_SCHEMA_VERSION = 2 as const
 export const ALL_TASKS_API_PREFIX = '/api/all-tasks'
+
+/**
+ * Cap on one hide-tasks action's task list. Chosen so the serialized action
+ * stays comfortably under the 64 KiB action body limit (~38 chars per id);
+ * the board slices a larger column into sequential requests.
+ */
+export const HIDE_TASKS_LIMIT = 1000
 
 export type PowerPhase = 'disabled' | 'idle' | 'acquiring' | 'active' | 'error' | 'unsupported'
 
@@ -43,6 +61,8 @@ export interface AllTasksSnapshot {
   tasks: TaskRecord[]
   /** Task groups (named member sets with shared execution policy). */
   groups: TaskGroupRecord[]
+  /** Workflow DAGs (n8n-style automation graphs; definition only, no executor yet). */
+  workflows?: WorkflowRecord[]
   /**
    * Per-workspace execution defaults the new-task dialog applies when a task
    * is created in that workspace, keyed by workspace-list id.
@@ -67,6 +87,43 @@ export interface AllTasksEventPayload {
   power: AllTasksPowerSnapshot
 }
 
+/**
+ * One registered inbound event source as the Events panel renders it. The
+ * Host is the authority on which sources exist and where they are mounted;
+ * the browser only knows the display copy. `config` is the source's resolved
+ * settings slice (env-var *names* only — never secret values).
+ */
+export interface EventSourceStatus {
+  /** Stable plugin id (e.g. `http`, `github`, `slack`). */
+  id: string
+  /** Webhook method (`POST` for every current source). */
+  method: string
+  /** Mounted route under the all-tasks prefix (e.g. `/api/all-tasks/events/github`). */
+  path: string
+  /** The source's resolved config object (absent keys = defaults). */
+  config: Record<string, unknown>
+}
+
+/**
+ * One registered result-side action as the Actions panel renders it. The Host
+ * is the authority on which actions exist and when they fire; the browser
+ * only knows the display copy.
+ */
+export interface ActionStatus {
+  /** Stable plugin id (e.g. `http`, `github`, `spawn`). */
+  id: string
+  /** Outcomes that trigger this action (`succeeded`/`failed`/`cancelled`/`always`). */
+  when: readonly string[]
+  /** The action's resolved config object (absent keys = defaults). */
+  config: Record<string, unknown>
+}
+
+/** The Events/Actions panel payload: every registered source and action. */
+export interface AllTasksIntegrationsSnapshot {
+  events: EventSourceStatus[]
+  actions: ActionStatus[]
+}
+
 export type AllTasksAction =
   | { kind: 'import'; sourceId: string; tasks: TaskRecord[] }
   | { kind: 'create'; id: string; input: NewTaskInput }
@@ -84,6 +141,25 @@ export type AllTasksAction =
   }
   | { kind: 'archive'; taskId: string }
   | { kind: 'restore'; taskId: string }
+  | {
+    kind: 'hide-tasks'
+    /**
+     * The settled (done/failed) tasks to hide — the board's bulk archive of a
+     * Done/Failed column. Every id must belong to an on-board settled task;
+     * any unknown, still-open, or already-archived id fails the whole action
+     * closed (one ledger revision, so a column either hides entirely or not at
+     * all). The list is capped so the action body stays well under the
+     * request limit.
+     */
+    taskIds: string[]
+    /**
+     * Also archive each hidden task's execution sessions in DSH: the session
+     * disappears from every DSH grouping surface (the sidebar session list)
+     * while its log stays. The Host derives the session set from the ledger
+     * executions of the hidden tasks; the browser never names sessions.
+     */
+    archiveSessions: boolean
+  }
   | { kind: 'set-schedule'; taskId: string; patch: { enabled?: boolean; cron?: string } }
   | { kind: 'run'; taskId: string }
   | { kind: 'rerun'; taskId: string }
@@ -103,6 +179,9 @@ export type AllTasksAction =
   | { kind: 'move-group'; groupId: string; status: TaskStatus }
   | { kind: 'pause-workspace'; workspaceId: string }
   | { kind: 'continue-workspace'; workspaceId: string }
+  | { kind: 'create-workflow'; id: string; input: WorkflowCreateInput }
+  | { kind: 'update-workflow'; workflowId: string; patch: WorkflowUpdatePatch }
+  | { kind: 'delete-workflow'; workflowId: string }
 
 export interface AllTasksActionEnvelope {
   requestId: string
@@ -214,10 +293,12 @@ function importedTask(value: unknown): TaskRecord | undefined {
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'workspaceId', 'mode', 'model', 'endpoints', 'groupId', 'permission', 'schedule', 'approved', 'source'])) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   if (!optionalString(input.workspaceId) || !optionalString(input.mode)) return false
   if (input.approved !== undefined && typeof input.approved !== 'boolean') return false
+  // An unknown origin rejects the whole create (never silently relabeled).
+  if (input.source !== undefined && !isTaskSource(input.source)) return false
   if (input.model !== undefined && modelPayload(input.model) === undefined) return false
   // A malformed endpoint list (non-array, oversized, or non-string entries)
   // rejects the whole create instead of silently dropping the pin; an empty
@@ -344,6 +425,50 @@ function sanitizeGroupPatch(patch: GroupUpdatePatch | GroupCreateInput): GroupUp
   return sanitized
 }
 
+/** Gate a workflow node list from the wire (bounded, strictly structured). */
+function workflowNodesPayload(value: unknown): WorkflowNode[] | undefined {
+  return normalizeWorkflowNodes(value)
+}
+
+/** Gate a workflow edge list from the wire (bounded, strictly structured). */
+function workflowEdgesPayload(value: unknown): WorkflowEdge[] | undefined {
+  return normalizeWorkflowEdges(value)
+}
+
+/** Gate a workflow create input. */
+function workflowInput(value: unknown): value is WorkflowCreateInput {
+  const input = record(value)
+  if (input === undefined || !exactKeys(input, ['name', 'description', 'nodes', 'edges'])) return false
+  if (typeof input.name !== 'string') return false
+  if (input.description !== undefined && (typeof input.description !== 'string' || input.description.length > WORKFLOW_DESCRIPTION_BOUND)) return false
+  if (workflowNodesPayload(input.nodes) === undefined) return false
+  if (workflowEdgesPayload(input.edges) === undefined) return false
+  return true
+}
+
+/** Gate a workflow update patch (every field optional). */
+function workflowPatch(value: unknown): value is WorkflowUpdatePatch {
+  const patch = record(value)
+  if (patch === undefined || !exactKeys(patch, ['name', 'description', 'nodes', 'edges'])) return false
+  if (patch.name !== undefined && typeof patch.name !== 'string') return false
+  if (patch.description !== undefined && patch.description !== null
+    && (typeof patch.description !== 'string' || patch.description.length > WORKFLOW_DESCRIPTION_BOUND)) return false
+  if (patch.nodes !== undefined && workflowNodesPayload(patch.nodes) === undefined) return false
+  if (patch.edges !== undefined && workflowEdgesPayload(patch.edges) === undefined) return false
+  return true
+}
+
+/** Sanitize a workflow create/update payload (trim name; normalize nodes/edges). */
+function sanitizeWorkflowPatch(patch: WorkflowUpdatePatch | WorkflowCreateInput): WorkflowUpdatePatch | WorkflowCreateInput {
+  const sanitized: WorkflowUpdatePatch | WorkflowCreateInput = { ...patch }
+  if ('name' in sanitized) sanitized.name = normalizeWorkflowName(sanitized.name) ?? ''
+  // Description is left verbatim (the gate bound its length; the ledger's pure
+  // apply treats a blank as "clear" and a too-long value is already rejected).
+  if ('nodes' in sanitized) sanitized.nodes = normalizeWorkflowNodes(sanitized.nodes) ?? []
+  if ('edges' in sanitized) sanitized.edges = normalizeWorkflowEdges(sanitized.edges) ?? []
+  return sanitized
+}
+
 export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | undefined {
   const envelope = record(value)
   if (envelope === undefined || !exactKeys(envelope, ['requestId', 'action'])) return undefined
@@ -369,9 +494,15 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
         const model = input.model === undefined ? undefined : modelPayload(input.model)
         const endpoints = input.endpoints === undefined ? undefined : normalizeEndpointList(input.endpoints)
         const groupId = input.groupId === undefined ? undefined : input.groupId.trim()
-        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId
+        // An absent origin means the caller did not claim the board's own
+        // dialog (which always passes `user`), the event webhook (`event`),
+        // or the task tools (`agent`), so the task is programmatic (`api`).
+        // Informational only: the board shows the badge, it never changes
+        // the task's approval state.
+        const source: TaskSource = input.source === undefined ? 'api' : input.source
+        const sanitized = model === input.model && endpoints === input.endpoints && groupId === input.groupId && source === input.source
           ? input
-          : { ...input, model, endpoints, groupId }
+          : { ...input, model, endpoints, groupId, source }
         return { requestId: envelope.requestId, action: { kind: 'create', id: action.id, input: sanitized } }
       }
     case 'update':
@@ -472,6 +603,33 @@ export function parseActionEnvelope(value: unknown): AllTasksActionEnvelope | un
     case 'rerun':
       if (!exactKeys(action, ['kind', 'taskId'])) return undefined
       return taskId === undefined ? undefined : { requestId: envelope.requestId, action: action as AllTasksAction }
+    case 'create-workflow':
+      if (!exactKeys(action, ['kind', 'id', 'input'])) return undefined
+      if (typeof action.id !== 'string' || action.id === '') return undefined
+      if (!workflowInput(action.input)) return undefined
+      return {
+        requestId: envelope.requestId,
+        action: { kind: 'create-workflow', id: action.id, input: sanitizeWorkflowPatch(action.input) as WorkflowCreateInput },
+      }
+    case 'update-workflow':
+      if (!exactKeys(action, ['kind', 'workflowId', 'patch'])) return undefined
+      if (typeof action.workflowId !== 'string' || action.workflowId === '') return undefined
+      if (!workflowPatch(action.patch)) return undefined
+      return {
+        requestId: envelope.requestId,
+        action: { kind: 'update-workflow', workflowId: action.workflowId, patch: sanitizeWorkflowPatch(action.patch) as WorkflowUpdatePatch },
+      }
+    case 'delete-workflow':
+      if (!exactKeys(action, ['kind', 'workflowId'])) return undefined
+      return typeof action.workflowId === 'string' && action.workflowId !== ''
+        ? { requestId: envelope.requestId, action: { kind: 'delete-workflow', workflowId: action.workflowId } }
+        : undefined
+    case 'hide-tasks':
+      if (!exactKeys(action, ['kind', 'taskIds', 'archiveSessions'])) return undefined
+      if (typeof action.archiveSessions !== 'boolean') return undefined
+      if (!Array.isArray(action.taskIds) || action.taskIds.length === 0 || action.taskIds.length > HIDE_TASKS_LIMIT) return undefined
+      if (!action.taskIds.every(id => boundedId(id))) return undefined
+      return { requestId: envelope.requestId, action: action as AllTasksAction }
     default:
       return undefined
   }

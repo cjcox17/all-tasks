@@ -22,18 +22,20 @@ import {
   type GroupRuntimeStatus,
   type TaskGroupRecord,
 } from '../../core/groups.ts'
-import { COLUMNS, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
+import { COLUMNS, ARCHIVABLE_STATUSES, canMoveManually, type TaskRecord, type TaskStatus } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
 import { Dashboard } from './Dashboard.tsx'
 import { GroupModal } from './GroupModal.tsx'
+import { HideTasksDialog } from './HideTasksDialog.tsx'
 import { NewTaskModal } from './NewTaskModal.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { TaskCard, parseTaskDragPayload } from './TaskCard.tsx'
 import { TaskDetail } from './TaskDetail.tsx'
+import { UsageCharts } from './UsageCharts.tsx'
 import { WorkspaceDefaultsModal } from './WorkspaceDefaultsModal.tsx'
 import { WorkspaceList } from './WorkspaceList.tsx'
-import { matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
+import { boardGroups, boardTasks, liveWorkspaceIds, matchesWorkspace, splitWorkspaceTasks } from './workspace-filter.ts'
 
 /** A 1x1 transparent GIF: hides the native drag ghost so the board draws its own. */
 const TRANSPARENT_DRAG_IMAGE =
@@ -115,6 +117,24 @@ function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) 
   )
 }
 
+/** The glyph shared by the per-card and per-group hide affordances. */
+const HIDE_GLYPH = '⤓'
+
+/** The per-card hide button for settled (done/failed) cards: sits beside the card, like run. */
+function HideTaskButton({ onHide }: { onHide: () => void }) {
+  return (
+    <button
+      type="button"
+      className={css.hidePill}
+      aria-label={t('hide.taskTitle')}
+      title={t('hide.taskTitle')}
+      onClick={onHide}
+    >
+      {HIDE_GLYPH}
+    </button>
+  )
+}
+
 /**
  * Memoized per-card adapter: with a stable `onOpen` from the board and an
  * immutable task record (only the changed card gets a new object ref), a card
@@ -146,18 +166,27 @@ function pendingReasonsHint(reasons: readonly ExecutionQueuedReason[]): string {
 }
 
 /**
- * Group section header inside a column: name, member count, mode badge, live
- * Running/Pending status, start/stop/resume, manage. The whole header is a
- * drag source so a group can be moved between manual columns in one action
- * (see the column drop handler).
+ * Group section header inside a column, laid out in three stacked rows: the
+ * title, then the pills (mode badge, live Running/Pending/Final-step status,
+ * stopped/paused/scheduled, member count), then the control icons (start /
+ * pause / continue / stop / manage). The whole header is a drag source so a
+ * group can be moved between manual columns in one action (see the column
+ * drop handler).
  */
-function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause, onContinue, onResume, onManage, onDragStart }: {
+function GroupBanner({ group, count, status, canStart, hideCount, onHide, onStart, onStop, onPause, onContinue, onResume, onManage, onDragStart }: {
   group: TaskGroupRecord
   count: number
   /** Open-execution status (running/queued members) of the whole group. */
   status: GroupRuntimeStatus
   /** Whether any on-board member can be started right now. */
   canStart: boolean
+  /**
+   * How many of this column's members of the group are settled (done/failed)
+   * and can be hidden from here. Zero hides the hide control.
+   */
+  hideCount: number
+  /** Open the hide dialog for this group's settled members in this column. */
+  onHide?: () => void
   onStart: () => void
   onStop: () => void
   onPause: () => void
@@ -169,10 +198,13 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
   const stopped = group.stopped === true
   // Any open execution — running or queued — holds the group's attention: the
   // banner is not draggable and the stop button is live (a queued member is
-  // stopped just like a launched one).
+  // stopped just like a launched one). A settled group moves freely even when
+  // it is stopped or paused: those flags only block launches until resumed,
+  // they never block a whole-group move back to a manual column (the natural
+  // way to send a failed group back for a re-run).
   const paused = group.paused === true
   const hasOpen = status.running > 0 || status.pending > 0
-  const draggable = !hasOpen && !stopped && !paused
+  const draggable = !hasOpen
   // A drag gesture may start on one of the header's action buttons (▶ ⏹ ⚙);
   // once a real drag begins, the browser must not also fire that button's
   // click when the pointer is released. Record the release instant at
@@ -208,75 +240,93 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
       } : undefined}
       title={draggable ? t('group.dragHint') : undefined}
     >
+      {draggable && (
+        <span className={css.groupGrip} title={t('group.dragHint')} aria-hidden="true">⠿</span>
+      )}
       <span className={css.groupName} title={group.name}>{group.name}</span>
-      <span className={css.groupBadge} data-mode={group.mode}>
-        {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
-      </span>
-      {status.running > 0 && (
-        <span className={css.groupStatus} data-kind="running" title={t('group.runningHint')}>
-          <span className={css.groupStatusSpinner} aria-hidden="true" />
-          {t('group.running')}
-          {status.running > 1 ? ` ${status.running}` : ''}
+      <div className={css.groupHeaderPills}>
+        <span className={css.groupBadge} data-mode={group.mode}>
+          {group.mode === 'sequential' ? t('group.sequentialBadge') : t('group.parallelBadge')}
         </span>
-      )}
-      {status.pending > 0 && (
-        <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
-          {t('group.pending')}
-          {status.pending > 1 ? ` ${status.pending}` : ''}
-        </span>
-      )}
-      {status.finalStepWaiting && (
-        <span className={css.groupStatus} data-kind="finalstep" title={t('card.finalStepWaitingHint')}>
-          {t('group.finalStepWaitingBadge')}
-        </span>
-      )}
-      {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
-      {paused && <span className={css.groupPaused}>{t('group.paused')}</span>}
-      {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
-      <span className={css.groupCount}>{count}</span>
-      {!stopped && !paused && (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.start')}
-          title={t('group.startHint')}
-          disabled={!canStart}
-          onClick={onStart}
-        >
-          ▶
-        </button>
-      )}
-      {paused ? (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.continue')}
-          title={t('group.continue')}
-          onClick={onContinue}
-        >
-          ▶
-        </button>
-      ) : stopped ? (
-        <button
-          type="button"
-          className={css.ghostButton}
-          aria-label={t('group.resume')}
-          onClick={onResume}
-        >
-          ▶
-        </button>
-      ) : (
-        <>
+        {status.running > 0 && (
+          <span className={css.groupStatus} data-kind="running" title={t('group.runningHint')}>
+            <span className={css.groupStatusSpinner} aria-hidden="true" />
+            {t('group.running')}
+            {status.running > 1 ? ` ${status.running}` : ''}
+          </span>
+        )}
+        {status.pending > 0 && (
+          <span className={css.groupStatus} data-kind="pending" title={pendingReasonsHint(status.pendingReasons)}>
+            {t('group.pending')}
+            {status.pending > 1 ? ` ${status.pending}` : ''}
+          </span>
+        )}
+        {status.finalStepWaiting && (
+          <span className={css.groupStatus} data-kind="finalstep" title={t('card.finalStepWaitingHint')}>
+            {t('group.finalStepWaitingBadge')}
+          </span>
+        )}
+        {stopped && <span className={css.groupStopped}>{t('group.stopped')}</span>}
+        {paused && <span className={css.groupPaused}>{t('group.paused')}</span>}
+        {group.schedule?.enabled === true && <span className={css.cardSchedule}>{t('card.scheduled')}</span>}
+        <span className={css.groupCount}>{count}</span>
+      </div>
+      <div className={css.groupHeaderActions}>
+        {!stopped && !paused && (
           <button
             type="button"
             className={css.ghostButton}
-            aria-label={t('group.pause')}
-            title={t('group.pause')}
-            disabled={!hasOpen}
-            onClick={onPause}
+            aria-label={t('group.start')}
+            title={t('group.startHint')}
+            disabled={!canStart}
+            onClick={onStart}
           >
-            ⏸
+            ▶
           </button>
+        )}
+        {paused ? (
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.continue')}
+            title={t('group.continue')}
+            onClick={onContinue}
+          >
+            ▶
+          </button>
+        ) : stopped ? (
+          <button
+            type="button"
+            className={css.ghostButton}
+            aria-label={t('group.resume')}
+            onClick={onResume}
+          >
+            ▶
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={css.ghostButton}
+              aria-label={t('group.pause')}
+              title={t('group.pause')}
+              disabled={!hasOpen}
+              onClick={onPause}
+            >
+              ⏸
+            </button>
+            <button
+              type="button"
+              className={css.ghostButton}
+              aria-label={t('group.stop')}
+              disabled={!hasOpen}
+              onClick={onStop}
+            >
+              ⏹
+            </button>
+          </>
+        )}
+        {paused && (
           <button
             type="button"
             className={css.ghostButton}
@@ -286,27 +336,27 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
           >
             ⏹
           </button>
-        </>
-      )}
-      {paused && (
+        )}
+        {onHide !== undefined && hideCount > 0 && (
+          <button
+            type="button"
+            className={css.columnHide}
+            aria-label={t('hide.groupLabel', { count: String(hideCount) })}
+            title={t('hide.groupTitle', { count: String(hideCount) })}
+            onClick={onHide}
+          >
+            {t('hide.button')}
+          </button>
+        )}
         <button
           type="button"
           className={css.ghostButton}
-          aria-label={t('group.stop')}
-          disabled={!hasOpen}
-          onClick={onStop}
+          aria-label={t('group.manage')}
+          onClick={onManage}
         >
-          ⏹
+          ⚙
         </button>
-      )}
-      <button
-        type="button"
-        className={css.ghostButton}
-        aria-label={t('group.manage')}
-        onClick={onManage}
-      >
-        ⚙
-      </button>
+      </div>
     </header>
   )
 }
@@ -321,7 +371,7 @@ function GroupBanner({ group, count, status, canStart, onStart, onStop, onPause,
  * flight. Single-member pause/continue stays available through the group
  * banner (Pause group) and the task detail's open-execution row.
  */
-function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget, finalStepBlocked }: {
+function GroupSection({ group, members, status, canStart, pendingIds, timeZone, onOpen, onManage, onRunMember, onStopMember, onApproveMember, onHideSettled, onStartGroup, onPauseGroup, onContinueGroup, onStopGroup, onResume, onDragStart, dropTarget, finalStepBlocked }: {
   group: TaskGroupRecord
   members: readonly TaskRecord[]
   /** Open-execution status of the whole group (running/queued members). */
@@ -335,6 +385,11 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   onRunMember: (id: string) => void
   onStopMember: (id: string) => void
   onApproveMember: (id: string) => void
+  /**
+   * Open the hide dialog for settled members of this group in this column.
+   * Called with the settled member ids (or a single id for one card).
+   */
+  onHideSettled: (ids: readonly string[]) => void
   onStartGroup: () => void
   onPauseGroup: () => void
   onContinueGroup: () => void
@@ -347,6 +402,11 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
   finalStepBlocked: boolean
 }) {
   const overGroup = dropTarget?.zone === 'group' && dropTarget.groupId === group.id
+  // The group's settled members in this column — what its banner's Hide button
+  // sweeps away (archived members already left the column).
+  const hideIds = members
+    .filter(member => ARCHIVABLE_STATUSES.includes(member.status))
+    .map(member => member.id)
   return (
     <div className={css.groupSection} data-group={group.id} data-droptarget={overGroup || undefined}>
       <GroupBanner
@@ -354,6 +414,8 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
         count={members.length}
         status={status}
         canStart={canStart}
+        hideCount={hideIds.length}
+        onHide={hideIds.length > 0 ? () => { onHideSettled(hideIds) } : undefined}
         onStart={onStartGroup}
         onStop={onStopGroup}
         onPause={onPauseGroup}
@@ -372,6 +434,8 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
         // One contextual action per member, shown as a circle on the card's
         // right edge (inside the card — the card itself is a button, so the
         // action stays a sibling in the DOM and is overlaid by the wrapper).
+        // A settled (done/failed) member gets the hide circle: archiving it
+        // off the board (its DSH sessions optionally too).
         const action = task.status === 'running'
           ? { kind: 'stop' as const, label: t('group.stopMember'), glyph: '⏹', onAct: () => { onStopMember(task.id) } }
           : task.approved === false
@@ -380,7 +444,9 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
               ? undefined
               : canStartTask(task)
                 ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
-                : undefined
+                : ARCHIVABLE_STATUSES.includes(task.status)
+                  ? { kind: 'hide' as const, label: t('hide.taskTitle'), glyph: HIDE_GLYPH, onAct: () => { onHideSettled([task.id]) } }
+                  : undefined
         // While the task is running or an action is pending, the circle's ring
         // spins — the pending indicator merged around the action icon.
         const active = action !== undefined && (task.status === 'running' || pendingIds.includes(task.id))
@@ -420,9 +486,17 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
 }
 
 /** The kanban view (always scoped to one workspace, or the All overview). */
-function KanbanView({ controller, snapshot, workspaceId, onBack }: {
+function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }: {
   controller: BoardController
   snapshot: ReturnType<BoardController['getSnapshot']>
+  /**
+   * The board's visible tasks (see boardTasks): tasks of workspaces deleted
+   * from the runtime list are already filtered out, so they never surface in
+   * any column, group, Unassigned section, or the archive.
+   */
+  tasks: readonly TaskRecord[]
+  /** The board's visible groups (see boardGroups): vanished-workspace groups filtered out. */
+  groups: readonly TaskGroupRecord[]
   /** The active workspace id; undefined = the All-tasks overview. */
   workspaceId: string | undefined
   onBack: () => void
@@ -432,30 +506,36 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
   const [showNew, setShowNew] = useState(false)
   const [groupEditor, setGroupEditor] = useState<{ group?: TaskGroupRecord } | undefined>(undefined)
   const [showDefaults, setShowDefaults] = useState(false)
+  /** The open hide dialog: which column's tasks, and the ids it was opened for (a column, a group's members in that column, or one card). */
+  const [hideRequest, setHideRequest] = useState<{ status: TaskStatus; ids: string[] } | undefined>(undefined)
   const archiveView = snapshot.archiveView
   // Archived tasks leave the columns; the archive view shows them instead.
   // The workspace scoping applies to both views: filtered views keep the
   // workspace's pinned tasks plus the unassigned remainder (never hidden).
   // The unapproved-only filter narrows to tasks waiting for approval (their
   // gate blocks every run path until approved).
-  const visible = snapshot.tasks.filter(task =>
+  const visible = tasks.filter(task =>
     (archiveView ? task.archivedAt !== undefined : task.archivedAt === undefined)
     && matchesFilter(task, filter)
     && matchesWorkspace(task, workspaceId)
     && (!unapprovedOnly || task.approved === false),
   )
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
+  /** Open the hide dialog for the given settled ids of one column. */
+  const openHideDialog = useCallback((status: TaskStatus, ids: readonly string[]): void => {
+    setHideRequest(ids.length === 0 ? undefined : { status, ids: [...ids] })
+  }, [])
   /** Whether any on-board member of a group can be started right now. */
   const canStartGroup = useCallback((groupId: string): boolean =>
-    snapshot.tasks.some(task => task.groupId === groupId && canStartTask(task)),
-  [snapshot.tasks])
+    tasks.some(task => task.groupId === groupId && canStartTask(task)),
+  [tasks])
 
   // Groups are workspace-scoped: a workspace kanban shows only the groups of
   // that workspace (the unassigned-scope groups render inside its Unassigned
   // section below); the All overview spans every workspace's groups.
   const scopeGroups = workspaceId === undefined
-    ? snapshot.groups
-    : snapshot.groups.filter(group => group.workspaceId === workspaceId)
+    ? groups
+    : groups.filter(group => group.workspaceId === workspaceId)
 
   const workspaceTitle = workspaceId === undefined
     ? t('board.title')
@@ -522,7 +602,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       setDropTarget({ column, zone: 'column', y: 0 })
       return
     }
-    const dragged = snapshot.tasks.find(task => task.id === drag.id)
+    const dragged = tasks.find(task => task.id === drag.id)
     if (dragged === undefined) return
     const moveAllowed = canMoveManually(dragged.status, column)
     if (dragged.status !== column && !moveAllowed) return
@@ -535,7 +615,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
       // A group of another workspace scope is not a drop target for this task
       // (membership is workspace-locked); treat the hover as the column.
-      const group = snapshot.groups.find(candidate => candidate.id === groupEl.dataset.group)
+      const group = groups.find(candidate => candidate.id === groupEl.dataset.group)
       if (group !== undefined && dragged.workspaceId === group.workspaceId) {
         setDropTarget({
           column,
@@ -551,7 +631,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
       return
     }
     setDropTarget({ column, zone: 'column', y })
-  }, [drag, snapshot.tasks])
+  }, [drag, tasks, groups])
 
   const handleCardsDragLeave = useCallback((column: TaskStatus) => (event: ReactDragEvent<HTMLDivElement>): void => {
     const related = event.relatedTarget as Node | null
@@ -604,9 +684,11 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (raw.startsWith('group:')) {
       if (column !== 'backlog' && column !== 'todo') return
       const groupId = raw.slice('group:'.length)
-      const droppedGroup = snapshot.groups.find(group => group.id === groupId)
-      if (droppedGroup !== undefined && droppedGroup.stopped !== true) {
-        const members = snapshot.tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+      if (groups.some(group => group.id === groupId)) {
+        const members = tasks.filter(task => task.groupId === groupId && task.archivedAt === undefined)
+        // A settled group — even one marked stopped or paused — moves freely:
+        // those flags only block launches until resumed. Only an open member
+        // execution blocks a move (and the Host ledger enforces that too).
         if (members.every(member => member.status !== 'running')) {
           // Dropping the group back onto its own column is a no-op: a status
           // rewrite would bump every member's updatedAt and make the cards
@@ -619,17 +701,31 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     }
     const taskId = parseTaskDragPayload(raw)
     if (taskId === undefined) return
-    const dragged = snapshot.tasks.find(task => task.id === taskId)
+    const dragged = tasks.find(task => task.id === taskId)
     if (dragged === undefined) return
     const target = event.target as Element
     const groupEl = target.closest('[data-group]')
     if (groupEl instanceof HTMLElement && groupEl.dataset.group !== undefined) {
-      const group = snapshot.groups.find(candidate => candidate.id === groupEl!.dataset.group)
+      const group = groups.find(candidate => candidate.id === groupEl!.dataset.group)
       // Membership is workspace-locked: a task can only join (or reorder
       // inside) a group of its own workspace scope; a foreign-scope group
       // falls through to the column/unassigned handling below.
       if (group !== undefined && dragged.workspaceId === group.workspaceId) {
         if (dragged.groupId === group.id) {
+          // A group's section renders in every column that holds one of its
+          // members — a settled member (done/failed) can sit next to a member
+          // that is still waiting (backlog/todo). Dropping the member onto
+          // its own group's section in ANOTHER column is a "move it back to
+          // this column" gesture, so the card must change status first: a
+          // reorder alone would leave it behind in its old column — a drop
+          // that visibly does nothing (mirroring the join path below, which
+          // also moves the card to the drop column when it comes from
+          // elsewhere). Reordering below then places it among the members
+          // already in that column.
+          if (dragged.status !== column) {
+            if (!canMoveManually(dragged.status, column)) return
+            controller.moveTask(taskId, column)
+          }
           // Reorder inside the group: the dragged member lands directly above
           // the member card under the pointer (midpoint split), mapped onto
           // the group's global member order.
@@ -653,8 +749,14 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           }
         } else {
           // Join the group (appended to its member order) — no need to edit
-          // the task's group in the detail view.
+          // the task's group in the detail view. Dropping onto a group in
+          // another column also moves the task to that column, mirroring the
+          // column-background path (the dragover gate already allowed it);
+          // otherwise the card would keep its old status and stay behind.
           void controller.updateTask(taskId, { groupId: group.id })
+          if (dragged.status !== column && canMoveManually(dragged.status, column)) {
+            controller.moveTask(taskId, column)
+          }
         }
         return
       }
@@ -677,7 +779,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
     if (dragged.status === column || canMoveManually(dragged.status, column)) {
       controller.reorderTask(taskId, taskBeforePointer(column, taskId, event.clientY))
     }
-  }, [snapshot, controller, taskBeforePointer, unassignedCardBeforePointer])
+  }, [tasks, groups, controller, taskBeforePointer, unassignedCardBeforePointer])
 
   return (
     <>
@@ -696,10 +798,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         <h2 className={css.boardTitle} title={workspaceTitle}>{workspaceTitle}</h2>
         {snapshot.host !== undefined && (
           <span className={css.detailMeta}>
-            {t('board.hostMeta', {
-              revision: String(snapshot.host.revision),
-              timeZone: snapshot.host.scheduler.timeZone,
-            })}
+            {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
           </span>
         )}
         <input
@@ -726,7 +825,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
         >
           {archiveView
             ? t('board.backToBoard')
-            : t('board.archiveView', { count: String(snapshot.tasks.filter(task => task.archivedAt !== undefined).length) })}
+            : t('board.archiveView', { count: String(tasks.filter(task => task.archivedAt !== undefined).length) })}
         </button>
         {workspaceId !== undefined && (
           <button
@@ -771,26 +870,41 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           </section>
         ) : (
           COLUMNS.map(column => {
-            const tasks = visible.filter(task => task.status === column.status)
-            const { pinned, unassigned } = splitWorkspaceTasks(tasks, workspaceId)
+            const columnTasks = visible.filter(task => task.status === column.status)
+            // The hide button's scope: every on-board settled task of this
+            // column in the current view, regardless of the search /
+            // unapproved-only filters (hiding is a column clean-up, not a
+            // filtered subset — the dialog lists exactly what will go).
+            const isSettledColumn = ARCHIVABLE_STATUSES.includes(column.status)
+            const settledTasks = isSettledColumn
+              ? tasks.filter(task =>
+                task.status === column.status
+                && task.archivedAt === undefined
+                && matchesWorkspace(task, workspaceId))
+              : []
+            const settledIds = settledTasks.map(task => task.id)
+            const { pinned, unassigned } = splitWorkspaceTasks(columnTasks, workspaceId)
             const ungrouped = pinned.filter(task => task.groupId === undefined)
             const unassignedFlat = unassigned.filter(task => task.groupId === undefined)
             const grouped = scopeGroups
-              .map(group => ({ group, members: orderedGroupMembers(group, tasks) }))
+              .map(group => ({ group, members: orderedGroupMembers(group, columnTasks) }))
               .filter(entry => entry.members.length > 0)
             // In a workspace-scoped view the Unassigned section also hosts the
             // unassigned-scope groups (only unassigned tasks can be members),
             // so grouped unassigned tasks never disappear from the board.
             const unassignedGrouped = workspaceId !== undefined
-              ? snapshot.groups
+              ? groups
                 .filter(group => group.workspaceId === undefined)
                 .map(group => ({ group, members: orderedGroupMembers(group, unassigned) }))
                 .filter(entry => entry.members.length > 0)
               : []
             // Groups with no members anywhere still show (in the todo column)
-            // so they stay visible and manageable after creation.
+            // so they stay visible and manageable after creation. "Anywhere"
+            // spans the whole board-visible task list (`tasks`), not this
+            // column — a group whose members sit in another column must not
+            // be duplicated as an empty shell here.
             const emptyGroups = column.status === 'todo'
-              ? scopeGroups.filter(group => !snapshot.tasks.some(task => task.groupId === group.id))
+              ? scopeGroups.filter(group => !tasks.some(task => task.groupId === group.id))
               : []
             const overColumn = dropTarget?.column === column.status
             // One group section renderer shared by the main, unassigned, and
@@ -800,7 +914,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 key={group.id}
                 group={group}
                 members={members}
-                status={groupRuntimeStatus(group, snapshot.tasks)}
+                status={groupRuntimeStatus(group, tasks)}
                 canStart={canStartGroup(group.id)}
                 pendingIds={snapshot.pendingTaskIds}
                 timeZone={snapshot.host?.scheduler.timeZone}
@@ -809,6 +923,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onRunMember={id => { void controller.runTask(id) }}
                 onStopMember={id => { void controller.stopTask(id) }}
                 onApproveMember={id => { controller.setApproved(id, true) }}
+                onHideSettled={ids => { openHideDialog(column.status, ids) }}
                 onStartGroup={() => { void controller.runGroup(group.id) }}
                 onPauseGroup={() => { void controller.pauseGroup(group.id) }}
                 onContinueGroup={() => { void controller.continueGroup(group.id) }}
@@ -816,7 +931,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 onResume={() => { void controller.resumeGroup(group.id) }}
                 onDragStart={startDrag}
                 dropTarget={dropTarget}
-                finalStepBlocked={groupFinalStepBlocked(group, snapshot.tasks)}
+                finalStepBlocked={groupFinalStepBlocked(group, tasks)}
               />
             )
             return (
@@ -829,7 +944,18 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                 <header className={css.columnHeader}>
                   <span className={css.statusDot} data-status={column.status} aria-hidden="true" />
                   <h3 className={css.columnTitle}>{t(STATUS_KEY[column.status])}</h3>
-                  <span className={css.columnCount}>{tasks.length}</span>
+                  <span className={css.columnCount}>{columnTasks.length}</span>
+                  {settledIds.length > 0 && (
+                    <button
+                      type="button"
+                      className={css.columnHide}
+                      aria-label={t('hide.columnLabel', { count: String(settledIds.length) })}
+                      title={t('hide.columnTitle', { count: String(settledIds.length) })}
+                      onClick={() => { openHideDialog(column.status, settledIds) }}
+                    >
+                      {t('hide.button')}
+                    </button>
+                  )}
                 </header>
                 <div
                   className={css.cards}
@@ -840,7 +966,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                   onDrop={handleCardsDrop(column.status)}
                 >
                   {ungrouped.map(task => {
-                    const showAction = task.approved === false || canStartTask(task) || task.status === 'running'
+                    const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
                     const open = task.executions.find(execution => execution.endedAt === undefined)
                     const paused = task.status === 'running' && open?.pausedAt !== undefined
                     return (
@@ -880,6 +1006,8 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                               ⏸
                             </button>
                           )
+                        ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
+                          <HideTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
                         ) : null}
                       </div>
                     )
@@ -896,7 +1024,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                       </header>
                       {unassignedGrouped.map(({ group, members }) => renderGroupSection(group, members))}
                       {unassignedFlat.map(task => {
-                        const showAction = task.approved === false || canStartTask(task) || task.status === 'running'
+                        const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
                         const open = task.executions.find(execution => execution.endedAt === undefined)
                         const paused = task.status === 'running' && open?.pausedAt !== undefined
                         return (
@@ -936,6 +1064,8 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                                   ⏸
                                 </button>
                               )
+                            ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
+                              <HideTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
                             ) : null}
                           </div>
                         )
@@ -947,7 +1077,7 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
                   {overColumn && dropTarget?.zone === 'column' && (
                     <div className={css.dropIndicator} style={{ top: Math.max(0, dropTarget.y) }} aria-hidden="true" />
                   )}
-                  {tasks.length === 0 && emptyGroups.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
+                  {columnTasks.length === 0 && emptyGroups.length === 0 && <div className={css.columnEmpty}>{t('board.empty')}</div>}
                 </div>
               </section>
             )
@@ -996,6 +1126,17 @@ function KanbanView({ controller, snapshot, workspaceId, onBack }: {
           onClose={() => { setGroupEditor(undefined) }}
         />
       )}
+      {hideRequest !== undefined && (
+        <HideTasksDialog
+          status={hideRequest.status}
+          ids={hideRequest.ids}
+          tasks={tasks}
+          workspaceId={workspaceId}
+          transportError={snapshot.transportError}
+          onHide={(taskIds, archiveSessions) => controller.hideSettledTasks(taskIds, archiveSessions)}
+          onCancel={() => { setHideRequest(undefined) }}
+        />
+      )}
     </>
   )
 }
@@ -1030,6 +1171,16 @@ export function AllTasks({ controller }: { controller: BoardController }) {
   const openTask = useCallback((id: string): void => { controller.openTask(id) }, [controller])
   const selected = selectedTaskOf(snapshot)
 
+  // Board-visible tasks and groups: once the runtime workspace baseline has
+  // loaded, a task or group pinned to a workspace missing from that list
+  // (deleted in the sidebar) is hidden from the board entirely. Until the
+  // baseline is ready the list may be empty or stale (startup / reconnect),
+  // so nothing is filtered — the ledger pins stay untouched either way.
+  const liveIds = liveWorkspaceIds(snapshot.executionOptions.workspaces)
+  const hideVanished = snapshot.executionOptions.workspacesReady === true
+  const tasks = hideVanished ? boardTasks(snapshot.tasks, liveIds) : snapshot.tasks
+  const groups = hideVanished ? boardGroups(snapshot.groups, liveIds) : snapshot.groups
+
   return (
     <div className={css.board} data-dsh-all-tasks-board="" data-dsh-plugin="all-tasks">
       {view === undefined ? (
@@ -1048,10 +1199,7 @@ export function AllTasks({ controller }: { controller: BoardController }) {
           <h2 className={css.boardTitle}>{t('board.title')}</h2>
           {snapshot.host !== undefined && (
             <span className={css.detailMeta}>
-              {t('board.hostMeta', {
-                revision: String(snapshot.host.revision),
-                timeZone: snapshot.host.scheduler.timeZone,
-              })}
+              {t('board.hostTimeZone', { timeZone: snapshot.host.scheduler.timeZone })}
             </span>
           )}
           <button
@@ -1066,6 +1214,8 @@ export function AllTasks({ controller }: { controller: BoardController }) {
         <KanbanView
           controller={controller}
           snapshot={snapshot}
+          tasks={tasks}
+          groups={groups}
           workspaceId={view.workspaceId}
           onBack={backToWorkspaces}
         />
@@ -1082,11 +1232,21 @@ export function AllTasks({ controller }: { controller: BoardController }) {
 
       {view === undefined && (
         <>
-          <Dashboard metrics={computeDashboard(snapshot.tasks, snapshot.groups, snapshot.executionOptions.endpoints)} />
+          <Dashboard
+            metrics={computeDashboard(tasks, groups, snapshot.executionOptions.endpoints, snapshot.usageRetentionHours)}
+            usageWindowLabel={snapshot.usageRetentionHours === undefined
+              ? undefined
+              : t('dash.usageWindow', { hours: String(snapshot.usageRetentionHours) })}
+          />
+          <UsageCharts
+            tasks={tasks}
+            endpoints={snapshot.executionOptions.endpoints}
+            retentionHours={snapshot.usageRetentionHours}
+          />
           <WorkspaceList
-            tasks={snapshot.tasks}
+            tasks={tasks}
             workspaces={snapshot.executionOptions.workspaces}
-            groups={snapshot.groups}
+            groups={groups}
             pendingTaskIds={snapshot.pendingTaskIds}
             workspacePaused={snapshot.workspacePaused}
             onOpen={openWorkspace}
