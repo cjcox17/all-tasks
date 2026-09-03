@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Hide-old-tasks UI: the Done/Failed column headers carry a Hide button whose
- * dialog lists the settled tasks, defaults the session-archive option on, and
- * confirms through controller.hideSettledTasks.
+ * Hide-old-tasks UI: the Done/Failed column headers carry an archive-icon
+ * button (the same official DSH "Archive session" glyph the sidebar rows
+ * use) whose dialog lists the settled tasks, defaults the session-archive
+ * option on, and confirms through controller.hideSettledTasks.
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -97,7 +98,7 @@ async function openAllTasks(container: HTMLElement): Promise<void> {
 }
 
 describe('AllTasks hide-old-tasks', () => {
-  it('shows a Hide button on the Done column only when settled tasks are present', async () => {
+  it('shows an archive-icon hide button on the Done column only when settled tasks are present', async () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -111,13 +112,14 @@ describe('AllTasks hide-old-tasks', () => {
     const doneColumn = container.querySelector('section[data-status="done"]')
     expect(doneColumn).not.toBeNull()
     const doneHide = Array.from(doneColumn!.querySelectorAll('button'))
-      .find(button => button.textContent === t('hide.button'))
+      .find(button => button.getAttribute('aria-label') === t('hide.columnLabel', { count: '1' }))
     expect(doneHide).toBeDefined()
+    // Icon-only: the official DSH archive glyph, no visible "Hide" text.
+    expect(doneHide!.querySelector('svg')).not.toBeNull()
     expect(doneHide!.getAttribute('aria-label')).toBe(t('hide.columnLabel', { count: '1' }))
 
     const todoColumn = container.querySelector('section[data-status="todo"]')
-    expect(Array.from(todoColumn!.querySelectorAll('button'))
-      .some(button => button.textContent === t('hide.button'))).toBe(false)
+    expect(todoColumn!.querySelector('button[data-dsh-part="task-hide"]')).toBeNull()
   })
 
   it('opens the dialog listing the tasks with the session-archive option defaulted on, then hides', async () => {
@@ -138,7 +140,7 @@ describe('AllTasks hide-old-tasks', () => {
     const doneHide = Array.from(container
       .querySelector('section[data-status="done"]')!
       .querySelectorAll('button'))
-      .find(button => button.textContent === t('hide.button'))!
+      .find(button => button.getAttribute('aria-label') === t('hide.columnLabel', { count: '1' }))!
     await act(async () => { doneHide.click() })
 
     const modal = container.querySelector('[role="alertdialog"]')
@@ -179,7 +181,7 @@ describe('AllTasks hide-old-tasks', () => {
     const doneHide = Array.from(container
       .querySelector('section[data-status="done"]')!
       .querySelectorAll('button'))
-      .find(button => button.textContent === t('hide.button'))!
+      .find(button => button.getAttribute('aria-label') === t('hide.columnLabel', { count: '1' }))!
     await act(async () => { doneHide.click() })
 
     const checkbox = container.querySelector('[role="alertdialog"] input[type="checkbox"]') as HTMLInputElement
@@ -228,7 +230,8 @@ describe('AllTasks hide from a group banner', () => {
     const groupSection = container.querySelector('section[data-status="done"] [data-group="g1"]')
     expect(groupSection).not.toBeNull()
     const groupHide = Array.from(groupSection!.querySelectorAll('button'))
-      .find(button => button.textContent === t('hide.button'))!
+      .find(button => button.getAttribute('aria-label') === t('hide.groupLabel', { count: '1' }))!
+    expect(groupHide.querySelector('svg')).not.toBeNull()
     expect(groupHide.getAttribute('aria-label')).toBe(t('hide.groupLabel', { count: '1' }))
     await act(async () => { groupHide.click() })
 
@@ -268,8 +271,7 @@ describe('AllTasks hide from a group banner', () => {
     const todoColumn = container.querySelector('section[data-status="todo"]')
     const todoGroupSection = todoColumn!.querySelector('[data-group="g1"]')
     expect(todoGroupSection).not.toBeNull()
-    expect(Array.from(todoGroupSection!.querySelectorAll('button'))
-      .some(button => button.textContent === t('hide.button'))).toBe(false)
+    expect(todoGroupSection!.querySelector('button[data-dsh-part="task-hide"]')).toBeNull()
   })
 })
 
@@ -291,6 +293,8 @@ describe('AllTasks hide from a task card', () => {
     const hidePills = Array.from(cardA.parentElement!.querySelectorAll('button'))
       .filter(button => button.getAttribute('aria-label') === t('hide.taskTitle'))
     expect(hidePills).toHaveLength(1)
+    // Overlaid inside the card (a sibling in the DOM), carrying the archive glyph.
+    expect(hidePills[0].querySelector('svg')).not.toBeNull()
     await act(async () => { hidePills[0].click() })
 
     const modal = container.querySelector('[role="alertdialog"]')
