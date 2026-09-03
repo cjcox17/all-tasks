@@ -38,6 +38,7 @@
  * sidebar-entry-core.ts, so a DSH class rename degrades to no injection
  * instead of mis-targeting.
  */
+import { archiveIconSvg } from './archive-icon.ts'
 import { t } from './locales.ts'
 import css from './session-archive.module.css'
 
@@ -180,9 +181,6 @@ export function resolveRowSessionId(
   return members[index]?.id
 }
 
-/** The inline archive glyph (lucide "archive" outline, 16 px like the official row icons). */
-const ARCHIVE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>'
-
 /**
  * Build the archive icon button for one resolved row.
  * @param sessionId - the resolved session id (read again at click time).
@@ -200,7 +198,8 @@ export function createArchiveButton(sessionId: string, name: string, archive: Se
   button.className = css.archiveButton
   button.setAttribute('aria-label', t('session.archiveAria', { name }))
   button.setAttribute('title', t('session.archiveTooltip'))
-  button.innerHTML = ARCHIVE_ICON_SVG
+  // The official DSH `IconArchiveOutline20` drawing, 16 px like the row icons.
+  button.innerHTML = archiveIconSvg(16)
   button.addEventListener('click', (event) => {
     // A row click opens the session and the official anchor opens the "…"
     // menu — the icon is its own action, so neither may run.

@@ -24,7 +24,6 @@ export const zh = {
   'board.backToBoard': '返回看板',
   'archive.empty': '没有已归档的任务',
   // 隐藏已结束任务（Done/Failed 列的批量归档；可同时归档其 DSH 执行会话）。
-  'hide.button': '隐藏',
   'hide.columnLabel': '隐藏本列 {count} 个已结束任务',
   'hide.columnTitle': '隐藏 {count} 个已结束任务（移到归档视图；可同时归档它们的 DSH 会话）',
   'hide.title': '隐藏已结束任务',
@@ -498,7 +497,6 @@ export const en: Record<keyof typeof zh, string> = {
   'archive.empty': 'No archived tasks',
   // Hide settled tasks (the Done/Failed column clean-up; optionally archive
   // their DSH execution sessions in the same go).
-  'hide.button': 'Hide',
   'hide.columnLabel': 'Hide {count} settled tasks from this column',
   'hide.columnTitle': 'Hide {count} settled tasks (they move to the Archive view; you can also archive their DSH sessions)',
   'hide.title': 'Hide settled tasks',

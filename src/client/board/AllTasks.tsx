@@ -26,6 +26,7 @@ import { COLUMNS, ARCHIVABLE_STATUSES, canMoveManually, openExecutionOf, type Ta
 import type { AllTasksSessionQuestion } from '../../protocol.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
+import { ArchiveIcon } from './ArchiveIcon.tsx'
 import { Dashboard } from './Dashboard.tsx'
 import { GroupModal } from './GroupModal.tsx'
 import { HideTasksDialog } from './HideTasksDialog.tsx'
@@ -131,20 +132,24 @@ function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) 
   )
 }
 
-/** The glyph shared by the per-card and per-group hide affordances. */
-const HIDE_GLYPH = '⤓'
-
-/** The per-card hide button for settled (done/failed) cards: sits beside the card, like run. */
-function HideTaskButton({ onHide }: { onHide: () => void }) {
+/**
+ * The archive affordance for a settled (done/failed) standalone card. It is
+ * the same official DSH "Archive session" glyph the sidebar session rows use;
+ * it floats over the card's right edge (a sibling in the DOM, since the card
+ * itself is a <button>) without shifting the card's content, and it opens the
+ * hide dialog for this one task.
+ */
+function ArchiveTaskButton({ onHide }: { onHide: () => void }) {
   return (
     <button
       type="button"
-      className={css.hidePill}
+      className={css.cardArchive}
+      data-dsh-part="task-hide"
       aria-label={t('hide.taskTitle')}
       title={t('hide.taskTitle')}
       onClick={onHide}
     >
-      {HIDE_GLYPH}
+      <ArchiveIcon size={16} />
     </button>
   )
 }
@@ -378,11 +383,12 @@ function GroupBanner({ group, count, status, canStart, hideCount, onHide, onStar
           <button
             type="button"
             className={css.columnHide}
+            data-dsh-part="task-hide"
             aria-label={t('hide.groupLabel', { count: String(hideCount) })}
             title={t('hide.groupTitle', { count: String(hideCount) })}
             onClick={onHide}
           >
-            {t('hide.button')}
+            <ArchiveIcon size={16} />
           </button>
         )}
         <button
@@ -477,7 +483,8 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
         // right edge (inside the card — the card itself is a button, so the
         // action stays a sibling in the DOM and is overlaid by the wrapper).
         // A settled (done/failed) member gets the hide circle: archiving it
-        // off the board (its DSH sessions optionally too).
+        // off the board (its DSH sessions optionally too). The circle carries
+        // the same official DSH archive glyph as every other hide affordance.
         const action = task.status === 'running'
           ? { kind: 'stop' as const, label: t('group.stopMember'), glyph: '⏹', onAct: () => { onStopMember(task.id) } }
           : task.approved === false
@@ -487,7 +494,12 @@ function GroupSection({ group, members, status, canStart, pendingIds, timeZone, 
               : canStartTask(task)
                 ? { kind: 'run' as const, label: t('card.run'), glyph: '▶', onAct: () => { onRunMember(task.id) } }
                 : ARCHIVABLE_STATUSES.includes(task.status)
-                  ? { kind: 'hide' as const, label: t('hide.taskTitle'), glyph: HIDE_GLYPH, onAct: () => { onHideSettled([task.id]) } }
+                  ? {
+                    kind: 'hide' as const,
+                    label: t('hide.taskTitle'),
+                    glyph: <ArchiveIcon size={14} />,
+                    onAct: () => { onHideSettled([task.id]) },
+                  }
                   : undefined
         // While the task is running or an action is pending, the circle's ring
         // spins — the pending indicator merged around the action icon.
@@ -1003,11 +1015,12 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                     <button
                       type="button"
                       className={css.columnHide}
+                      data-dsh-part="task-hide"
                       aria-label={t('hide.columnLabel', { count: String(settledIds.length) })}
                       title={t('hide.columnTitle', { count: String(settledIds.length) })}
                       onClick={() => { openHideDialog(column.status, settledIds) }}
                     >
-                      {t('hide.button')}
+                      <ArchiveIcon size={16} />
                     </button>
                   )}
                 </header>
@@ -1062,7 +1075,7 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                             </button>
                           )
                         ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
-                          <HideTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
+                          <ArchiveTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
                         ) : null}
                       </div>
                     )
@@ -1121,7 +1134,7 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                                 </button>
                               )
                             ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
-                              <HideTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
+                              <ArchiveTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
                             ) : null}
                           </div>
                         )

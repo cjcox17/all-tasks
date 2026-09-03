@@ -263,16 +263,21 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding: 1px 8px;
 }
 
-/* The hide-old-tasks affordance on the Done/Failed column headers. */
+/* The hide-old-tasks affordance on the Done/Failed column headers and the
+   group banners inside them: an icon-only button carrying the official DSH
+   "Archive session" glyph, matching the sidebar's row archive buttons. */
 .columnHide {
   flex: none;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: var(--dsw-alias-label-secondary);
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
   background: transparent;
   border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -286,6 +291,10 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 .columnHide:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.columnHide svg {
+  display: block;
 }
 
 .statusDot {
@@ -1163,9 +1172,12 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding: 1px 8px;
 }
 
-/* Wrapper for an unapproved standalone card: the card plus its inline
-   approve button (the card itself is a <button>, so the action sits beside it). */
+/* Wrapper for a standalone card carrying an inline action: the card plus its
+   action button (the card itself is a <button>, so the action sits beside
+   it). Relative so a settled card's archive glyph can float over the card's
+   own right edge instead of shrinking or widening the row. */
 .cardWrap {
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 2px;
@@ -1213,23 +1225,41 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   background: var(--dsw-specific-input-major);
 }
 
-/* The per-card hide button (a settled done/failed card's archive affordance). */
-.hidePill {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+/* The archive affordance floating over a settled (done/failed) standalone
+   card's right edge: the same official DSH "Archive session" glyph as the
+   sidebar rows and the header/group-banner hide buttons. Overlaid (absolute,
+   no padding shift), so the card's content keeps its full width; always
+   visible so settled-card clean-up stays discoverable. */
+.cardArchive {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
+  z-index: 1;
 }
 
-.hidePill:hover {
-  background: var(--dsw-specific-input-major);
+.cardArchive:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.cardArchive:focus-visible {
+  outline: 1px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.cardArchive svg {
+  display: block;
 }
 
 .groupSection .card {
