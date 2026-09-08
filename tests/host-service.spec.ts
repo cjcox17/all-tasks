@@ -710,3 +710,59 @@ describe('AllTasksHostService open-question overlay', () => {
     service.dispose()
   })
 })
+
+describe('AllTasksHostService listWorkspaces', () => {
+  it('maps the ApiProxy workspace-registry rows to id/title/path triples', async () => {
+    const api = {
+      workspace: {
+        list: async (request: { rpcId: unknown }) => ok(request, {
+          items: [
+            {
+              workspaceId: 'f851445a-5d85-4219-8ce4-805031142726',
+              title: 'all-tasks',
+              path: '/Users/cjcox17/Projects/all-tasks',
+              sessionIds: [],
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+            {
+              workspaceId: 'c0ffee00-0000-4000-8000-0000000000aa',
+              title: 'Random Sessions',
+              path: '/Users/cjcox17/Projects/Random Sessions',
+              sessionIds: ['session-x'],
+              createdAt: '2026-01-02T00:00:00.000Z',
+              updatedAt: '2026-01-02T00:00:00.000Z',
+            },
+          ],
+          archivedSessionIds: [],
+        }),
+      },
+    } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger: new HostTaskLedger(root()),
+      power: new PowerInhibitor({ platform: 'linux' }),
+    })
+    expect(await service.listWorkspaces()).toEqual([
+      { workspaceId: 'f851445a-5d85-4219-8ce4-805031142726', title: 'all-tasks', path: '/Users/cjcox17/Projects/all-tasks' },
+      { workspaceId: 'c0ffee00-0000-4000-8000-0000000000aa', title: 'Random Sessions', path: '/Users/cjcox17/Projects/Random Sessions' },
+    ])
+    service.dispose()
+  })
+
+  it('throws a readable error when the workspace RPC fails', async () => {
+    const api = {
+      workspace: {
+        list: async (request: { rpcId: unknown }) => ({
+          rpcId: request.rpcId,
+          result: { ok: false as const, error: { code: 'rpc-internal', message: 'workspace registry unavailable' } },
+        }),
+      },
+    } as unknown as ApiProxy
+    const service = new AllTasksHostService(api, {
+      ledger: new HostTaskLedger(root()),
+      power: new PowerInhibitor({ platform: 'linux' }),
+    })
+    await expect(service.listWorkspaces()).rejects.toThrow('rpc-internal: workspace registry unavailable')
+    service.dispose()
+  })
+})

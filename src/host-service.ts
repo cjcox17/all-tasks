@@ -1,4 +1,4 @@
-import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ApiProxy, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import { clockMinutesInTimeZone, pickEndpoint, shouldUseRouter, type EndpointRouterConfig, type RouteDecision } from './core/endpoints.ts'
 import { effectiveEndpointIds, groupCapacityFull, groupCompactsBetween, groupSharesSession, groupWindowOpen } from './core/groups.ts'
 import { nextRunAtMs } from './core/schedule.ts'
@@ -32,6 +32,16 @@ function hostTimeZone(): string {
 /** The empty router config: no endpoints, no routing (today's direct behavior). */
 function emptyRouterConfig(): EndpointRouterConfig {
   return { endpointMaxWaitHours: 24, defaultEndpoints: [], endpoints: [] }
+}
+
+/** Wrap one ApiProxy RPC payload with the Host rpcId prefix (mirrors host-runner.ts). */
+function request<T>(payload: T) {
+  return { rpcId: `all-tasks-${crypto.randomUUID()}` as RpcId, payload }
+}
+
+/** Turn an ApiProxy error result into a throwable Error (mirrors host-runner.ts). */
+function failure(error: { code: string; message: string }): Error {
+  return new Error(`${error.code}: ${error.message}`)
 }
 
 export class AllTasksHostService {
@@ -286,6 +296,20 @@ export class AllTasksHostService {
     const settings = this.settings
     if (settings === undefined) return []
     return readEndpointProviderCatalog(settings.get('llm-pi-ai'), settings.get('llm-deepseek'))
+  }
+
+  /**
+   * The valid DSH workspace-list rows an agent session may pin on
+   * `task_create` (`workspaceId` is a UUID, never a filesystem path). Read
+   * live through the DSH workspace registry ApiProxy — the same RPC
+   * `HostExecutionRunner.launch` validates workspace pins against before it
+   * creates a session — never from the ledger or any storage file.
+   * @returns every workspace's id, title, and canonical directory path.
+   */
+  async listWorkspaces(): Promise<Array<{ workspaceId: string; title: string; path: string }>> {
+    const response = await this.api.workspace.list(request({}))
+    if (!response.result.ok) throw failure(response.result.error)
+    return response.result.value.items.map(item => ({ workspaceId: item.workspaceId, title: item.title, path: item.path }))
   }
 
   /**
