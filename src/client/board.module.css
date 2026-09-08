@@ -997,10 +997,11 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding-right: 38px;
 }
 
-/* The per-card action circle: one contextual action (stop / approve / run) on
-   the card's right edge, inside the card. While the task is running or an
-   action is pending, a spinning ring wraps the icon — the pending circle
-   merged around the action. */
+/* The per-card action circle: one contextual action (stop / approve / run /
+   pause / continue) on the card's right edge, inside the card — shared by
+   grouped members and standalone cards. While the task is running or an action
+   is pending, a spinning ring wraps the icon — the pending circle merged
+   around the action. */
 .cardAction {
   position: absolute;
   top: 50%;
@@ -1024,47 +1025,11 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 .cardAction[data-action='stop'] { color: var(--dsw-alias-state-danger-primary); }
 .cardAction[data-action='approve'] { color: var(--dsw-alias-state-success-primary); }
 .cardAction[data-action='run'] { color: var(--dsw-alias-state-business-primary); }
+.cardAction[data-action='pause'] { color: var(--dsw-alias-state-warn-primary); }
+.cardAction[data-action='continue'] { color: var(--dsw-alias-state-success-primary); }
 .cardAction[data-action='hide'] { color: var(--dsw-alias-label-secondary); }
 
 .cardAction:hover {
-  background: var(--dsw-specific-input-major);
-}
-
-/* Per-card pause button (halts the session; the run stays open and resumable). */
-.pauseButton {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-state-warn-primary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.pauseButton:hover {
-  background: var(--dsw-specific-input-major);
-}
-
-/* Per-card continue button (re-prompts the paused session). */
-.continueButton {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-state-success-primary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.continueButton:hover {
   background: var(--dsw-specific-input-major);
 }
 
@@ -1172,10 +1137,12 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   padding: 1px 8px;
 }
 
-/* Wrapper for a standalone card carrying an inline action: the card plus its
-   action button (the card itself is a <button>, so the action sits beside
-   it). Relative so a settled card's archive glyph can float over the card's
-   own right edge instead of shrinking or widening the row. */
+/* Wrapper for a standalone card carrying a contextual action (approve / run /
+   pause / continue / archive): relative, so the action can float on the card's
+   own right edge — inside the card's bounds, exactly like a grouped member's
+   row (.groupMember). The card itself is a <button>, so the action stays a DOM
+   sibling (it cannot be nested); the overlay simply sits on top of the card
+   instead of beside it, and the flex sizing keeps the card filling the column. */
 .cardWrap {
   position: relative;
   display: flex;
@@ -1188,48 +1155,17 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   min-width: 0;
 }
 
-.approveButton {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-state-success-primary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.approveButton:hover {
-  background: var(--dsw-specific-input-major);
-}
-
-/* The per-card start button (sits beside a runnable card, like approve). */
-.runButton {
-  flex: none;
-  align-self: center;
-  margin: 0 4px;
-  padding: 4px 6px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.runButton:hover {
-  background: var(--dsw-specific-input-major);
+/* Cards carrying the action overlay keep their text clear of the circle. */
+.cardWrap[data-action] .card {
+  padding-right: 38px;
 }
 
 /* The archive affordance floating over a settled (done/failed) standalone
    card's right edge: the same official DSH "Archive session" glyph as the
-   sidebar rows and the header/group-banner hide buttons. Overlaid (absolute,
-   no padding shift), so the card's content keeps its full width; always
-   visible so settled-card clean-up stays discoverable. */
+   sidebar rows and the header/group-banner hide buttons. Overlaid (absolute),
+   so it never shifts the card's content; the wrapper reserves right padding on
+   the card (.cardWrap[data-action]) so content stays clear of the glyph.
+   Always visible so settled-card clean-up stays discoverable. */
 .cardArchive {
   position: absolute;
   top: 50%;

@@ -117,27 +117,13 @@ function openQuestionOf(task: TaskRecord, sessionQuestions: Record<string, AllTa
   return question === undefined ? undefined : { sessionId: open.sessionId, question }
 }
 
-/** The per-card start button for standalone (ungrouped) cards: sits beside the card, like approve. */
-function RunTaskButton({ task, onRun }: { task: TaskRecord; onRun: (id: string) => void }) {
-  return (
-    <button
-      type="button"
-      className={css.runButton}
-      aria-label={t('card.run')}
-      title={t('card.run')}
-      onClick={() => { onRun(task.id) }}
-    >
-      ▶
-    </button>
-  )
-}
-
 /**
  * The archive affordance for a settled (done/failed) standalone card. It is
  * the same official DSH "Archive session" glyph the sidebar session rows use;
- * it floats over the card's right edge (a sibling in the DOM, since the card
- * itself is a <button>) without shifting the card's content, and it opens the
- * hide dialog for this one task.
+ * it floats over the card's right edge inside the card's bounds (a sibling in
+ * the DOM, since the card itself is a <button>), and it opens the hide dialog
+ * for this one task. The wrapper reserves right padding on the card so content
+ * never runs under the glyph.
  */
 function ArchiveTaskButton({ onHide }: { onHide: () => void }) {
   return (
@@ -153,6 +139,14 @@ function ArchiveTaskButton({ onHide }: { onHide: () => void }) {
     </button>
   )
 }
+
+/** One contextual action for a standalone (ungrouped) card: the approve / run /
+ *  pause / continue circles overlay the card's right edge as `.cardAction`, and
+ *  a settled card's archive glyph overlays it as `.cardArchive` — both inside
+ *  the card's bounds but DOM siblings, since the card itself is a <button>. */
+type StandaloneAction =
+  | { kind: 'approve' | 'run' | 'pause' | 'continue'; label: string; glyph: string; onAct: () => void }
+  | { kind: 'archive'; onHide: () => void }
 
 /**
  * Memoized per-card adapter: with a stable `onOpen` from the board and an
@@ -1000,6 +994,69 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                 onAnswer={answerInSession}
               />
             )
+            // One standalone-card renderer shared by the column's ungrouped
+            // stack and its Unassigned section (the callbacks are identical).
+            // Like a grouped member, the card gets one contextual action
+            // circle on its right edge — inside the card's bounds, floated
+            // over it by the relative wrapper. The card itself stays a
+            // <button>, so the action remains a DOM sibling (never nested).
+            const renderStandaloneCard = (task: TaskRecord): ReactElement => {
+              const question = openQuestionOf(task, sessionQuestions)
+              const pending = snapshot.pendingTaskIds.includes(task.id)
+              const paused = task.status === 'running' && openExecutionOf(task)?.pausedAt !== undefined
+              // One contextual action per state: unapproved → approve;
+              // runnable → run; running → pause (or continue while paused);
+              // settled → the archive glyph. Same priority as before.
+              const action: StandaloneAction | undefined = task.approved === false
+                ? { kind: 'approve', label: t('card.approve'), glyph: '✓', onAct: () => { controller.setApproved(task.id, true) } }
+                : canStartTask(task)
+                  ? { kind: 'run', label: t('card.run'), glyph: '▶', onAct: () => { void controller.runTask(task.id) } }
+                  : task.status === 'running'
+                    ? paused
+                      ? { kind: 'continue', label: t('card.continue'), glyph: '▶', onAct: () => { void controller.continueTask(task.id) } }
+                      : { kind: 'pause', label: t('card.pause'), glyph: '⏸', onAct: () => { void controller.pauseTask(task.id) } }
+                    : ARCHIVABLE_STATUSES.includes(task.status)
+                      ? { kind: 'archive', onHide: () => { openHideDialog(column.status, [task.id]) } }
+                      : undefined
+              // The circle's ring spins while a run is live or an action is in
+              // flight — the same merged pending indicator grouped members
+              // carry (a paused run keeps the circle quiet, exactly where the
+              // card's own meta-row spinner used to rest).
+              const active = action !== undefined && !paused && (task.status === 'running' || pending)
+              return (
+                <div key={task.id} className={action === undefined ? undefined : css.cardWrap} data-action={action?.kind}>
+                  <MemoTaskCard
+                    task={task}
+                    pending={pending}
+                    timeZone={snapshot.host?.scheduler.timeZone}
+                    onOpen={openTask}
+                    onDragStart={startDrag}
+                    hideSpinner={action !== undefined}
+                    waiting={question !== undefined}
+                    waitingHint={question?.question.summary}
+                    answerSessionId={question?.sessionId}
+                    onAnswer={answerInSession}
+                  />
+                  {action === undefined
+                    ? null
+                    : action.kind === 'archive'
+                      ? <ArchiveTaskButton onHide={action.onHide} />
+                      : (
+                        <button
+                          type="button"
+                          className={css.cardAction}
+                          data-action={action.kind}
+                          data-active={active || undefined}
+                          aria-label={action.label}
+                          title={action.label}
+                          onClick={action.onAct}
+                        >
+                          {action.glyph}
+                        </button>
+                      )}
+                </div>
+              )
+            }
             return (
               <section
                 key={column.status}
@@ -1032,54 +1089,7 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                   onDragLeave={handleCardsDragLeave(column.status)}
                   onDrop={handleCardsDrop(column.status)}
                 >
-                  {ungrouped.map(task => {
-                    const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
-                    const open = task.executions.find(execution => execution.endedAt === undefined)
-                    const paused = task.status === 'running' && open?.pausedAt !== undefined
-                    const question = openQuestionOf(task, sessionQuestions)
-                    return (
-                      <div key={task.id} className={showAction ? css.cardWrap : undefined}>
-                        <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} waiting={question !== undefined} waitingHint={question?.question.summary} answerSessionId={question?.sessionId} onAnswer={answerInSession} />
-                        {task.approved === false ? (
-                          <button
-                            type="button"
-                            className={css.approveButton}
-                            aria-label={t('card.approve')}
-                            title={t('card.approve')}
-                            onClick={() => { controller.setApproved(task.id, true) }}
-                          >
-                            ✓
-                          </button>
-                        ) : canStartTask(task) ? (
-                          <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
-                        ) : task.status === 'running' ? (
-                          paused ? (
-                            <button
-                              type="button"
-                              className={css.continueButton}
-                              aria-label={t('card.continue')}
-                              title={t('card.continue')}
-                              onClick={() => { void controller.continueTask(task.id) }}
-                            >
-                              ▶
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className={css.pauseButton}
-                              aria-label={t('card.pause')}
-                              title={t('card.pause')}
-                              onClick={() => { void controller.pauseTask(task.id) }}
-                            >
-                              ⏸
-                            </button>
-                          )
-                        ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
-                          <ArchiveTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
-                        ) : null}
-                      </div>
-                    )
-                  })}
+                  {ungrouped.map(renderStandaloneCard)}
                   {workspaceId !== undefined && (unassignedFlat.length > 0 || unassignedGrouped.length > 0) && (
                     <div
                       className={css.unassignedSection}
@@ -1091,54 +1101,7 @@ function KanbanView({ controller, snapshot, tasks, groups, workspaceId, onBack }
                         <span className={css.groupCount}>{unassigned.length}</span>
                       </header>
                       {unassignedGrouped.map(({ group, members }) => renderGroupSection(group, members))}
-                      {unassignedFlat.map(task => {
-                        const showAction = task.approved === false || canStartTask(task) || task.status === 'running' || ARCHIVABLE_STATUSES.includes(task.status)
-                        const open = task.executions.find(execution => execution.endedAt === undefined)
-                        const paused = task.status === 'running' && open?.pausedAt !== undefined
-                        const question = openQuestionOf(task, sessionQuestions)
-                        return (
-                          <div key={task.id} className={showAction ? css.cardWrap : undefined}>
-                            <MemoTaskCard task={task} pending={snapshot.pendingTaskIds.includes(task.id)} timeZone={snapshot.host?.scheduler.timeZone} onOpen={openTask} onDragStart={startDrag} waiting={question !== undefined} waitingHint={question?.question.summary} answerSessionId={question?.sessionId} onAnswer={answerInSession} />
-                            {task.approved === false ? (
-                              <button
-                                type="button"
-                                className={css.approveButton}
-                                aria-label={t('card.approve')}
-                                title={t('card.approve')}
-                                onClick={() => { controller.setApproved(task.id, true) }}
-                              >
-                                ✓
-                              </button>
-                            ) : canStartTask(task) ? (
-                              <RunTaskButton task={task} onRun={id => { void controller.runTask(id) }} />
-                            ) : task.status === 'running' ? (
-                              paused ? (
-                                <button
-                                  type="button"
-                                  className={css.continueButton}
-                                  aria-label={t('card.continue')}
-                                  title={t('card.continue')}
-                                  onClick={() => { void controller.continueTask(task.id) }}
-                                >
-                                  ▶
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className={css.pauseButton}
-                                  aria-label={t('card.pause')}
-                                  title={t('card.pause')}
-                                  onClick={() => { void controller.pauseTask(task.id) }}
-                                >
-                                  ⏸
-                                </button>
-                              )
-                            ) : ARCHIVABLE_STATUSES.includes(task.status) ? (
-                              <ArchiveTaskButton onHide={() => { openHideDialog(column.status, [task.id]) }} />
-                            ) : null}
-                          </div>
-                        )
-                      })}
+                      {unassignedFlat.map(renderStandaloneCard)}
                     </div>
                   )}
                   {grouped.map(({ group, members }) => renderGroupSection(group, members))}

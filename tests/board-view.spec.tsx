@@ -1542,3 +1542,97 @@ describe('pause / continue affordances', () => {
     expect(container.querySelector(`button[aria-label="${t('group.continue')}"]`)).not.toBeNull()
   })
 })
+
+describe('standalone card action overlays', () => {
+  async function renderBoard(snapshot: Partial<ControllerSnapshot>, overrides?: Partial<BoardController>): Promise<{ container: HTMLElement }> {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    await act(async () => { root.render(<AllTasks controller={fakeController(snapshot, overrides)} />) })
+    await openAllTasks(container)
+    return { container }
+  }
+
+  function cardByTitle(container: HTMLElement, title: string): HTMLElement {
+    const card = Array.from(container.querySelectorAll('button[data-dsh-part="card"]') as NodeListOf<HTMLElement>)
+      .find(candidate => candidate.textContent?.includes(title))
+    expect(card, `card "${title}"`).toBeDefined()
+    return card!
+  }
+
+  /** The standalone action button for a card: a DOM sibling of the card inside
+   *  the relative wrapper (the card itself is a <button>, so nothing nests). */
+  function overlayOf(wrap: HTMLElement, ariaLabel: string): HTMLButtonElement {
+    const overlay = Array.from(wrap.querySelectorAll('button'))
+      .find(button => button.getAttribute('aria-label') === ariaLabel) as HTMLButtonElement | undefined
+    expect(overlay, `action "${ariaLabel}"`).toBeDefined()
+    return overlay!
+  }
+
+  it('renders approve/run/pause actions inside the card bounds as overlays (no nested buttons)', async () => {
+    const { container } = await renderBoard({
+      tasks: [
+        task({ id: 't-approve', title: 'To approve', status: 'todo', approved: false }),
+        task({ id: 't-run', title: 'To run', status: 'todo' }),
+        task({
+          id: 't-live', title: 'Live run', status: 'running',
+          executions: [{ id: 'exec-1', sessionId: 'session-a', startedAt: 100, endedAt: undefined, result: undefined, error: undefined }],
+        }),
+        task({ id: 't-done', title: 'Settled', status: 'done' }),
+      ],
+    })
+
+    // Every standalone action lives in the card's wrapper — never inside the
+    // card button — and the wrapper records the action kind so the CSS can pad
+    // the card's text clear of the overlay.
+    const approve = cardByTitle(container, 'To approve')
+    const approveWrap = approve.parentElement!
+    expect(approveWrap.getAttribute('data-action')).toBe('approve')
+    expect(approve.querySelector('button')).toBeNull()
+    expect(overlayOf(approveWrap, t('card.approve')).parentElement).toBe(approveWrap)
+
+    const run = cardByTitle(container, 'To run')
+    const runWrap = run.parentElement!
+    expect(runWrap.getAttribute('data-action')).toBe('run')
+    expect(run.querySelector('button')).toBeNull()
+    expect(overlayOf(runWrap, t('card.run')).parentElement).toBe(runWrap)
+
+    const live = cardByTitle(container, 'Live run')
+    const liveWrap = live.parentElement!
+    expect(liveWrap.getAttribute('data-action')).toBe('pause')
+    expect(live.querySelector('button')).toBeNull()
+    const pause = overlayOf(liveWrap, t('card.pause'))
+    expect(pause.parentElement).toBe(liveWrap)
+    // A live run shows the merged pending ring around the pause circle.
+    expect(pause.hasAttribute('data-active')).toBe(true)
+
+    // The settled card keeps the archive glyph as an overlay sibling.
+    const settled = cardByTitle(container, 'Settled')
+    const settledWrap = settled.parentElement!
+    expect(settledWrap.getAttribute('data-action')).toBe('archive')
+    expect(settled.querySelector('button')).toBeNull()
+    const archive = overlayOf(settledWrap, t('hide.taskTitle'))
+    expect(archive.parentElement).toBe(settledWrap)
+    expect(archive.querySelector('svg')).not.toBeNull()
+  })
+
+  it('offers continue (not pause) on a paused running card and keeps its circle quiet', async () => {
+    const { container } = await renderBoard({
+      tasks: [task({
+        id: 't-paused', title: 'Paused run', status: 'running',
+        executions: [{ id: 'exec-1', sessionId: 'session-a', startedAt: 100, endedAt: undefined, result: undefined, error: undefined, pausedAt: 200 }],
+      })],
+    })
+    const paused = cardByTitle(container, 'Paused run')
+    const wrap = paused.parentElement!
+    expect(wrap.getAttribute('data-action')).toBe('continue')
+    const continueButton = overlayOf(wrap, t('card.continue'))
+    // Paused = nothing spinning (the old card spinner rested while paused).
+    expect(continueButton.hasAttribute('data-active')).toBe(false)
+    // No pause circle on a paused card — only the continue overlay.
+    const pauseCircles = Array.from(wrap.querySelectorAll('button'))
+      .filter(button => button.getAttribute('aria-label') === t('card.pause'))
+    expect(pauseCircles).toHaveLength(0)
+  })
+})
