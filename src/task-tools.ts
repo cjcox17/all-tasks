@@ -1,19 +1,22 @@
 /**
- * task-tools: the DSH tools an agent session uses to create and inspect board
- * tasks — `task_create`, `task_list`, and `task_get`. They are the Host side of
- * "an AI session can create other tasks": every mutation goes through the same
- * fail-closed protocol path as the browser (the Host ledger + action union), so
- * a disabled board refuses creates and every ledger validation (blank title,
- * unknown/mismatched group, invalid cron) applies unchanged.
+ * task-tools: the DSH tools an agent session uses to create, inspect, and
+ * delete board tasks — `task_create`, `task_list`, `task_get`, and
+ * `task_delete`. They are the Host side of "an AI session can manage board
+ * tasks": every mutation goes through the same fail-closed protocol path as
+ * the browser (the Host ledger + action union), so a disabled board refuses
+ * creates/deletes and every ledger validation (blank title, unknown/mismatched
+ * group, invalid cron, unknown id, running task) applies unchanged.
  *
  * Agent-created tasks are minted with `source: 'agent'` (the board shows the
  * badge) and DEFAULT to unapproved: a task created here can never run by any
  * means until a human approves it on the board, unless the caller explicitly
  * passes `approved: true`.
  *
- * The tools are deliberately read/create only — no update, run, approve, or
- * delete: those remain human board actions, so an agent can queue work but
- * never mutate or execute existing tasks on its own.
+ * The tools are deliberately read/create/delete only — no update, run,
+ * approve, or archive: those remain human board actions, so an agent can queue
+ * work, inspect it, and remove tasks (through the ledger's own delete rules:
+ * an existing task that is not running), but never mutate, execute, or approve
+ * existing tasks on its own.
  */
 import { randomUUID } from 'node:crypto'
 // Type-only imports are erased and never reach the bundle; this VALUE import
@@ -33,13 +36,14 @@ import type { AllTasksAction } from './protocol.ts'
 
 /** Host seam the tools call through (wired to `AllTasksHostService` in index.ts). */
 export interface TaskToolsDeps {
-  /** Current Host tasks (the read path for `task_list` / `task_get`). */
+  /** Current Host tasks (the read path for `task_list` / `task_get` / `task_delete`). */
   snapshot(): { tasks: readonly TaskRecord[] }
   /**
    * Apply one Host action through the same fail-closed path as the browser
-   * (the `task_create` write path; throws when the board is disabled).
+   * (the `task_create` / `task_delete` write paths; throws when the board is
+   * disabled).
    */
-  apply(requestId: string, action: Extract<AllTasksAction, { kind: 'create' }>): { tasks: readonly TaskRecord[] }
+  apply(requestId: string, action: Extract<AllTasksAction, { kind: 'create' | 'delete' }>): { tasks: readonly TaskRecord[] }
 }
 
 /** Compact on-board row shared by `task_create` and `task_list` results. */
@@ -104,17 +108,25 @@ interface TaskGetValue {
   }>
 }
 
+/** The delete tool's canonical output value (see {@link TASK_DELETE_OUTPUT}). */
+interface TaskDeleteValue {
+  deleted: true
+  id: string
+  title: string
+}
+
 export const TASK_CREATE_TOOL_NAME = 'task_create'
 export const TASK_LIST_TOOL_NAME = 'task_list'
 export const TASK_GET_TOOL_NAME = 'task_get'
+export const TASK_DELETE_TOOL_NAME = 'task_delete'
 
 const TASK_STATUS_ENUM = [...ALL_STATUSES] as const
 
 /**
- * Build the three agent task tools against a Host seam. Each is registered on
+ * Build the four agent task tools against a Host seam. Each is registered on
  * `ctx.tools` by the plugin loader (see `src/index.ts`).
  * @param deps - the Host snapshot/apply seam.
- * @returns the three tool definitions, in registration order.
+ * @returns the four tool definitions, in registration order.
  */
 export function createTaskTools(deps: TaskToolsDeps): ToolDefinition[] {
   return [
@@ -419,6 +431,52 @@ export function createTaskTools(deps: TaskToolsDeps): ToolDefinition[] {
             ...(execution.error === undefined ? {} : { error: execution.error }),
           })),
         }
+      },
+    }),
+    defineTool({
+      name: TASK_DELETE_TOOL_NAME,
+      description: 'Delete a task from the all-tasks board (the kanban of DSH agent tasks) by id. The deletion goes through the same fail-closed ledger path as the board, so the same rules apply: an unknown id throws, and a task that is running (or has an open execution) cannot be deleted. The task and its executions leave the board — there is no undo. Use the id from `task_list` or `task_get`.',
+      parameters: {
+        taskId: {
+          type: 'string',
+          required: true,
+          description: 'The task id to delete (from `task_list` or `task_get`).',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            deleted: { type: 'boolean', required: true },
+            id: { type: 'string', required: true },
+            title: { type: 'string', required: true },
+          },
+        },
+        render: (_args, value: TaskDeleteValue) => [{
+          type: 'text',
+          text: `Deleted task ${JSON.stringify(value.title)} (${value.id}).`,
+        }],
+      },
+      presentCall: (args) => ({
+        card: 'generic',
+        title: 'Delete board task',
+        kind: 'other',
+        rawInput: args.taskId,
+      }),
+      async execute(args): Promise<TaskDeleteValue> {
+        // The snapshot lookup only captures the title for the confirmation.
+        // The authoritative delete always goes through the Host's fail-closed
+        // ledger path (`kind: 'delete'`), whose errors — `task not found` for
+        // an unknown id, `running task cannot be deleted` for a running one —
+        // propagate unchanged.
+        const task = deps.snapshot().tasks.find(candidate => candidate.id === args.taskId)
+        deps.apply(randomUUID(), { kind: 'delete', taskId: args.taskId })
+        // A successful apply() proves the task existed a moment ago, so this
+        // only fires when the snapshot missed it (never on one synchronous
+        // Host); refuse to fabricate a confirmation title either way.
+        if (task === undefined) throw new Error(`task_delete: no task with id ${JSON.stringify(args.taskId)}`)
+        return { deleted: true, id: task.id, title: task.title }
       },
     }),
   ]

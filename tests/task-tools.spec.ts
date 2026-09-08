@@ -7,6 +7,7 @@ import type { AllTasksAction } from '../src/protocol.ts'
 import {
   createTaskTools,
   TASK_CREATE_TOOL_NAME,
+  TASK_DELETE_TOOL_NAME,
   TASK_GET_TOOL_NAME,
   TASK_LIST_TOOL_NAME,
   type TaskToolsDeps,
@@ -219,5 +220,47 @@ describe('task_get tool', () => {
     const { tools } = harness()
     await expect(execute(toolOf(tools, TASK_GET_TOOL_NAME), { taskId: 'missing' }))
       .rejects.toThrow('no task with id')
+  })
+})
+
+describe('task_delete tool', () => {
+  it('registers task_delete as a fourth tool', () => {
+    const { tools } = harness()
+    expect(tools.map(tool => tool.name)).toContain(TASK_DELETE_TOOL_NAME)
+    expect(toolOf(tools, TASK_DELETE_TOOL_NAME).name).toBe(TASK_DELETE_TOOL_NAME)
+  })
+
+  it('deletes an existing task and returns the confirmation', async () => {
+    const { ledger, tools } = harness()
+    const created = await execute<{ id: string; title: string }>(
+      toolOf(tools, TASK_CREATE_TOOL_NAME),
+      { title: 'Remove me', prompt: 'work' },
+    )
+    const deleted = await execute<{ deleted: boolean; id: string; title: string }>(
+      toolOf(tools, TASK_DELETE_TOOL_NAME),
+      { taskId: created.id },
+    )
+    expect(deleted).toEqual({ deleted: true, id: created.id, title: 'Remove me' })
+    // The ledger really dropped the task (the tool must go through the Host
+    // delete path, not hide the row).
+    expect(ledger.taskById(created.id)).toBeUndefined()
+  })
+
+  it('throws when the id is unknown', async () => {
+    const { tools } = harness()
+    await expect(execute(toolOf(tools, TASK_DELETE_TOOL_NAME), { taskId: 'missing' }))
+      .rejects.toThrow('task not found')
+  })
+
+  it('throws when the task is running', async () => {
+    const { ledger, tools } = harness()
+    // Create an approved task and open an execution on it (ledger `run` moves
+    // it to running), then delete must refuse through the same ledger rule.
+    ledger.applyRequest('create', { kind: 'create', id: 't-busy', input: { title: 'Busy', description: '', prompt: 'go' } })
+    ledger.applyRequest('run', { kind: 'run', taskId: 't-busy' })
+    await expect(execute(toolOf(tools, TASK_DELETE_TOOL_NAME), { taskId: 't-busy' }))
+      .rejects.toThrow('running task cannot be deleted')
+    // The running task survives the refused delete.
+    expect(ledger.taskById('t-busy')?.title).toBe('Busy')
   })
 })

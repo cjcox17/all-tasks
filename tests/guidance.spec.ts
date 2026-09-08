@@ -8,10 +8,11 @@ describe('all-tasks model guidance', () => {
     expect(ALL_TASKS_GUIDANCE).toContain('completed')
   })
 
-  it('announces the agent task-creation tools and their unapproved default', () => {
+  it('announces the agent task tools, their unapproved default, and the delete rule', () => {
     expect(ALL_TASKS_GUIDANCE).toContain('task_create')
     expect(ALL_TASKS_GUIDANCE).toContain('task_list')
     expect(ALL_TASKS_GUIDANCE).toContain('task_get')
+    expect(ALL_TASKS_GUIDANCE).toContain('task_delete')
     expect(ALL_TASKS_GUIDANCE).toContain('approved: true')
   })
 })
