@@ -1081,15 +1081,15 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
   pointer-events: none;
 }
 
-/* Approval-state pills on the card meta row: unapproved pops (warning tint),
+/* Approval-state pills on the card meta row: unapproved pops (danger-red tint),
    approved stays quiet (success-tinted outline) so waiting tasks stand out. */
 .cardUnapproved {
   flex: none;
   font-size: 11px;
   font-weight: 600;
-  color: var(--dsw-alias-state-warn-primary);
-  background: var(--dsw-alias-state-warn-secondary);
-  border: 1px solid var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  border: 1px solid var(--dsw-alias-state-error-primary);
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -1908,9 +1908,9 @@ html[data-dsh-workflows-active]:not([data-dsh-all-tasks-active]):not([data-dsh-s
 }
 
 .taskBadge[data-kind='unapproved'] {
-  color: var(--dsw-alias-state-warn-primary);
-  background: var(--dsw-alias-state-warn-secondary);
-  border: 1px solid var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  border: 1px solid var(--dsw-alias-state-error-primary);
 }
 
 /* A workspace with nothing on board shows a quiet hint when expanded. */
