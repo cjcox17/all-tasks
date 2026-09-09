@@ -13,6 +13,7 @@ import {
   groupCompactsBetween,
   groupFinalStepBlocked,
   groupFinalStepReady,
+  groupIsDead,
   groupRuntimeStatus,
   groupSequenceStarted,
   groupSharesSession,
@@ -275,6 +276,69 @@ describe('group deletion and persisted rows', () => {
     // A reference that is not a member of the group's scope is dropped.
     expect(groups[1]!.finalStepTaskId).toBeUndefined()
     expect(groups[1]!.finalStepRequireSuccess).toBeUndefined()
+  })
+})
+
+describe('group liveness (dead-group self-delete eligibility)', () => {
+  /** A group row carrying the flags groupIsDead reads. */
+  function group(overrides: Partial<TaskGroupRecord> = {}): TaskGroupRecord {
+    return { ...createGroup({ name: 'G' }, NOW, 'g1')!, ...overrides }
+  }
+
+  /**
+   * A member of g1. A done/failed member carries a settled execution; a
+   * running member carries an open one; backlog/todo members never ran.
+   */
+  function member(
+    id: string,
+    status: 'backlog' | 'todo' | 'running' | 'done' | 'failed' = 'done',
+    overrides: Partial<TaskRecord> = {},
+  ): TaskRecord {
+    const executions = status === 'done' || status === 'failed'
+      ? [{ id: `e-${id}`, sessionId: 's', startedAt: NOW, endedAt: NOW + 1, result: status === 'done' ? 'succeeded' as const : 'failed' as const, error: undefined }]
+      : status === 'running'
+        ? [{ id: `e-${id}`, sessionId: 's', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined }]
+        : []
+    return { ...task(id, { groupId: 'g1', status }), executions, ...overrides }
+  }
+
+  it('treats an empty group as dead — unless it is stopped or has an armed schedule', () => {
+    expect(groupIsDead(group(), [])).toBe(true)
+    // A fresh group the user is still building is fine as long as no guard trips.
+    expect(groupIsDead(group(), [member('a', 'todo')])).toBe(false)
+    // A disabled schedule does not protect (nothing will fire again).
+    expect(groupIsDead(group({ schedule: { enabled: false, cron: '0 9 * * *' } }), [])).toBe(true)
+    // A stopped group is deliberately frozen: it must not vanish.
+    expect(groupIsDead(group({ stopped: true }), [])).toBe(false)
+    // An armed cron must stay to fire again.
+    expect(groupIsDead(group({ schedule: { enabled: true, cron: '0 9 * * *' } }), [])).toBe(false)
+    // Either guard alone keeps an otherwise-exhausted group alive too.
+    expect(groupIsDead(group({ stopped: true }), [member('a', 'done')])).toBe(false)
+    expect(groupIsDead(group({ schedule: { enabled: true, cron: '0 9 * * *' } }), [member('a', 'done')])).toBe(false)
+  })
+
+  it('is dead once every member is settled (done or failed) or archived', () => {
+    const allDone = [member('a'), member('b')]
+    expect(groupIsDead(group(), allDone)).toBe(true)
+    // Failed/cancelled members count as settled too.
+    expect(groupIsDead(group(), [member('a', 'done'), member('b', 'failed')])).toBe(true)
+    // Archived members are out of the sequence entirely.
+    expect(groupIsDead(group(), [member('a', 'done', { archivedAt: NOW }), member('b', 'done')])).toBe(true)
+    expect(groupIsDead(group(), [member('a', 'done', { archivedAt: NOW }), member('b', 'failed', { archivedAt: NOW })])).toBe(true)
+    // Members reset for a new cycle (backlog/todo) keep the group alive.
+    expect(groupIsDead(group(), [member('a', 'done'), member('b', 'todo')])).toBe(false)
+    expect(groupIsDead(group(), [member('a', 'failed'), member('b', 'backlog')])).toBe(false)
+    // A mixed group with any live member is not dead.
+    expect(groupIsDead(group(), [member('a', 'done'), member('b', 'done', { archivedAt: NOW }), member('c', 'todo')])).toBe(false)
+  })
+
+  it('a running (open-execution) member keeps the group alive', () => {
+    expect(groupIsDead(group(), [member('a', 'done'), member('b', 'running')])).toBe(false)
+    // Even a done/failed status with an open execution is not settled.
+    const openDespiteDone = { ...member('a', 'done'), executions: [{
+      id: 'e-a', sessionId: 's', startedAt: NOW, endedAt: undefined, result: undefined, error: undefined,
+    }] }
+    expect(groupIsDead(group(), [openDespiteDone])).toBe(false)
   })
 })
 

@@ -32,7 +32,7 @@ import {
   type DailyWindow,
 } from './endpoints.ts'
 import { isValidCron, nextRunAtMs } from './schedule.ts'
-import { normalizeTargetId, type ExecutionQueuedReason, type TaskRecord } from './tasks.ts'
+import { normalizeTargetId, openExecutionOf, type ExecutionQueuedReason, type TaskRecord } from './tasks.ts'
 export type { ExecutionQueuedReason } from './tasks.ts'
 
 /** Bound on group name / task-id string length (defense-in-depth). */
@@ -502,6 +502,32 @@ export function applyDeleteGroup(
     groups: groups.filter(group => group.id !== groupId),
     applied: true,
   }
+}
+
+/**
+ * Whether a group is dead — it has no live members left and no reason to stay
+ * on the board. All of the following must hold:
+ *  - the schedule is not armed (`schedule.enabled !== true`): a recurring
+ *    group must persist to fire again, so an armed cron always keeps the
+ *    group alive even when every member has settled;
+ *  - the group is not stopped (`stopped !== true`): a deliberately frozen
+ *    group must not vanish while the user keeps it stopped;
+ *  - every member task is archived or settled (`done`/`failed`) with no open
+ *    execution (a running/queued/paused member — or one reset to a
+ *    pre-execution column for a new cycle — keeps the group alive).
+ * A group with no members at all qualifies trivially (subject to the two
+ * guards above). The Host prunes dead groups automatically — they delete
+ * themselves — so an exhausted batch never lingers as an empty banner.
+ */
+export function groupIsDead(
+  group: Pick<TaskGroupRecord, 'schedule' | 'stopped'>,
+  members: readonly TaskRecord[],
+): boolean {
+  if (group.schedule?.enabled === true) return false
+  if (group.stopped === true) return false
+  return members.every(member =>
+    member.archivedAt !== undefined
+    || ((member.status === 'done' || member.status === 'failed') && openExecutionOf(member) === undefined))
 }
 
 /** Roll a group's schedule rule forward (scheduler callback); no-op without a rule. */

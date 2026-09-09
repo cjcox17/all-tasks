@@ -612,6 +612,10 @@ describe('HostTaskLedger', () => {
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
     ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    // c is a live member that never runs: it keeps the group alive past the
+    // stop (all settled members would otherwise let the group self-delete as
+    // soon as it was resumed — stopped is the guard that preserves it).
+    ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g1' } })
     const a = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
     const b = ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
     const aExec = a.state.tasks.find(value => value.id === 'a')!.executions[0].id
@@ -628,7 +632,8 @@ describe('HostTaskLedger', () => {
     }
     // Members of a stopped group cannot be run again until resumed.
     expect(() => ledger.applyRequest('run-a-2', { kind: 'run', taskId: 'a' })).toThrow('group is stopped')
-    // Resume clears the flag and allows runs again.
+    // Resume clears the flag and allows runs again (c is still live, so the
+    // group survives the resume and is not self-deleted).
     ledger.applyRequest('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
     expect(ledger.state().groups[0]!.stopped).toBeUndefined()
     expect(ledger.applyRequest('run-a-3', { kind: 'run', taskId: 'a' }).state.tasks.find(value => value.id === 'a')!.status).toBe('running')
@@ -793,12 +798,15 @@ describe('HostTaskLedger', () => {
 
   it('clears the auto-advance hold on run-group, a manual run, and a group-cron roll', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    // g1: a ran and settled; b joins afterwards and is held.
+    // g1: a runs; b joins mid-run and is held; a settles and the group stays
+    // alive on b (with only settled members the group would self-delete).
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'sequential' } })
     ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
-    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
+    expect(ledger.state().groups.some(group => group.id === 'g1')).toBe(true)
     expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
 
     // A manual Start-group is an explicit new cycle: the hold clears and the
@@ -829,12 +837,14 @@ describe('HostTaskLedger', () => {
 
   it('resuming a stopped group or continuing a paused group clears every auto-advance hold (one ▶ press)', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    // g1: a ran and settled; b joins afterwards and is held; then the group is stopped.
+    // g1: a runs; b joins mid-run and is held; a settles (b keeps the group
+    // alive — with only settled members it would self-delete); then stop.
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'Stopped', mode: 'sequential' } })
     ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
-    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
     expect(ledger.state().tasks.find(value => value.id === 'b')!.deferAutoStart).toBe(true)
     ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
     expect(ledger.state().groups[0]!.stopped).toBe(true)
@@ -852,12 +862,13 @@ describe('HostTaskLedger', () => {
     ledger.applyRequest('rename', { kind: 'update-group', groupId: 'g1', patch: { name: 'Renamed' } })
     expect(ledger.state().tasks.find(value => value.id === 'c')!.deferAutoStart).toBe(true)
 
-    // g2: a ran and settled; b joins afterwards and is held; then the group is paused.
+    // g2: a2 runs; b2 joins mid-run and is held; a2 settles; then pause.
     ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Paused', mode: 'sequential' } })
     ledger.applyRequest('create-a2', { kind: 'create', id: 'a2', input: { title: 'A2', description: '', prompt: '', groupId: 'g2' } })
     ledger.applyRequest('run-a2', { kind: 'run', taskId: 'a2' })
-    ledger.settle('a2', ledger.state().tasks.find(value => value.id === 'a2')!.executions[0]!.id, 'succeeded')
     ledger.applyRequest('create-b2', { kind: 'create', id: 'b2', input: { title: 'B2', description: '', prompt: '', groupId: 'g2' } })
+    expect(ledger.state().tasks.find(value => value.id === 'b2')!.deferAutoStart).toBe(true)
+    ledger.settle('a2', ledger.state().tasks.find(value => value.id === 'a2')!.executions[0]!.id, 'succeeded')
     expect(ledger.state().tasks.find(value => value.id === 'b2')!.deferAutoStart).toBe(true)
     ledger.applyRequest('pause-group', { kind: 'pause-group', groupId: 'g2' })
     expect(ledger.state().groups.find(value => value.id === 'g2')!.paused).toBe(true)
@@ -871,12 +882,13 @@ describe('HostTaskLedger', () => {
 
   it('excludes held members from the group runtime runnable set and the openExecution seam', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    // g1: a ran and settled; b joins afterwards and is held. g2 stays fresh.
+    // g1: a runs; b joins mid-run and is held; a settles (b keeps the group
+    // alive — with only settled members it would self-delete). g2 stays fresh.
     ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
     ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
     ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
-    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
     ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: '', groupId: 'g1' } })
+    ledger.settle('a', ledger.state().tasks.find(value => value.id === 'a')!.executions[0]!.id, 'succeeded')
     ledger.applyRequest('group-2', { kind: 'create-group', id: 'g2', input: { name: 'Fresh' } })
     ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: '', groupId: 'g2' } })
 
@@ -1239,5 +1251,149 @@ describe('HostTaskLedger workspace-scoped groups', () => {
     expect(ledger.state().groups[0].order).toEqual(['t3'])
     expect(ledger.state().tasks.filter(t => t.groupId === 'g1').map(t => t.id)).toEqual(['t3'])
     ledger.dispose()
+  })
+})
+
+describe('HostTaskLedger dead-group self-removal', () => {
+  it('auto-removes a group once every member settles and ungroups the members (their tasks stay)', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
+    for (const id of ['a', 'b']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+    }
+    const openedA = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    const openedB = ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
+    const aExec = openedA.state.tasks.find(value => value.id === 'a')!.executions[0].id
+    const bExec = openedB.state.tasks.find(value => value.id === 'b')!.executions[0].id
+
+    // Settling one of two running members leaves the other open: group stays.
+    ledger.settle('a', aExec, 'succeeded')
+    expect(ledger.state().groups.some(group => group.id === 'g1')).toBe(true)
+    expect(ledger.state().tasks.find(value => value.id === 'a')!.groupId).toBe('g1')
+
+    // Settling the last open member ends the group: it deletes itself in the
+    // same ledger revision as the settle, and its members become standalone.
+    const revisionBefore = ledger.state().revision
+    ledger.settle('b', bExec, 'succeeded')
+    const state = ledger.state()
+    expect(state.groups).toHaveLength(0)
+    expect(state.revision).toBe(revisionBefore + 1) // the prune rides the settle's commit
+    for (const id of ['a', 'b']) {
+      const member = state.tasks.find(value => value.id === id)!
+      expect(member.status).toBe('done')
+      expect(member.groupId).toBeUndefined()
+    }
+    // One atomic write: no temp files left behind and the removal survives a reload.
+    expect(readdirSync(root).filter(name => name.includes('.tmp-'))).toEqual([])
+    ledger.dispose()
+    const reloaded = new HostTaskLedger(root, () => NOW + 1000)
+    expect(reloaded.state().groups).toHaveLength(0)
+    expect(reloaded.state().tasks.find(value => value.id === 'a')!.groupId).toBeUndefined()
+    expect(reloaded.state().revision).toBe(state.revision)
+    reloaded.dispose()
+  })
+
+  it('auto-removes a group when its last member is deleted (an empty group is dead)', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    // A freshly created group exists so members can be added to it.
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    expect(ledger.state().groups).toHaveLength(1)
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    // Deleting the only member leaves an empty group behind: it self-deletes
+    // in the same revision as the delete.
+    ledger.applyRequest('delete-a', { kind: 'delete', taskId: 'a' })
+    const state = ledger.state()
+    expect(state.tasks).toHaveLength(0)
+    expect(state.groups).toHaveLength(0)
+    ledger.dispose()
+  })
+
+  it('auto-removes a group when its last live member is moved out (membership change)', () => {
+    const root = tempRoot()
+    const ledger = new HostTaskLedger(root, () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
+    for (const id of ['a', 'b']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+    }
+    // a runs and settles while b stays in To Do: the group survives on b.
+    const openedA = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.settle('a', openedA.state.tasks.find(value => value.id === 'a')!.executions[0].id, 'succeeded')
+    expect(ledger.state().groups.some(group => group.id === 'g1')).toBe(true)
+    // Ungrouping b leaves only settled members: the group deletes itself and b
+    // becomes a standalone task.
+    ledger.applyRequest('ungroup-b', { kind: 'update', taskId: 'b', patch: { groupId: null } })
+    const state = ledger.state()
+    expect(state.groups).toHaveLength(0)
+    expect(state.tasks.find(value => value.id === 'b')!.groupId).toBeUndefined()
+    expect(state.tasks.find(value => value.id === 'b')!.status).toBe('todo')
+    ledger.dispose()
+  })
+
+  it('a user stop of the last running member settles it and removes the exhausted group', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    expect(ledger.state().groups).toHaveLength(1)
+    // The stop settles a as cancelled inside an action (not the settle path):
+    // the action-tail prune still removes the now-dead group in the same commit.
+    ledger.applyRequest('stop-a', { kind: 'stop', taskId: 'a' })
+    const state = ledger.state()
+    expect(state.groups).toHaveLength(0)
+    expect(state.tasks.find(value => value.id === 'a')!.status).toBe('failed')
+    expect(state.tasks.find(value => value.id === 'a')!.groupId).toBeUndefined()
+  })
+
+  it('keeps a group with an armed cron even when every member has settled (it must fire again)', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', {
+      kind: 'create-group', id: 'g1', input: { name: 'Cron', schedule: { enabled: true, cron: '0 9 * * *' } },
+    })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    const opened = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.settle('a', opened.state.tasks.find(value => value.id === 'a')!.executions[0].id, 'succeeded')
+    expect(ledger.state().groups.some(group => group.id === 'g1')).toBe(true)
+    expect(ledger.state().tasks.find(value => value.id === 'a')!.groupId).toBe('g1')
+    // Disarming the cron ends the protection: the exhausted group self-deletes.
+    ledger.applyRequest('disarm', { kind: 'update-group', groupId: 'g1', patch: { schedule: { enabled: false, cron: '0 9 * * *' } } })
+    const state = ledger.state()
+    expect(state.groups).toHaveLength(0)
+    expect(state.tasks.find(value => value.id === 'a')!.groupId).toBeUndefined()
+  })
+
+  it('keeps a stopped group even when every member has settled, and only resume lets it go', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: '', groupId: 'g1' } })
+    ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    // stop-group settles a as cancelled AND freezes the group: the stopped
+    // guard keeps the exhausted group on the board.
+    ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
+    let state = ledger.state()
+    expect(state.groups[0]!.stopped).toBe(true)
+    expect(state.tasks.find(value => value.id === 'a')!.groupId).toBe('g1')
+    // Resuming unfreezes it: with all members settled it is dead and self-deletes.
+    ledger.applyRequest('resume', { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })
+    state = ledger.state()
+    expect(state.groups).toHaveLength(0)
+    expect(state.tasks.find(value => value.id === 'a')!.groupId).toBeUndefined()
+    expect(state.tasks.find(value => value.id === 'a')!.status).toBe('failed')
+  })
+
+  it('keeps a group while any member still has an open (running) execution', () => {
+    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
+    ledger.applyRequest('group', { kind: 'create-group', id: 'g1', input: { name: 'G', mode: 'parallel' } })
+    for (const id of ['a', 'b']) {
+      ledger.applyRequest(`create-${id}`, { kind: 'create', id, input: { title: id, description: '', prompt: '', groupId: 'g1' } })
+    }
+    const openedA = ledger.applyRequest('run-a', { kind: 'run', taskId: 'a' })
+    ledger.applyRequest('run-b', { kind: 'run', taskId: 'b' })
+    ledger.settle('a', openedA.state.tasks.find(value => value.id === 'a')!.executions[0].id, 'succeeded')
+    const state = ledger.state()
+    // b is still running: the group must survive a's settle.
+    expect(state.groups.some(group => group.id === 'g1')).toBe(true)
+    expect(state.tasks.find(value => value.id === 'b')!.executions[0].endedAt).toBeUndefined()
   })
 })
