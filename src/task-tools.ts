@@ -1,16 +1,22 @@
 /**
  * task-tools: the DSH tools an agent session uses to create, inspect, and
- * delete board tasks — `task_create`, `task_list`, `task_get`, and
- * `task_delete`. They are the Host side of "an AI session can manage board
- * tasks": every mutation goes through the same fail-closed protocol path as
- * the browser (the Host ledger + action union), so a disabled board refuses
- * creates/deletes and every ledger validation (blank title, unknown/mismatched
- * group, invalid cron, unknown id, running task) applies unchanged.
+ * delete board tasks — `task_create`, `task_list`, `task_get`, `task_delete`,
+ * and `task_list_workspaces`. They are the Host side of "an AI session can
+ * manage board tasks": every mutation goes through the same fail-closed
+ * protocol path as the browser (the Host ledger + action union), so a disabled
+ * board refuses creates/deletes and every ledger validation (blank title,
+ * unknown/mismatched group, invalid cron, unknown id, running task) applies
+ * unchanged.
  *
  * Agent-created tasks are minted with `source: 'agent'` (the board shows the
  * badge) and DEFAULT to unapproved: a task created here can never run by any
  * means until a human approves it on the board, unless the caller explicitly
  * passes `approved: true`.
+ *
+ * `task_list_workspaces` is the discovery half of that `workspaceId` pin: it
+ * lists the valid DSH workspace-list ids. Workspace ids are UUIDs (for example
+ * `f851445a-5d85-4219-8ce4-805031142726`), NOT filesystem paths — an agent
+ * must look one up here rather than pass a path.
  *
  * The tools are deliberately read/create/delete only — no update, run,
  * approve, or archive: those remain human board actions, so an agent can queue
@@ -34,6 +40,16 @@ import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { ALL_STATUSES, isTaskApproved, openExecutionOf, TASK_PERMISSIONS, type NewTaskInput, type TaskRecord, type TaskSource } from './core/tasks.ts'
 import type { AllTasksAction } from './protocol.ts'
 
+/** One valid DSH workspace-list row (an id to pin on `task_create`). */
+export interface WorkspaceRow {
+  /** The workspace id to pin — a UUID, never a filesystem path. */
+  workspaceId: string
+  /** Display title of the workspace. */
+  title: string
+  /** Canonical directory path the workspace wraps. */
+  path?: string
+}
+
 /** Host seam the tools call through (wired to `AllTasksHostService` in index.ts). */
 export interface TaskToolsDeps {
   /** Current Host tasks (the read path for `task_list` / `task_get` / `task_delete`). */
@@ -44,6 +60,17 @@ export interface TaskToolsDeps {
    * disabled).
    */
   apply(requestId: string, action: Extract<AllTasksAction, { kind: 'create' | 'delete' }>): { tasks: readonly TaskRecord[] }
+  /**
+   * The valid DSH workspace-list rows (id + title + path), fetched live from
+   * the DSH workspace registry through the Host's ApiProxy — the discovery
+   * surface for `task_create`'s `workspaceId` pin. Async because it performs
+   * an RPC; it is deliberately a SEPARATE accessor rather than a field of the
+   * sync tasks-only `snapshot()`: the board read path stays API-free, the
+   * browser wire format (`AllTasksSnapshot`) is untouched, and the tool fails
+   * loudly when the DSH API is unavailable instead of silently degrading a
+   * snapshot.
+   */
+  workspaces(): Promise<readonly WorkspaceRow[]>
 }
 
 /** Compact on-board row shared by `task_create` and `task_list` results. */
@@ -75,6 +102,12 @@ interface TaskCreateValue extends TaskRow {}
 /** The list tool's canonical output value (see {@link TASK_LIST_OUTPUT}). */
 interface TaskListValue {
   tasks: Array<TaskRow & { scheduled: boolean; running: boolean }>
+  total: number
+}
+
+/** The workspaces-list tool's canonical output value (see its output schema). */
+interface WorkspaceListValue {
+  workspaces: Array<{ workspaceId: string; title: string; path?: string }>
   total: number
 }
 
@@ -119,20 +152,21 @@ export const TASK_CREATE_TOOL_NAME = 'task_create'
 export const TASK_LIST_TOOL_NAME = 'task_list'
 export const TASK_GET_TOOL_NAME = 'task_get'
 export const TASK_DELETE_TOOL_NAME = 'task_delete'
+export const TASK_LIST_WORKSPACES_TOOL_NAME = 'task_list_workspaces'
 
 const TASK_STATUS_ENUM = [...ALL_STATUSES] as const
 
 /**
- * Build the four agent task tools against a Host seam. Each is registered on
+ * Build the five agent task tools against a Host seam. Each is registered on
  * `ctx.tools` by the plugin loader (see `src/index.ts`).
- * @param deps - the Host snapshot/apply seam.
- * @returns the four tool definitions, in registration order.
+ * @param deps - the Host snapshot/apply/workspaces seam.
+ * @returns the five tool definitions, in registration order.
  */
 export function createTaskTools(deps: TaskToolsDeps): ToolDefinition[] {
   return [
     defineTool({
       name: TASK_CREATE_TOOL_NAME,
-      description: 'Create a task on the all-tasks board (the kanban of DSH agent tasks). The task is queued as backlog work for a future run: it is minted UNAPPROVED by default, so it can never run by any means (manual, cron, or group) until a human approves it on the board — pass `approved: true` only when the user explicitly wants it immediately runnable. The created task is marked with the `agent` source badge. Check `task_list` first to avoid duplicates, and `task_get` to read a task afterwards. The `prompt` is what a DSH agent session will receive when the task runs.',
+      description: 'Create a task on the all-tasks board (the kanban of DSH agent tasks). The task is queued as backlog work for a future run: it is minted UNAPPROVED by default, so it can never run by any means (manual, cron, or group) until a human approves it on the board — pass `approved: true` only when the user explicitly wants it immediately runnable. The created task is marked with the `agent` source badge. Check `task_list` first to avoid duplicates, `task_list_workspaces` before pinning a `workspaceId`, and `task_get` to read a task afterwards. The `prompt` is what a DSH agent session will receive when the task runs.',
       parameters: {
         title: {
           type: 'string',
@@ -150,7 +184,7 @@ export function createTaskTools(deps: TaskToolsDeps): ToolDefinition[] {
         },
         workspaceId: {
           type: 'string',
-          description: 'Workspace the task must run in (a DSH workspace-list id); omit for the default/recent workspace.',
+          description: 'Workspace the task must run in (a DSH workspace-list id — a UUID, never a filesystem path; list the valid ids with `task_list_workspaces`); omit for the default/recent workspace.',
         },
         mode: {
           type: 'string',
@@ -477,6 +511,61 @@ export function createTaskTools(deps: TaskToolsDeps): ToolDefinition[] {
         // Host); refuse to fabricate a confirmation title either way.
         if (task === undefined) throw new Error(`task_delete: no task with id ${JSON.stringify(args.taskId)}`)
         return { deleted: true, id: task.id, title: task.title }
+      },
+    }),
+    defineTool({
+      name: TASK_LIST_WORKSPACES_TOOL_NAME,
+      description: 'List the valid DSH workspace-list ids for pinning `workspaceId` on `task_create`, with each workspace\'s title and directory path. Every `workspaceId` is a UUID (for example `f851445a-5d85-4219-8ce4-805031142726`) — NOT a filesystem path — so look a workspace up here before pinning it on a task and never pass a path as `workspaceId`. Rows come from the DSH workspace registry (the same list the Host validates task workspace pins against before launch).',
+      parameters: {
+        query: {
+          type: 'string',
+          description: 'Optional case-insensitive substring filter over workspace id, title, and path; omit for every workspace.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            workspaces: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  workspaceId: { type: 'string', required: true },
+                  title: { type: 'string', required: true },
+                  path: { type: 'string' },
+                },
+              },
+            },
+            total: { type: 'integer', required: true },
+          },
+        },
+        render: (_args, value: WorkspaceListValue) => [{
+          type: 'text',
+          text: value.total === 0
+            ? 'No DSH workspaces match.'
+            : `Found ${value.total} workspace(s): ${value.workspaces.map(row => `${JSON.stringify(row.title)} (${row.workspaceId}${row.path === undefined ? '' : `, ${row.path}`})`).join('; ')}`,
+        }],
+      },
+      presentCall: (args) => ({
+        card: 'generic',
+        title: 'List DSH workspaces',
+        kind: 'other',
+        rawInput: args.query ?? 'all workspaces',
+      }),
+      async execute(args): Promise<WorkspaceListValue> {
+        const needle = args.query?.trim().toLowerCase()
+        const workspaces = (await deps.workspaces())
+          .filter(row => needle === undefined || needle === '' || row.workspaceId.toLowerCase().includes(needle) || row.title.toLowerCase().includes(needle) || (row.path?.toLowerCase().includes(needle) ?? false))
+          .map(row => ({
+            workspaceId: row.workspaceId,
+            title: row.title,
+            ...(row.path === undefined ? {} : { path: row.path }),
+          }))
+        return { workspaces, total: workspaces.length }
       },
     }),
   ]

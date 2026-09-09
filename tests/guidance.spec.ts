@@ -15,4 +15,10 @@ describe('all-tasks model guidance', () => {
     expect(ALL_TASKS_GUIDANCE).toContain('task_delete')
     expect(ALL_TASKS_GUIDANCE).toContain('approved: true')
   })
+
+  it('announces the workspace-discovery tool and that workspace ids are UUIDs', () => {
+    expect(ALL_TASKS_GUIDANCE).toContain('task_list_workspaces')
+    expect(ALL_TASKS_GUIDANCE).toContain('f851445a-5d85-4219-8ce4-805031142726')
+    expect(ALL_TASKS_GUIDANCE).toContain('不是文件系统路径')
+  })
 })

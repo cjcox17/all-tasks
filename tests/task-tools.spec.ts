@@ -10,11 +10,19 @@ import {
   TASK_DELETE_TOOL_NAME,
   TASK_GET_TOOL_NAME,
   TASK_LIST_TOOL_NAME,
+  TASK_LIST_WORKSPACES_TOOL_NAME,
   type TaskToolsDeps,
+  type WorkspaceRow,
 } from '../src/task-tools.ts'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 
 const roots: string[] = []
+
+/** Fake DSH workspace-registry rows (ids are UUIDs, never filesystem paths). */
+const FAKE_WORKSPACES: readonly WorkspaceRow[] = [
+  { workspaceId: 'f851445a-5d85-4219-8ce4-805031142726', title: 'all-tasks', path: '/Users/cjcox17/Projects/all-tasks' },
+  { workspaceId: 'c0ffee00-0000-4000-8000-0000000000aa', title: 'Random Sessions', path: '/Users/cjcox17/Projects/Random Sessions' },
+]
 
 function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'dsh-all-tasks-tools-'))
@@ -35,6 +43,7 @@ function harness(): { deps: TaskToolsDeps; ledger: HostTaskLedger; tools: ToolDe
       const result = ledger.applyRequest(requestId, action as AllTasksAction)
       return { tasks: result.state.tasks }
     },
+    workspaces: async () => FAKE_WORKSPACES,
   }
   return { deps, ledger, tools: createTaskTools(deps) }
 }
@@ -150,6 +159,7 @@ describe('task_create tool', () => {
     const deps: TaskToolsDeps = {
       snapshot: () => ({ tasks: [] }),
       apply: () => { throw new Error('task board is disabled') },
+      workspaces: async () => [],
     }
     const tools = createTaskTools(deps)
     await expect(execute(toolOf(tools, TASK_CREATE_TOOL_NAME), { title: 'T', prompt: 'x' }))
@@ -220,6 +230,57 @@ describe('task_get tool', () => {
     const { tools } = harness()
     await expect(execute(toolOf(tools, TASK_GET_TOOL_NAME), { taskId: 'missing' }))
       .rejects.toThrow('no task with id')
+  })
+})
+
+describe('task_list_workspaces tool', () => {
+  it('returns every workspace row (UUID id, title, path) with a matching total', async () => {
+    const { tools } = harness()
+    const list = await execute<{ workspaces: Array<{ workspaceId: string; title: string; path: string }>; total: number }>(
+      toolOf(tools, TASK_LIST_WORKSPACES_TOOL_NAME),
+      {},
+    )
+    expect(list.total).toBe(2)
+    expect(list.workspaces).toEqual([
+      { workspaceId: 'f851445a-5d85-4219-8ce4-805031142726', title: 'all-tasks', path: '/Users/cjcox17/Projects/all-tasks' },
+      { workspaceId: 'c0ffee00-0000-4000-8000-0000000000aa', title: 'Random Sessions', path: '/Users/cjcox17/Projects/Random Sessions' },
+    ])
+  })
+
+  it('case-insensitively substring-filters over id, title, and path and recounts total', async () => {
+    const { tools } = harness()
+    const tool = toolOf(tools, TASK_LIST_WORKSPACES_TOOL_NAME)
+    const byId = await execute<{ workspaces: Array<{ workspaceId: string }>; total: number }>(tool, { query: 'F851445A' })
+    expect(byId.total).toBe(1)
+    expect(byId.workspaces.map(row => row.workspaceId)).toEqual(['f851445a-5d85-4219-8ce4-805031142726'])
+    const byTitle = await execute<{ workspaces: Array<{ title: string }>; total: number }>(tool, { query: 'random' })
+    expect(byTitle.total).toBe(1)
+    expect(byTitle.workspaces[0]?.title).toBe('Random Sessions')
+    const byPath = await execute<{ workspaces: Array<{ workspaceId: string }>; total: number }>(tool, { query: 'Projects/Random' })
+    expect(byPath.total).toBe(1)
+    expect(byPath.workspaces[0]?.workspaceId).toBe('c0ffee00-0000-4000-8000-0000000000aa')
+    const none = await execute<{ workspaces: unknown[]; total: number }>(tool, { query: 'no such workspace' })
+    expect(none.total).toBe(0)
+    expect(none.workspaces).toEqual([])
+  })
+
+  it('maps seam rows with an optional path (no live ApiProxy needed)', async () => {
+    const ledger = new HostTaskLedger(tempRoot())
+    const deps: TaskToolsDeps = {
+      snapshot: () => ({ tasks: ledger.state().tasks }),
+      apply: (requestId, action) => {
+        const result = ledger.applyRequest(requestId, action as AllTasksAction)
+        return { tasks: result.state.tasks }
+      },
+      workspaces: async () => [{ workspaceId: '11111111-2222-4333-8444-555555555555', title: 'Solo' }],
+    }
+    const list = await execute<{ workspaces: Array<{ workspaceId: string; title: string; path?: string }>; total: number }>(
+      toolOf(createTaskTools(deps), TASK_LIST_WORKSPACES_TOOL_NAME),
+      {},
+    )
+    expect(list.total).toBe(1)
+    expect(list.workspaces).toEqual([{ workspaceId: '11111111-2222-4333-8444-555555555555', title: 'Solo' }])
+    expect(list.workspaces[0]?.path).toBeUndefined()
   })
 })
 
