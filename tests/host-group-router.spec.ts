@@ -212,6 +212,12 @@ describe('AllTasksHostService group routing', () => {
     await flush()
     expect(h.ledger.state().tasks.find(task => task.id === 'a')!.executions[0]!.endpointId).toBe('cloud')
 
+    // b joins while a runs: it is held from auto-advance and — crucially —
+    // keeps the group alive when a settles (a group whose members have all
+    // settled deletes itself, so the group-list routing below needs a live
+    // member to still exist).
+    h.ledger.applyRequest('create-b', { kind: 'create', id: 'b', input: { title: 'B', description: '', prompt: 'work', groupId: 'g1' } })
+
     // Clear the pin: the group list applies.
     h.ledger.applyRequest('unpin', { kind: 'update', taskId: 'a', patch: { endpoints: null } })
     h.ledger.settle('a', h.ledger.state().tasks.find(task => task.id === 'a')!.executions[0]!.id, 'succeeded')
@@ -556,8 +562,11 @@ describe('AllTasksHostService group routing', () => {
     await flush()
     expect(() => h.ledger.applyRequest('del-1', { kind: 'delete-group', groupId: 'g1' })).toThrow('group has running tasks')
 
-    const a = h.ledger.state().tasks.find(task => task.id === 'a')!
-    h.ledger.settle('a', a.executions[0]!.id, 'succeeded')
+    // Stop the group: a is cancelled and the group is frozen (stopped), so an
+    // exhausted all-settled group still exists to be deleted by hand — the
+    // manual action keeps working even though the auto self-delete would have
+    // removed an unstopped group the moment its last member settled.
+    h.ledger.applyRequest('stop-group', { kind: 'stop-group', groupId: 'g1' })
     h.ledger.applyRequest('del-2', { kind: 'delete-group', groupId: 'g1' })
     const state = h.ledger.state()
     expect(state.groups).toHaveLength(0)
@@ -656,9 +665,15 @@ describe('AllTasksHostService group routing', () => {
     const h = harness(dir, routerConfig([endpoint({ id: 'cloud', defaultModel: 'deepseek-chat' })]), () => now)
     seedGroup(h, 'g1', 'Rerun', ['a', 'b'])
 
-    // Complete one full sequential cycle: a runs, settles, then b runs and settles.
+    // Complete one full sequential cycle: a runs and settles, then b runs and
+    // settles. c joins mid-run (while a runs): it is held, and its live
+    // presence is what keeps the group from deleting itself once a and b have
+    // both settled — an exhausted group (all members settled, no cron, not
+    // stopped) is removed automatically, so re-running one needs a live member.
     h.service.apply('run-a', { kind: 'run', taskId: 'a' })
     await flush()
+    h.ledger.applyRequest('create-c', { kind: 'create', id: 'c', input: { title: 'C', description: '', prompt: 'work', groupId: 'g1' } })
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.deferAutoStart).toBe(true)
     const a1 = h.ledger.state().tasks.find(task => task.id === 'a')!
     h.ledger.settle('a', a1.executions[0]!.id, 'succeeded')
     h.advanceGroups()
@@ -670,6 +685,9 @@ describe('AllTasksHostService group routing', () => {
     await flush()
     const launchesBefore = h.create.mock.calls.length
     expect(launchesBefore).toBe(2)
+    // The held c was never auto-started and keeps the group on the board.
+    expect(h.ledger.state().groups.some(group => group.id === 'g1')).toBe(true)
+    expect(h.ledger.state().tasks.find(task => task.id === 'c')!.executions).toHaveLength(0)
 
     // Drag the completed group back to To Do: every member lands in To Do held
     // (deferAutoStart), so the move itself — and any advance pass afterwards —
@@ -679,8 +697,10 @@ describe('AllTasksHostService group routing', () => {
     let state = h.ledger.state()
     expect(state.tasks.find(task => task.id === 'a')!.status).toBe('todo')
     expect(state.tasks.find(task => task.id === 'b')!.status).toBe('todo')
+    expect(state.tasks.find(task => task.id === 'c')!.status).toBe('todo')
     expect(state.tasks.find(task => task.id === 'a')!.deferAutoStart).toBe(true)
     expect(state.tasks.find(task => task.id === 'b')!.deferAutoStart).toBe(true)
+    expect(state.tasks.find(task => task.id === 'c')!.deferAutoStart).toBe(true)
     expect(h.create.mock.calls.length).toBe(launchesBefore)
     h.advanceGroups()
     await flush()
@@ -695,6 +715,7 @@ describe('AllTasksHostService group routing', () => {
     expect(state.tasks.find(task => task.id === 'a')!.status).toBe('running')
     expect(state.tasks.find(task => task.id === 'a')!.deferAutoStart).toBeUndefined()
     expect(state.tasks.find(task => task.id === 'b')!.deferAutoStart).toBeUndefined()
+    expect(state.tasks.find(task => task.id === 'c')!.deferAutoStart).toBeUndefined()
     expect(h.create.mock.calls.length).toBe(launchesBefore + 1)
     h.service.dispose()
   })

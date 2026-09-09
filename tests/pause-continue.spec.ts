@@ -167,6 +167,9 @@ describe('HostTaskLedger pause/continue actions', () => {
   it('pause-group refuses a stopped or already paused group', () => {
     const ledger = new HostTaskLedger(tempRoot(), () => NOW)
     apply(ledger, { kind: 'create-group', id: 'g1', input: { name: 'G' } })
+    // A live member keeps the group from self-deleting when it is resumed
+    // (an empty group — like one whose members have all settled — is dead).
+    apply(ledger, { kind: 'create', id: 'a', input: { title: 'A', description: '', prompt: 'a', groupId: 'g1' } })
     apply(ledger, { kind: 'stop-group', groupId: 'g1' })
     expect(() => apply(ledger, { kind: 'pause-group', groupId: 'g1' })).toThrow('group is stopped')
     apply(ledger, { kind: 'update-group', groupId: 'g1', patch: { stopped: false } })

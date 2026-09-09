@@ -11,6 +11,7 @@ import {
   GROUP_FIELD_BOUND,
   groupFinalStepBlocked,
   groupFinalStepReady,
+  groupIsDead,
   groupSequenceStarted,
   normalizeGroupOrder,
   normalizeGroupRows,
@@ -227,6 +228,26 @@ export interface LedgerRuntimeView {
 }
 
 const MAX_REQUEST_CACHE = 256
+
+/**
+ * The ledger actions that can end a group's last live member — settle a
+ * member (stop / stop-group / an import-time interrupted-start recovery),
+ * archive members (single archive / hide-tasks), delete a task, change
+ * membership (update with a groupId or workspace patch), or lift a group
+ * protection (update-group disarming a cron or unfreezing a stopped group).
+ * After exactly these the {@link HostTaskLedger.pruneDeadGroups} pass runs, so
+ * a group self-deletes in the same revision as the mutation that killed it.
+ */
+const GROUP_DEATH_ACTIONS = new Set<AllTasksAction['kind']>([
+  'import',
+  'archive',
+  'hide-tasks',
+  'delete',
+  'update',
+  'stop',
+  'stop-group',
+  'update-group',
+])
 
 interface CachedRequest {
   fingerprint: string
@@ -493,6 +514,12 @@ export class HostTaskLedger {
       }
       this.repairSchedules(true)
       this.reconcileInterruptedStarts()
+      // Startup self-cleanup: the recovery passes above can settle a member
+      // (an interrupted start is cancelled) or disarm a group cron, which can
+      // leave a group dead the moment the ledger loads; groups that were
+      // already dead in a pre-feature ledger are swept too. Runs before the
+      // final write so the removal rides the same startup commit.
+      this.pruneDeadGroups(this.now())
       // Persist a freshly generated ledger identity and any recovery error
       // immediately, even when there are no tasks to trigger a later action.
       this.commit(false)
@@ -994,6 +1021,10 @@ export class HostTaskLedger {
     this.document.tasks = this.document.tasks.map(task => task.id === taskId
       ? settleExecution(task, executionId, outcome, this.now(), error, summary, usage)
       : task)
+    // A member settlement can end its group's last live member (this is the
+    // execution-runner settle path — every other settle flows through apply()).
+    // Prune before the commit so the group self-deletes in the same revision.
+    this.pruneDeadGroups(this.now())
     this.commit()
     if (wasOpen) {
       this.notifySettled({
@@ -1553,6 +1584,20 @@ export class HostTaskLedger {
     // heals any stale/partial order left by an edit so a member can never
     // silently drift to the end of its group's section on the board.
     this.normalizeGroupOrders(now)
+    // Self-removal choke point: this tail runs after every ledger action, so
+    // one prune pass covers every action that can end a group's last live
+    // member in the same revision — single archive, hide-tasks (bulk archive),
+    // task delete, and any membership change (move between groups / ungroup)
+    // all land here, plus the user settles (stop / stop-group) and the group
+    // updates that lift a protection (disarming a cron, unfreezing a stopped
+    // group). Actions that can never kill a group (create-group above all —
+    // an empty group is a legitimate in-between state while members are being
+    // added) skip the pass so a group the user is still building is never torn
+    // down under them. The only settle path that does not flow through here is
+    // the execution runner's HostTaskLedger.settle, which prunes before its
+    // own commit — so every way a group can lose its last live member lands
+    // the removal in the same atomic write that recorded the trigger.
+    if (GROUP_DEATH_ACTIONS.has(action.kind)) this.pruneDeadGroups(now)
     this.commit()
     return {
       state: this.state(),
@@ -1598,6 +1643,49 @@ export class HostTaskLedger {
       if (finalStepTaskId === undefined) delete next.finalStepTaskId
       return { ...next, updatedAt: now }
     })
+  }
+
+  /**
+   * Self-removal of dead groups ("task groups delete themselves"): delete
+   * every group with no live members left — all of its tasks archived or
+   * settled with no open execution, or none at all — unless its schedule is
+   * armed (it must persist to fire again) or it is stopped (a deliberately
+   * frozen group must not vanish); see {@link groupIsDead}. The removal reuses
+   * {@link applyDeleteGroup}, the manual delete-group transition, so members
+   * are ungrouped exactly like that action (their tasks stay as standalone
+   * rows and any lingering auto-advance hold is cleared) and only the group
+   * row disappears. The pass mutates the in-memory document only: it is
+   * invoked right before the commit of the mutation that killed the group, so
+   * the removal lands in the SAME revision as the trigger (one atomic write,
+   * one monotonic bump — never a write of its own).
+   */
+  private pruneDeadGroups(now: number): void {
+    const deadGroupIds = this.document.groups
+      .filter(group => {
+        const members = this.document.tasks.filter(task => task.groupId === group.id)
+        return groupIsDead(group, members)
+      })
+      .map(group => group.id)
+    if (deadGroupIds.length === 0) return
+    const ungroupedIds = new Set<string>()
+    let tasks = this.document.tasks
+    let groups = this.document.groups
+    for (const groupId of deadGroupIds) {
+      for (const task of tasks) {
+        if (task.groupId === groupId) ungroupedIds.add(task.id)
+      }
+      const result = applyDeleteGroup(tasks, groups, groupId, now)
+      tasks = [...result.tasks]
+      groups = [...result.groups]
+    }
+    this.document.tasks = tasks.map(task =>
+      ungroupedIds.has(task.id) && task.deferAutoStart === true
+        ? (() => {
+          const { deferAutoStart: _held, ...rest } = task
+          return { ...rest, updatedAt: now }
+        })()
+        : task)
+    this.document.groups = groups
   }
 
   private repairSchedules(skipPast: boolean, persist = true): void {
